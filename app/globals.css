@@ -1,0 +1,89 @@
+@import "tailwindcss";
+
+@theme {
+  --color-brand-50:  #ecfdf5;
+  --color-brand-100: #d1fae5;
+  --color-brand-200: #a7f3d0;
+  --color-brand-300: #6ee7b7;
+  --color-brand-400: #34d399;
+  --color-brand-500: #10b981;
+  --color-brand-600: #059669;
+  --color-brand-700: #047857;
+  --color-brand-800: #065f46;
+  --color-brand-900: #064e3b;
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+:root {
+  --background: #f6f8fb;
+  --foreground: #0b1220;
+  --card: #ffffff;
+  --muted: #64748b;
+  --border: #e6e8ee;
+}
+
+html, body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  margin: 0;
+  padding: 0;
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+
+* { box-sizing: border-box; }
+
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: .5rem; padding: .55rem 1rem; border-radius: .6rem; font-size: .875rem; font-weight: 600; transition: all .15s ease; cursor: pointer; border: 1px solid transparent; white-space: nowrap; }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+.btn-primary { background: linear-gradient(135deg, #059669, #047857); color: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.05); }
+.btn-primary:hover:not(:disabled) { filter: brightness(1.05); transform: translateY(-1px); box-shadow: 0 4px 10px rgba(5,150,105,.25); }
+.btn-secondary { background: #fff; border-color: #cbd5e1; color: #334155; }
+.btn-secondary:hover:not(:disabled) { background: #f8fafc; }
+.btn-ghost { background: transparent; color: #475569; }
+.btn-ghost:hover { background: #f1f5f9; }
+.btn-danger { background: #dc2626; color: #fff; }
+.btn-danger:hover:not(:disabled) { background: #b91c1c; }
+
+.input, .select, .textarea { width: 100%; border-radius: .6rem; border: 1px solid #cbd5e1; padding: .55rem .8rem; font-size: .9rem; background: #fff; transition: border-color .15s, box-shadow .15s; }
+.input:focus, .select:focus, .textarea:focus { outline: none; border-color: #10b981; box-shadow: 0 0 0 3px rgba(16,185,129,.15); }
+.label { display: block; font-size: .85rem; font-weight: 600; color: #334155; margin-bottom: .35rem; }
+
+.card { background: var(--card); border: 1px solid var(--border); border-radius: .9rem; padding: 1.25rem; box-shadow: 0 1px 2px rgba(15,23,42,.04); }
+.card-hover { transition: all .15s ease; }
+.card-hover:hover { box-shadow: 0 8px 24px rgba(15,23,42,.08); transform: translateY(-2px); border-color: #d1fae5; }
+
+.badge { display: inline-flex; align-items: center; padding: .15rem .55rem; border-radius: 9999px; font-size: .7rem; font-weight: 600; }
+.badge-remember   { background: #dbeafe; color: #1e40af; }
+.badge-understand { background: #d1fae5; color: #065f46; }
+.badge-apply      { background: #fef3c7; color: #92400e; }
+.badge-analyze    { background: #ffedd5; color: #9a3412; }
+.badge-evaluate   { background: #fce7f3; color: #9d174d; }
+.badge-create     { background: #ede9fe; color: #5b21b6; }
+.badge-pending    { background: #f1f5f9; color: #475569; }
+.badge-approved   { background: #dcfce7; color: #166534; }
+.badge-rejected   { background: #fee2e2; color: #991b1b; }
+
+.muted { color: #64748b; }
+.h1 { font-size: 1.75rem; font-weight: 700; letter-spacing: -.02em; color: #0b1220; }
+.h2 { font-size: 1.25rem; font-weight: 700; color: #0b1220; }
+.h3 { font-size: 1rem; font-weight: 600; color: #0b1220; }
+
+.spinner { display: inline-block; width: 1rem; height: 1rem; border: 2px solid #e2e8f0; border-top-color: #059669; border-radius: 9999px; animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.fade-in { animation: fadeIn .25s ease-out; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+
+/* --- Next.js dev indicator: belt-and-suspenders --- */
+/* `devIndicators: false` in next.config.ts is the primary switch, but Next 16
+   sometimes still mounts the badge briefly. These selectors hide every part
+   of the floating dev-tools button/badge without touching the actual error
+   overlay (which uses `data-nextjs-dialog*` selectors we deliberately leave
+   alone, so real errors still surface). */
+[data-next-badge-root],
+[data-next-badge],
+[data-next-mark],
+[data-nextjs-dev-tools-button] {
+  display: none !important;
+}

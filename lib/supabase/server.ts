@@ -1,0 +1,51 @@
+import { createClient } from "@supabase/supabase-js";
+
+/**
+ * Server-side Supabase client.
+ * Pass the user's access token from the client (Authorization: Bearer ...)
+ * so RLS policies see the right auth.uid().
+ */
+export function supabaseServer(accessToken?: string) {
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      auth: { persistSession: false, autoRefreshToken: false },
+      global: accessToken
+        ? { headers: { Authorization: `Bearer ${accessToken}` } }
+        : undefined,
+    }
+  );
+}
+
+/**
+ * Admin client — uses the service-role key. Bypasses RLS and can manage
+ * auth users (createUser, deleteUser, etc.). NEVER expose this to the browser.
+ * Requires SUPABASE_SERVICE_ROLE_KEY in .env.local.
+ */
+export function supabaseAdmin() {
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!key) {
+    throw new Error(
+      "SUPABASE_SERVICE_ROLE_KEY is not set. Add it to .env.local from Supabase dashboard → Settings → API."
+    );
+  }
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    key,
+    { auth: { persistSession: false, autoRefreshToken: false } }
+  );
+}
+
+/** Extract bearer token from a Next.js Request. */
+export function getBearer(req: Request): string | undefined {
+  const h = req.headers.get("authorization") || req.headers.get("Authorization");
+  if (!h) return undefined;
+  return h.replace(/^Bearer\s+/i, "").trim() || undefined;
+}
+
+/** Synthetic email scheme for school-student usernames (never delivered to). */
+export const SCHOOL_STUDENT_DOMAIN = "bloomiq.invalid";
+export function usernameToSyntheticEmail(username: string): string {
+  return `${username.toLowerCase()}@${SCHOOL_STUDENT_DOMAIN}`;
+}

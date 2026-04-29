@@ -1,0 +1,81 @@
+import { NextResponse } from "next/server";
+import { getBearer, supabaseServer, supabaseAdmin } from "@/lib/supabase/server";
+
+export const runtime = "nodejs";
+
+/**
+ * POST /api/admin/students/add-existing
+ * Body: { class_id: string, student_id: string }
+ *
+ * Adds an EXISTING student (already a profile in this school OR in another class
+ * the teacher owns) to the target class. No auth user is created — that's the
+ * whole point: we don't want a duplicate account just because the teacher
+ * happened to type a similar name.
+ */
+export async function POST(req: Request) {
+  try {
+    const token = getBearer(req);
+    if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const sb = supabaseServer(token);
+    const { data: { user } } = await sb.auth.getUser();
+    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+    const body = await req.json().catch(() => ({}));
+    const classId: string = String(body.class_id || "").trim();
+    const studentId: string = String(body.student_id || "").trim();
+    if (!classId || !studentId) {
+      return NextResponse.json({ error: "class_id and student_id are required" }, { status: 400 });
+    }
+
+    // 1) Caller must own the target class
+    const { data: cls } = await sb.from("classes").select("id, owner_id").eq("id", classId).single();
+    if (!cls || cls.owner_id !== user.id) {
+      return NextResponse.json({ error: "Class not found or not yours" }, { status: 403 });
+    }
+
+    const admin = supabaseAdmin();
+
+    // 2) Verify the student exists and is reachable to this teacher
+    //    (same school OR member of any class this teacher owns)
+    const { data: prof } = await admin
+      .from("profiles")
+      .select("id, role, is_school_student, school_id")
+      .eq("id", studentId)
+      .maybeSingle();
+    if (!prof || prof.role !== "student" || !prof.is_school_student) {
+      return NextResponse.json({ error: "Student not found." }, { status: 404 });
+    }
+
+    const { data: me } = await admin.from("profiles").select("school_id").eq("id", user.id).maybeSingle();
+    const sameSchool = me?.school_id && prof.school_id && me.school_id === prof.school_id;
+    let inMyClass = false;
+    if (!sameSchool) {
+      const { data: myClasses } = await admin.from("classes").select("id").eq("owner_id", user.id);
+      const myClassIds = (myClasses as Array<{ id: string }> | null)?.map((c) => c.id) || [];
+      if (myClassIds.length > 0) {
+        const { count } = await admin
+          .from("class_members")
+          .select("student_id", { count: "exact", head: true })
+          .eq("student_id", studentId)
+          .in("class_id", myClassIds);
+        inMyClass = (count || 0) > 0;
+      }
+    }
+    if (!sameSchool && !inMyClass) {
+      return NextResponse.json({ error: "You don't have permission to reuse that student." }, { status: 403 });
+    }
+
+    // 3) Add membership (idempotent — skip if already a member)
+    const { error } = await admin.from("class_members").insert({
+      class_id: classId,
+      student_id: studentId,
+    });
+    if (error && !error.message.toLowerCase().includes("duplicate")) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    return NextResponse.json({ ok: true, alreadyMember: !!error });
+  } catch (e) {
+    return NextResponse.json({ error: e instanceof Error ? e.message : "Failed" }, { status: 500 });
+  }
+}
