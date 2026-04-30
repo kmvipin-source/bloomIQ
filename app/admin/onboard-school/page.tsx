@@ -32,21 +32,38 @@ type OnboardedSchool = {
   invited_at: string | null;
   accepted_at: string | null;
   status: "pending" | "accepted";
+  current_plan_id: string | null;
+  current_plan_label: string | null;
+  current_plan_tier: string | null;
+};
+
+type SchoolPlanOption = {
+  id: string;
+  slug: string;
+  tier: string;
+  label: string;
 };
 
 export default function OnboardSchoolPage() {
   const [schoolName, setSchoolName] = useState("");
   const [adminEmail, setAdminEmail] = useState("");
   const [adminFullName, setAdminFullName] = useState("");
+  // Optional plan binding at onboard time. "" = pick later (admin can
+  // assign from the recent-onboardings dropdown afterwards).
+  const [formPlanId, setFormPlanId] = useState<string>("");
 
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [success, setSuccess] = useState<{ school_name: string; admin_email: string; join_code: string } | null>(null);
+  const [success, setSuccess] = useState<{ school_name: string; admin_email: string; join_code: string; bound_plan_label: string | null } | null>(null);
 
   const [list, setList] = useState<OnboardedSchool[]>([]);
+  const [planOptions, setPlanOptions] = useState<SchoolPlanOption[]>([]);
   const [listLoading, setListLoading] = useState(true);
   const [listErr, setListErr] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
+  // Per-school "set plan" busy state, keyed by school id.
+  const [planBusy, setPlanBusy] = useState<Record<string, boolean>>({});
+  const [planErr, setPlanErr] = useState<string | null>(null);
 
   async function loadList() {
     setListLoading(true);
@@ -61,10 +78,36 @@ export default function OnboardSchoolPage() {
       const j = await r.json();
       if (!r.ok) throw new Error(j?.error || "Could not load onboardings.");
       setList(j.schools || []);
+      setPlanOptions(j.available_school_plans || []);
     } catch (e) {
       setListErr(e instanceof Error ? e.message : "Could not load onboardings.");
     } finally {
       setListLoading(false);
+    }
+  }
+
+  async function setSchoolPlan(schoolId: string, planId: string) {
+    setPlanErr(null);
+    setPlanBusy((prev) => ({ ...prev, [schoolId]: true }));
+    try {
+      const sb = supabaseBrowser();
+      const { data: { session } } = await sb.auth.getSession();
+      if (!session) throw new Error("Not signed in.");
+      const r = await fetch(`/api/admin/schools/${schoolId}/set-plan`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ plan_id: planId || null }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error || "Could not set plan.");
+      await loadList();
+    } catch (e) {
+      setPlanErr(e instanceof Error ? e.message : "Could not set plan.");
+    } finally {
+      setPlanBusy((prev) => ({ ...prev, [schoolId]: false }));
     }
   }
 
@@ -89,6 +132,7 @@ export default function OnboardSchoolPage() {
           school_name: schoolName,
           admin_email: adminEmail,
           admin_full_name: adminFullName,
+          plan_id: formPlanId || null,
         }),
       });
       const j = await r.json();
@@ -97,9 +141,10 @@ export default function OnboardSchoolPage() {
         school_name: j.school_name,
         admin_email: j.admin_email,
         join_code: j.join_code,
+        bound_plan_label: j.bound_plan?.label ?? null,
       });
       // Reset form for the next school.
-      setSchoolName(""); setAdminEmail(""); setAdminFullName("");
+      setSchoolName(""); setAdminEmail(""); setAdminFullName(""); setFormPlanId("");
       loadList();
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Onboard failed.");
@@ -163,6 +208,30 @@ export default function OnboardSchoolPage() {
             <p className="text-xs muted mt-1">The invite link is sent here. They click it to set a password.</p>
           </div>
 
+          {/* Optional school plan binding. If left as "Pick later", the
+              platform admin can assign a plan from the inline dropdown
+              in the recent-onboardings list below. */}
+          <div>
+            <label className="label">School plan <span className="muted text-xs">(optional)</span></label>
+            <select
+              className="input"
+              value={formPlanId}
+              onChange={(e) => setFormPlanId(e.target.value)}
+              disabled={busy}
+            >
+              <option value="">— Pick later —</option>
+              {planOptions.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.label}
+                </option>
+              ))}
+            </select>
+            <p className="text-xs muted mt-1">
+              Sets which features the school&apos;s students unlock. You can change this later
+              from the dropdown in the list below.
+            </p>
+          </div>
+
           {err && (
             <div className="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{err}</div>
           )}
@@ -175,6 +244,11 @@ export default function OnboardSchoolPage() {
               <div className="text-xs">
                 School join code: <code className="font-mono font-bold">{success.join_code}</code> — they can share this with teachers from their dashboard.
               </div>
+              {success.bound_plan_label && (
+                <div className="text-xs">
+                  Bound to plan: <strong>{success.bound_plan_label}</strong>
+                </div>
+              )}
             </div>
           )}
 
@@ -200,6 +274,7 @@ export default function OnboardSchoolPage() {
                 <th className="px-4 py-3 text-left">School</th>
                 <th className="px-4 py-3 text-left">Admin email</th>
                 <th className="px-4 py-3 text-left">Status</th>
+                <th className="px-4 py-3 text-left">Plan</th>
                 <th className="px-4 py-3 text-left">Join code</th>
                 <th className="px-4 py-3 text-left">Invited</th>
               </tr>
@@ -219,6 +294,26 @@ export default function OnboardSchoolPage() {
                         <Clock size={12} /> Pending
                       </span>
                     )}
+                  </td>
+                  <td className="px-4 py-3">
+                    {/* Inline plan picker — change selection to bind the school's
+                        subscription to a different active plan version. */}
+                    <div className="flex items-center gap-1.5">
+                      <select
+                        className="text-xs rounded border border-slate-200 px-2 py-1 bg-white"
+                        value={s.current_plan_id || ""}
+                        disabled={!!planBusy[s.id]}
+                        onChange={(e) => setSchoolPlan(s.id, e.target.value)}
+                      >
+                        <option value="">— No plan —</option>
+                        {planOptions.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.label}
+                          </option>
+                        ))}
+                      </select>
+                      {planBusy[s.id] && <span className="spinner" />}
+                    </div>
                   </td>
                   <td className="px-4 py-3">
                     {s.join_code ? (
@@ -243,6 +338,9 @@ export default function OnboardSchoolPage() {
               ))}
             </tbody>
           </table>
+          {planErr && (
+            <div className="px-4 py-2 text-sm text-red-700 bg-red-50 border-t border-red-200">{planErr}</div>
+          )}
         </div>
       )}
 

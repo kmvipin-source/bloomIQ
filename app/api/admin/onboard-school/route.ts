@@ -142,6 +142,46 @@ export async function POST(req: Request) {
       );
     }
 
+    // ---------- 8) Optional: bind a plan immediately ----------
+    // The onboard form may include plan_id so the platform admin can
+    // pick the school's plan in the same step instead of going down to
+    // the recent-onboardings dropdown afterwards. We accept it as
+    // optional — if missing or invalid, the school is still created
+    // and the admin can set the plan later from the list.
+    let boundPlan: { id: string; label: string; tier: string } | null = null;
+    const requestedPlanId: string | null = (body.plan_id ?? null) || null;
+    if (requestedPlanId) {
+      const { data: plan } = await admin
+        .from("plans")
+        .select("id, label, tier, period_days, status")
+        .eq("id", requestedPlanId)
+        .maybeSingle();
+      if (plan && plan.status === "active") {
+        const legacyTier =
+          plan.tier === "school_plus" ? "premium_plus"
+          : plan.tier.startsWith("school_") ? "premium"
+          : plan.tier;
+        const expiresAt = new Date(Date.now() + plan.period_days * 24 * 60 * 60 * 1000).toISOString();
+        const { error: subErr } = await admin
+          .from("subscriptions")
+          .insert({
+            school_id: school.id,
+            user_id: null,
+            plan_id: plan.id,
+            tier: legacyTier,
+            status: "active",
+            started_at: new Date().toISOString(),
+            expires_at: expiresAt,
+          });
+        if (!subErr) {
+          boundPlan = { id: plan.id, label: plan.label, tier: plan.tier };
+        }
+        // Soft-fail intentionally — we don't want to roll back the whole
+        // school creation just because the plan binding hiccuped. The
+        // platform admin can pick a plan from the list dropdown.
+      }
+    }
+
     return NextResponse.json({
       ok: true,
       school_id: school.id,
@@ -149,6 +189,7 @@ export async function POST(req: Request) {
       join_code: school.join_code,
       admin_user_id: newAdminUserId,
       admin_email: adminEmail,
+      bound_plan: boundPlan,
     });
   } catch (e) {
     return NextResponse.json(
@@ -190,8 +231,45 @@ export async function GET(req: Request) {
       (usersList?.users || []).map((u) => [u.id, u.email_confirmed_at || u.confirmed_at || null])
     );
 
+    // Pull current school subscriptions in one query so we can join in
+    // each school's plan_id without a per-school round trip. School
+    // subscriptions are keyed by school_id (not user_id), so this is the
+    // authoritative bind point used by useFeatureAccess for school students.
+    const schoolIds = (schools || []).map((s) => s.id);
+    const planBySchool = new Map<string, { plan_id: string | null; plan_label: string | null; plan_tier: string | null }>();
+    if (schoolIds.length > 0) {
+      const { data: subs } = await admin
+        .from("subscriptions")
+        .select("school_id, plan_id, plan:plans!subscriptions_plan_id_fkey(label, tier)")
+        .in("school_id", schoolIds)
+        .eq("status", "active");
+      type SubRow = {
+        school_id: string;
+        plan_id: string | null;
+        plan: { label: string | null; tier: string | null } | null;
+      };
+      for (const s of (subs as unknown as SubRow[]) || []) {
+        planBySchool.set(s.school_id, {
+          plan_id: s.plan_id,
+          plan_label: s.plan?.label ?? null,
+          plan_tier: s.plan?.tier ?? null,
+        });
+      }
+    }
+
+    // Available school plans for the inline dropdown — every active row
+    // whose tier starts with school_*. Returned alongside the schools so
+    // the UI can render the selector without a second fetch.
+    const { data: schoolPlans } = await admin
+      .from("plans")
+      .select("id, slug, tier, label")
+      .eq("status", "active")
+      .like("tier", "school_%")
+      .order("tier", { ascending: true });
+
     const rows = (schools || []).map((s) => {
       const confirmedAt = s.super_teacher_id ? confirmedById.get(s.super_teacher_id) || null : null;
+      const sub = planBySchool.get(s.id);
       return {
         id: s.id,
         name: s.name,
@@ -200,10 +278,17 @@ export async function GET(req: Request) {
         invited_at: s.invited_at,
         accepted_at: confirmedAt,
         status: confirmedAt ? "accepted" : "pending",
+        current_plan_id: sub?.plan_id ?? null,
+        current_plan_label: sub?.plan_label ?? null,
+        current_plan_tier: sub?.plan_tier ?? null,
       };
     });
 
-    return NextResponse.json({ ok: true, schools: rows });
+    return NextResponse.json({
+      ok: true,
+      schools: rows,
+      available_school_plans: schoolPlans || [],
+    });
   } catch (e) {
     return NextResponse.json(
       { error: e instanceof Error ? e.message : "List failed" },

@@ -9,7 +9,243 @@ sources, Bloom-level analytics, printable exam papers, and reporting suites.
 
 ---
 
-## 🆕 Latest session — 2026-04-30 (Platform Admin, school onboarding, ToS)
+## 🆕 Latest session — 2026-05-01 (Plan-Admin module, dashboard redesign, renewals)
+
+A long, multi-track session that takes BloomIQ from "we have a hardcoded
+pricing page" to "any platform admin can edit prices and feature buckets,
+schools have per-student plans, students see locked tiles for what they
+don't have, and renewals actually work." Versioned plans with full
+grandfathering, school-student feature access via the school's plan,
+visible-but-locked tile UX, and Path A renewal (expiry enforcement +
+in-app banner + cron).
+
+### 1. Independent-student dashboard redesign
+
+Three coherent pieces. **Goal-based onboarding** (migration 24) — first
+time an independent student lands on `/student`, a single-question card
+asks "What are you preparing for?" with eight tiles: Class 10/12 boards,
+JEE/NEET/CAT/UPSC prep, Bank exams, Just exploring. Choice persists to
+`profiles.exam_goal` and drives the rest of the dashboard.
+
+**Bloom heat-map hero** (`components/BloomHero.tsx`) — six horizontal
+bars across the Bloom levels, coloured red/amber/green by mastery,
+with strongest + weakest callouts. Replaces the bland "tests taken /
+average score" stats card as the visual anchor. Empty state shows the
+six grey bars with a single "Take your first practice test" CTA.
+
+**Goal-aware tile regroup** (`lib/studentGoalTiles.ts` +
+`components/StudentFeatureTile.tsx`) — replaces the previous three
+themed tile sections with a single goal-driven layout: 4–5 priority
+tiles for the student's exam goal, the rest collapsed under "More
+tools". Same 14 features always present, just regrouped per goal.
+
+### 2. Plan-Admin module (migrations 25, 26)
+
+The `plans` table — versioned plan catalogue with grandfathering:
+each row is one *version* of a plan (slug + status + effective dates).
+`plan_audit` log captures every create/edit/submit/approve/reject with
+actor + payload. `subscriptions.plan_id` foreign-keys to a specific
+plan version, so payment locks the user to that snapshot for as long
+as their subscription lasts.
+
+Five seeded plans: Free, Premium Monthly (₹99), Premium Annual (₹999),
+Premium Plus Monthly (₹199 placeholder), Premium Plus Annual (₹1999
+placeholder). Backfills `subscriptions.plan_id` from the legacy `tier`
+column.
+
+**Feature registry** (`lib/features.ts`) — single source of truth for
+21 gateable feature keys grouped into 8 categories. Adding a future
+gateable feature is one row here.
+
+**Internal `/admin/plans`** — list, detail, edit pages. Active plans
+are immutable; "Edit" creates a new draft. Submit-for-review and
+approve/reject workflow with two-eyes principle (approver must be a
+different platform admin from the proposer; enforced at API and DB).
+Approving a draft auto-archives the prior active version of the same
+slug.
+
+`Sidebar.tsx` and the `/admin` layout now both have "Plans" links
+visible only to platform admins.
+
+### 3. Visibility-but-lock UX + paywall modal
+
+`lib/featureAccess.ts` — `useFeatureAccess()` hook loads the user's
+plan and returns `{ allowed, planTier, planLabel, source, expiresAt,
+planSlug, isExpired }`. `findUnlockingTier(key)` looks across active
+plans for the cheapest tier that unlocks a given feature, used for
+the lock badge label.
+
+`StudentFeatureTile` is now lock-aware. When a tile's feature key
+isn't in the user's `allowed` set, it renders dimmed with a tier
+badge ("Premium" / "Premium Plus") and clicking opens a paywall
+modal instead of navigating.
+
+`components/PaywallModal.tsx` — standard modal for individual users
+("See plans" → `/pricing`). Has an `isSchoolStudent` variant that
+swaps the CTA for "Email my Admin Head" with a pre-filled mailto,
+since school students can't self-upgrade.
+
+### 4. Live `/pricing` + checkout binding
+
+`/api/pricing/active-plans` (public) returns active plans grouped
+sorted by tier rank. `/pricing` reads from this endpoint at mount
+time — any platform-admin price change reflects on the page on next
+load, no redeploy. Falls back to hardcoded plans if the fetch fails.
+
+`/api/checkout` + `/api/checkout/verify` rewritten to read price + tier
+from the active plan via slug, store `plan_id` in Razorpay order
+notes, and bind the resulting `subscriptions.plan_id` to that exact
+plan version. This is what makes grandfathering survive future
+catalogue changes.
+
+### 5. Per-student school pricing (migrations 27, 28)
+
+`pricing_model` column on `plans`: `'fixed'` (Free / Premium /
+Premium Plus) or `'per_student'` (school plans). Per-student plans
+also store `per_student_price_paise`, `min_students`, `max_students`.
+DB check constraint enforces "if per-student then price > 0."
+
+Three seeded school plans, all per-student annual:
+- **School Pilot** — ₹49 per student/year, 20–100 students
+- **School Standard** — ₹39 per student/year, 100–500 students (+ Bloom Pulse, Principal Coach, priority support)
+- **School Plus** — ₹29 per student/year, 500+ no upper limit (+ Voice Tutor, Concept Visualizer, dedicated CSM)
+
+Teachers stay uncapped on every plan.
+
+`/admin/plans/[id]/edit` shows a Pricing-Model toggle for school tiers,
+with per-student rate / min / max fields. `/pricing` "For schools"
+section renders three live cards plus an interactive headcount
+calculator: type your student count, see which tier you fall into and
+the projected annual cost.
+
+### 6. School-student feature access via school's plan
+
+`useFeatureAccess()` now branches on `profiles.is_school_student`. For
+school students, it loads the *school's* active subscription (keyed
+by `school_id`) instead of a personal one. The school's plan
+determines what tiles unlock.
+
+`/student` school-student branch replaces the previous hardcoded
+3-tile "Boost your test-taking" section with the same 14-tile
+catalogue used on the independent dashboard, gated by the school's
+plan. Locked tiles open the school-student paywall variant.
+
+### 7. Set school's plan inline
+
+`POST /api/admin/schools/[id]/set-plan` upserts a `subscriptions` row
+binding the school to a specific plan version (with mapped tier and
+computed `expires_at`).
+
+`/admin/onboard-school` adds:
+- A "School plan" select on the **onboarding form** itself, so the
+  platform admin picks the plan in the same step as creating the
+  school. Optional — defaults to "— Pick later —".
+- A **Plan column with inline dropdown** on the recent-onboardings
+  list, so the platform admin can change a school's plan at any time
+  (renewals, upgrades, downgrades).
+
+### 8. Path A renewal (expiry enforcement + RenewBanner + cron)
+
+`useFeatureAccess()` now checks `expires_at`. If a paid subscription's
+expiry has passed, the user is treated as Free with empty allowed —
+locked tiles render and access is gated. This single fix closes the
+"buy-once, stay-forever" hole that existed before.
+
+`components/RenewBanner.tsx` — three states. Hidden when more than 7
+days remain. Amber strip when within the warning window. Red strip
+when expired. Renew button calls `/api/checkout` with the user's
+`plan_slug`, opens Razorpay, on success the page reloads with a
+fresh `expires_at`.
+
+`POST /api/cron/expire-subscriptions` — idempotent endpoint guarded
+by `CRON_SECRET`. Flips `subscriptions.status` from 'active' to
+'expired' for any row whose `expires_at < now()`. Wire to Supabase
+pg_cron, Vercel Cron, GitHub Actions schedule, or external cron-job.
+Sample SQL for Supabase pg_cron is in the route's docstring.
+
+The user-facing gating is direct (the dashboard checks `expires_at`,
+not just `status`), so the cron is mostly cosmetic for analytics —
+the system stays correct even if the cron never runs.
+
+### 9. Manual setup checklist before testing
+
+1. Apply migrations **24, 25, 26, 27, 28** in Supabase SQL editor.
+2. Add `CRON_SECRET=<random_string>` to `.env.local`.
+3. Optional: wire the cron via Supabase pg_cron (sample in
+   `app/api/cron/expire-subscriptions/route.ts`).
+4. As platform admin, visit `/admin/plans` to see the seeded plans;
+   `/admin/onboard-school` to see the new plan selector + dropdown.
+
+### 10. Files added / touched
+
+```
+NEW (this session)
+  supabase/migrations/24_student_exam_goal.sql
+  supabase/migrations/25_plans_and_audit.sql
+  supabase/migrations/26_seed_initial_plans.sql
+  supabase/migrations/27_per_student_pricing.sql
+  supabase/migrations/28_seed_school_plans.sql
+  lib/features.ts
+  lib/featureAccess.ts
+  lib/studentGoalTiles.ts
+  components/StudentGoalPicker.tsx
+  components/StudentFeatureTile.tsx
+  components/BloomHero.tsx
+  components/PaywallModal.tsx
+  components/RenewBanner.tsx
+  app/admin/plans/page.tsx
+  app/admin/plans/new/page.tsx
+  app/admin/plans/[id]/edit/page.tsx
+  app/api/admin/plans/route.ts
+  app/api/admin/plans/[id]/route.ts
+  app/api/admin/plans/[id]/transition/route.ts
+  app/api/admin/schools/[id]/set-plan/route.ts
+  app/api/pricing/active-plans/route.ts
+  app/api/cron/expire-subscriptions/route.ts
+
+MODIFIED
+  lib/types.ts                       (Plan, PlanTier, PlanStatus,
+                                      PlanAuditEvent, exam_goal,
+                                      pricing_model fields)
+  app/student/page.tsx               (goal picker + BloomHero +
+                                      goal-aware tiles + lock states +
+                                      paywall + renew banner; school
+                                      branch rebuilt with same catalogue)
+  app/admin/layout.tsx               (Plans tab in admin nav)
+  app/admin/onboard-school/page.tsx  (plan select on form, plan
+                                      dropdown column on list)
+  app/api/admin/onboard-school/route.ts (plan_id on POST + plan join
+                                         on GET, available_school_plans)
+  app/api/checkout/route.ts          (DB-driven price, plan_id in notes)
+  app/api/checkout/verify/route.ts   (binds subscription.plan_id from
+                                      order notes)
+  app/pricing/page.tsx               (live DB plans + Premium Plus
+                                      section + per-student calculator
+                                      for schools)
+  components/Sidebar.tsx             (Plans link in PLATFORM ADMIN section)
+  app/student/practice/page.js       (deleted — was a redirect stub)
+```
+
+### 11. Backlog (multi-day track, parked for future sessions)
+
+- Server-side `requireFeature(userId, key)` enforcement on the actual
+  feature route handlers — closes curl-bypass on the dashboard's
+  paywall modal.
+- Per-subscription `extra_features` (give Alice a feature without
+  raising her price). Design documented in chat — defer until needed.
+- Email reminders before/at/after expiry. Plug into the cron once
+  SMTP is wired (Resend recommended).
+- True auto-renewal via Razorpay Subscriptions API (Path B). Path A
+  in this session is buy-each-cycle; Path B is recurring with mandate.
+- Audit-log UI on `/admin/plans/[id]` — the data is captured, just
+  not surfaced in the UI yet.
+- "Add only, never remove" enforcement on plan version transitions —
+  warn or block if a new active version drops a feature key that the
+  prior active version had.
+
+---
+
+## 🆕 Earlier session — 2026-04-30 (Platform Admin, school onboarding, ToS)
 
 A focused round on **how a paying school actually gets onto BloomIQ**, plus
 modern auth UX and legal acceptance. Every change is additive — no existing
@@ -1020,4 +1256,137 @@ scripts/
 
 In rough priority:
 
-1. **Razorpay live-mode cutover** — code is mode-agnostic; only env vars change.
+1. **Razorpay live-mode cutover** — code is mode-agnostic; only env vars change. Need real KYC + bank account on Razorpay first.
+2. **Subscription cancel / manage UI** for the student (today: only the verify endpoint writes to `subscriptions`; no self-service cancel)
+3. **School-plan purchase UI** — schema is ready (partial unique on `school_id`, `subs_owner_xor` CHECK), but currently "Talk to us" only on `/pricing`
+4. **Razorpay webhook** at `/api/checkout/webhook` for resilience (independent of the verify path; same SELECT → UPDATE/INSERT pattern, never `onConflict`)
+5. **Branded receipt email** via nodemailer in the verify endpoint (Razorpay sends its own receipt today)
+6. Per-attempt **IP capture** on quiz submissions (schema ready: `quiz_attempts.ip` + `.user_agent`)
+7. **Parent reports** for independent students (`profiles.parent_email` is ready)
+8. **Mock-test mode** for independent students (timed, exam-style)
+9. **Resend / SendGrid** instead of Gmail SMTP for digest reliability
+10. **Cron-scheduled weekly digest** (Vercel Cron)
+11. **PDF export** for exam papers (currently browser print only)
+12. **Inline question edit** from the question bank (today: edit happens in Review only)
+13. **Multi-page past-paper upload** (currently one image at a time)
+
+---
+
+## 📝 Notes
+
+- The `_archive/` folder contains stale `.js` page files moved out of the route tree — safe to delete.
+- The original `/teacher/bank` page was removed and now redirects to `/teacher/quizzes/new` (the Composer absorbed its purpose).
+- The original `/student/independent` page was removed and now redirects to `/student`.
+- Quiz codes and class codes use the same `generateQuizCode()` helper — a 6-char unambiguous code (no I/O/L/0/1).
+- Synthetic email domain for school students: `bloomiq.invalid` (RFC reserved, never deliverable).
+
+---
+
+## 💤 Goodnight!
+
+You've built a lot. Sleep well. The first thing to do tomorrow is the four steps under **🌅 Start here tomorrow morning** at the top — restart the dev server, clear browser storage, recreate test accounts, sign in. If anything still breaks, check Console + terminal and we'll trace it from there.
+                tap-fast practice
+    rank/                         ★ mock-exam rank predictor
+    traps/                        ★ trap-detector (ETS-style distractor warnings)
+    sprint/                       ★ exam-week 7-day sprint plan
+    flashcards/                   AI flashcards on weak topics
+    parent/                       parent dashboard hub
+  parent/[studentId]/             public parent view of a student
+  pricing/                        public pricing + Razorpay checkout
+  terms/                          ★ Terms of Service (NEW)
+  privacy/                        ★ Privacy Policy (NEW)
+  auth/set-password/              ★ universal set-password screen (NEW)
+  admin/                          ★ BloomIQ staff area (NEW)
+    onboard-school/               provision a paying school by inviting its Admin Head
+    team/                         manage who has platform_admin
+  api/
+    admin/                        admin RPCs (teachers, classes, transfer, ★ onboard-school, ★ team)
+    school/                       super_teacher RPCs (join, digest, etc.)
+    quizzes/, generate/, ...      teacher + student RPCs
+    checkout/, checkout/verify/   Razorpay flow
+components/
+  Sidebar.tsx                     role-aware nav + ★ Platform Admin section for staff
+  PublicNav.tsx                   ★ auth-aware top nav for / and /pricing
+  AuthHealer.tsx                  best-effort recovery from broken sessions
+  BloomBadge.tsx, BloomChart.tsx, BulkAddStudents.tsx, ...
+lib/
+  supabase/{client,server}.ts     Supabase clients (incl. service-role admin client)
+  bloom.ts, bloomScore.ts         Bloom-level helpers
+  groq.ts, gemini.js              AI provider wrappers
+  exam/{scoring,code}.ts          exam scoring + join-code helpers
+  utils.ts, types.ts              shared helpers + DB row types
+supabase/migrations/              numbered SQL migrations (run in order in SQL editor)
+tests/e2e/                        Playwright tests (auth helpers + per-role specs)
+```
+
+---
+
+## 🤝 Contributing
+
+This is a private project — see SESSION_NOTES.md for the working log,
+CONTEXT.md for the architectural overview, and AGENTS.md for AI-agent
+guidance when using Claude Code or similar tools to extend it.
+ misconception buckets
+    rank/predict/                 ★ predict mock-exam rank from past attempts
+    sprint/today/, sprint/save/   ★ daily slice of the 7-day sprint plan
+    flashcards/                   AI flashcards on weak topics
+    parent/invite/, parent/data/  parent invite + read-only digest API
+    checkout/, checkout/verify/   Razorpay flow
+components/
+  Sidebar.tsx                     role-aware nav + ★ Platform Admin section
+  PublicNav.tsx                   ★ auth-aware top nav for / and /pricing
+  AuthHealer.tsx, BloomBadge.tsx, BloomChart.tsx, BulkAddStudents.tsx, ...
+lib/
+  supabase/{client,server}.ts     Supabase clients (incl. service-role admin client)
+  bloom.ts, bloomScore.ts         Bloom-level helpers
+  groq.ts, gemini.js              AI provider wrappers
+  exam/{scoring,code}.ts          exam scoring + join-code helpers
+  utils.ts, types.ts              shared helpers + DB row types
+supabase/migrations/              numbered SQL migrations (run in order in SQL editor)
+tests/e2e/                        Playwright tests (auth helpers + per-role specs)
+```
+
+---
+
+## 🤝 Contributing
+
+Private project — see `SESSION_NOTES.md` for the working log,
+`CONTEXT.md` for the architectural overview, and `AGENTS.md` for
+AI-agent guidance when extending the codebase with Claude Code or
+similar tools.
+ansfer/    Admin Head transfer flow
+    admin/onboard-school/         ★ NEW — platform admin provisions a school
+    admin/team/                   ★ NEW — manage platform_admin team
+components/
+  Sidebar.tsx                     role-aware nav + ★ Platform Admin section
+  PublicNav.tsx                   ★ NEW — auth-aware top nav (/ and /pricing)
+  AuthHealer.tsx, BloomBadge.tsx, BloomChart.tsx, BulkAddStudents.tsx, ...
+lib/
+  supabase/{client,server}.ts     Supabase clients (incl. service-role admin)
+  bloom.ts, bloomScore.ts         Bloom-level helpers
+  groq.ts, gemini.js              AI provider wrappers
+  exam/{scoring,code}.ts          exam scoring + join-code helpers
+  utils.ts, types.ts              shared helpers + DB row types
+supabase/migrations/              numbered SQL migrations (run in order)
+tests/e2e/                        Playwright tests (auth helpers + role specs)
+```
+
+---
+
+## 🤝 Contributing
+
+Private project — see `SESSION_NOTES.md` for the working log,
+`CONTEXT.md` for the architectural overview, and `AGENTS.md` for
+AI-agent guidance when extending the codebase with Claude Code or
+similar tools.
+tions (run in order)
+  RESET_AND_REBUILD.sql           concatenated drop+rebuild script
+```
+
+---
+
+## 🤝 Contributing
+
+Private project. See `SESSION_NOTES.md` for the working log,
+`CONTEXT.md` for the architectural overview, and `AGENTS.md` for
+guidance when extending the codebase with AI agents.

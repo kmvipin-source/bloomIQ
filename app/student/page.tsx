@@ -8,6 +8,14 @@ import { pct } from "@/lib/utils";
 import Empty from "@/components/Empty";
 import { ClipboardList, Clock, Play, Sparkles, TrendingUp, NotebookPen, AlertCircle, CalendarDays, ListChecks, GraduationCap, Search, ScanSearch, Timer, Crosshair, Trophy, Bot, Film, Brain, Gauge, Users, Mic, Network, MessageCircle, Target, Zap } from "lucide-react";
 import { BLOOM_LEVELS, BLOOM_META, blankBloomCounts } from "@/lib/bloom";
+import StudentGoalPicker, { STUDENT_GOALS } from "@/components/StudentGoalPicker";
+import StudentFeatureTile from "@/components/StudentFeatureTile";
+import { TILE_META, tileLayoutForGoal } from "@/lib/studentGoalTiles";
+import BloomHero from "@/components/BloomHero";
+import PaywallModal from "@/components/PaywallModal";
+import RenewBanner from "@/components/RenewBanner";
+import { useFeatureAccess, findUnlockingTier, tierLabel } from "@/lib/featureAccess";
+import type { PlanTier } from "@/lib/types";
 
 type AttemptRow = QuizAttempt & { quiz: { name: string; code: string } | null };
 
@@ -48,6 +56,39 @@ export default function StudentHome() {
   // Number of SRS reviews due today. 0 (or null on RPC failure) hides the card.
   const [srsDueCount, setSrsDueCount] = useState<number>(0);
 
+  // Exam goal (independent students only). When null on first dashboard
+  // visit we show the goal-picker onboarding card instead of the
+  // tile buffet. Drives downstream tile prioritisation. See migration 24.
+  const [examGoal, setExamGoal] = useState<string | null>(null);
+
+  // Feature gating. `allowed` is the set of feature keys the user's plan
+  // grants. Tiles whose featureKey is missing from this set render in the
+  // visible-but-locked state (see lib/featureAccess.ts + StudentFeatureTile).
+  const access = useFeatureAccess();
+  const [paywall, setPaywall] = useState<{ key: string; tier: PlanTier | null }>({ key: "", tier: null });
+
+  // Pre-resolve "which tier unlocks each feature" so the lock badge label is
+  // accurate per-tile. Cached in state so we only fetch once.
+  const [unlockMap, setUnlockMap] = useState<Record<string, { tier: PlanTier; label: string }>>({});
+  useEffect(() => {
+    if (access.isLoading) return;
+    (async () => {
+      const out: Record<string, { tier: PlanTier; label: string }> = {};
+      const keys = Object.values(TILE_META).map((m) => m.featureKey).filter(Boolean) as string[];
+      for (const k of keys) {
+        if (access.allowed.has(k)) continue;
+        const tier = await findUnlockingTier(k);
+        if (tier) out[k] = { tier: tier.tier, label: tier.label };
+      }
+      setUnlockMap(out);
+    })();
+  }, [access.isLoading, access.allowed]);
+
+  function openPaywall(key: string | undefined) {
+    if (!key) return;
+    setPaywall({ key, tier: unlockMap[key]?.tier || null });
+  }
+
   useEffect(() => {
     (async () => {
       const sb = supabaseBrowser();
@@ -56,11 +97,12 @@ export default function StudentHome() {
 
       const { data: prof } = await sb
         .from("profiles")
-        .select("full_name, is_school_student")
+        .select("full_name, is_school_student, exam_goal")
         .eq("id", user.id)
         .single();
       setName(prof?.full_name || "");
       setIsSchool(!!prof?.is_school_student);
+      setExamGoal((prof as { exam_goal?: string | null } | null)?.exam_goal || null);
 
       if (prof && !prof.is_school_student) {
         try {
@@ -189,10 +231,60 @@ export default function StudentHome() {
 
   // ============ INDEPENDENT STUDENT HOME ============
   if (!isSchool) {
+    // First-time onboarding: capture exam goal before showing the dashboard.
+    // School students skip this entirely (their goal is dictated by the class).
+    if (!examGoal) {
+      return (
+        <div className="py-8">
+          <StudentGoalPicker onPicked={(g) => setExamGoal(g)} />
+        </div>
+      );
+    }
+
+    // Look up the chosen goal's display label for the chip on the dashboard.
+    const goalMeta = STUDENT_GOALS.find((g) => g.id === examGoal);
+
     return (
       <div className="max-w-5xl mx-auto fade-in">
         <h1 className="h1">Hi{name ? `, ${name.split(" ")[0]}` : ""} 👋</h1>
         <p className="muted mt-1">Generate a practice test, take it, watch your scores climb.</p>
+
+        {/* Goal chip — shows what the student picked at onboarding, with a
+            link back to the picker so they can change it. */}
+        {goalMeta && (
+          <div className="mt-3 inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded-full bg-emerald-50 border border-emerald-200">
+            <span>{goalMeta.emoji}</span>
+            <span className="text-emerald-900">
+              <span className="muted">Preparing for:</span>{" "}
+              <strong>{goalMeta.label}</strong>
+            </span>
+            <button
+              type="button"
+              onClick={() => setExamGoal(null)}
+              className="text-emerald-700 hover:underline font-semibold ml-1"
+            >
+              change
+            </button>
+          </div>
+        )}
+
+        {/* Renewal banner — only renders for paid independent subscriptions
+            within 7 days of expiry or already expired. School students
+            don't see this (school renews via offline contract). */}
+        <RenewBanner
+          expiresAt={access.expiresAt}
+          isExpired={access.isExpired}
+          planSlug={access.planSlug}
+          source={access.source}
+        />
+
+        {/* Bloom heat-map hero — the visual anchor of the dashboard.
+            Always rendered, even before the student has any attempts (it
+            shows a clean empty state with a single "Take your first
+            practice test" CTA). When data exists, it surfaces strongest +
+            weakest Bloom levels with a "Drill it" link that routes them
+            to the Misconception Detective. */}
+        <BloomHero mastery={bloomMastery} />
 
         {sprint && sprint.days_remaining >= 0 && (
           <Link
@@ -310,141 +402,72 @@ export default function StudentHome() {
           </div>
         </div>
 
-        <div className="mt-8">
-          <div className="flex items-center gap-2 mb-3">
-            <h2 className="h2">Boost your learning</h2>
-            <span className="text-[10px] uppercase tracking-wide font-bold text-emerald-700 bg-emerald-100 rounded-full px-2 py-0.5">New</span>
-          </div>
-          <div className="grid sm:grid-cols-2 gap-3">
-            <Link href="/student/teach-back" className="card card-hover flex items-start gap-3">
-              <div className="rounded-lg bg-emerald-100 text-emerald-700 p-2 shrink-0"><GraduationCap size={18} /></div>
-              <div className="flex-1 min-w-0">
-                <div className="font-semibold">Teach-Back</div>
-                <div className="text-xs muted mt-1">Explain a topic in your own words. We grade you on Bloom&apos;s rubric and ask one sharp follow-up.</div>
+        {/* ============ Goal-aware feature tiles ============
+            Replaces the previous three themed sections (Boost / Ace /
+            Learn deeper) with two goal-driven sections. The priority is
+            looked up from lib/studentGoalTiles.ts based on profiles.exam_goal.
+            See 2026-04-30 strategy session — "regroup, don't remove":
+            no features deleted, just deprioritised under "More tools". */}
+        {(() => {
+          const layout = tileLayoutForGoal(examGoal);
+          return (
+            <>
+              <div className="mt-8">
+                <div className="flex items-center gap-2 mb-3">
+                  <h2 className="h2">Recommended for you</h2>
+                  <span className="text-[10px] uppercase tracking-wide font-bold text-emerald-700 bg-emerald-100 rounded-full px-2 py-0.5">
+                    {goalMeta?.label || "Personalised"}
+                  </span>
+                </div>
+                <div className="grid sm:grid-cols-2 gap-3">
+                  {layout.primary.map((key) => {
+                    const meta = TILE_META[key];
+                    const fk = meta.featureKey;
+                    const locked = !access.isLoading && !!fk && !access.allowed.has(fk);
+                    return (
+                      <StudentFeatureTile
+                        key={key}
+                        meta={meta}
+                        // The Sprint tile takes the wide slot when it appears in primary
+                        fullWidth={key === "sprint"}
+                        locked={locked}
+                        lockedTierLabel={fk ? unlockMap[fk]?.label : undefined}
+                        onLockedClick={openPaywall}
+                      />
+                    );
+                  })}
+                </div>
               </div>
-            </Link>
 
-            <Link href="/student/misconceptions" className="card card-hover flex items-start gap-3">
-              <div className="rounded-lg bg-amber-100 text-amber-700 p-2 shrink-0"><Search size={18} /></div>
-              <div className="flex-1 min-w-0">
-                <div className="font-semibold">Misconception Detective</div>
-                <div className="text-xs muted mt-1">Find the *specific* mental error behind each wrong answer, then drill it away.</div>
-              </div>
-            </Link>
-
-            <Link href="/student/xray" className="card card-hover flex items-start gap-3">
-              <div className="rounded-lg bg-sky-100 text-sky-700 p-2 shrink-0"><ScanSearch size={18} /></div>
-              <div className="flex-1 min-w-0">
-                <div className="font-semibold">Past-Paper X-Ray</div>
-                <div className="text-xs muted mt-1">Upload last year&apos;s paper. We tag every question by Bloom level + topic and give you 5 study targets.</div>
-              </div>
-            </Link>
-          </div>
-        </div>
-
-        <div className="mt-8">
-          <div className="flex items-center gap-2 mb-3">
-            <h2 className="h2">Ace competitive exams</h2>
-            <span className="text-[10px] uppercase tracking-wide font-bold text-amber-700 bg-amber-100 rounded-full px-2 py-0.5">New</span>
-          </div>
-          <div className="grid sm:grid-cols-2 gap-3">
-            <Link href="/student/sprint" className="card card-hover flex items-start gap-3 sm:col-span-2 border-emerald-200 bg-emerald-50/30">
-              <div className="rounded-lg bg-emerald-100 text-emerald-700 p-2 shrink-0"><CalendarDays size={18} /></div>
-              <div className="flex-1 min-w-0">
-                <div className="font-semibold">Exam Sprint Mode</div>
-                <div className="text-xs muted mt-1">Set your exam date. Get a daily 3-task mission tuned to how far out it is — foundation now, sprint as it nears, revision-only in the final week.</div>
-              </div>
-            </Link>
-
-            <Link href="/student/speed" className="card card-hover flex items-start gap-3">
-              <div className="rounded-lg bg-orange-100 text-orange-700 p-2 shrink-0"><Timer size={18} /></div>
-              <div className="flex-1 min-w-0">
-                <div className="font-semibold">Speed-Accuracy Trainer</div>
-                <div className="text-xs muted mt-1">Each question gets a target time based on its Bloom level. Fast+right is exam-ready; slow+right means you need pace work.</div>
-              </div>
-            </Link>
-
-            <Link href="/student/traps" className="card card-hover flex items-start gap-3">
-              <div className="rounded-lg bg-rose-100 text-rose-700 p-2 shrink-0"><Crosshair size={18} /></div>
-              <div className="flex-1 min-w-0">
-                <div className="font-semibold">Distractor Trap Detector</div>
-                <div className="text-xs muted mt-1">Find which examiner-trap patterns you fall for most — unit confusion, sign errors, NOT-misreads, off-by-one, and more.</div>
-              </div>
-            </Link>
-
-            <Link href="/student/rank" className="card card-hover flex items-start gap-3">
-              <div className="rounded-lg bg-amber-100 text-amber-700 p-2 shrink-0"><Trophy size={18} /></div>
-              <div className="flex-1 min-w-0">
-                <div className="font-semibold">Mock Rank Predictor</div>
-                <div className="text-xs muted mt-1">Convert any score into an AIR estimate against JEE/NEET/CAT-sized cohorts. See exactly where to gain marks.</div>
-              </div>
-            </Link>
-
-            <Link href="/student/tutor" className="card card-hover flex items-start gap-3">
-              <div className="rounded-lg bg-indigo-100 text-indigo-700 p-2 shrink-0"><Bot size={18} /></div>
-              <div className="flex-1 min-w-0">
-                <div className="font-semibold">Doubt-Clearing AI Tutor</div>
-                <div className="text-xs muted mt-1">A 24/7 Socratic tutor. Type your doubt, get walked through it step by step — no answer dumps.</div>
-              </div>
-            </Link>
-          </div>
-        </div>
-
-        <div className="mt-8">
-          <div className="flex items-center gap-2 mb-3">
-            <h2 className="h2">Learn deeper, retain longer</h2>
-            <span className="text-[10px] uppercase tracking-wide font-bold text-fuchsia-700 bg-fuchsia-100 rounded-full px-2 py-0.5">New</span>
-          </div>
-          <div className="grid sm:grid-cols-3 gap-3">
-            <Link href="/student/visualizer" className="card card-hover flex items-start gap-3">
-              <div className="rounded-lg bg-fuchsia-100 text-fuchsia-700 p-2 shrink-0"><Film size={18} /></div>
-              <div className="flex-1 min-w-0">
-                <div className="font-semibold">Concept Visualizer</div>
-                <div className="text-xs muted mt-1">Type any concept — get an animated, narrated explainer. Best for the things that don&apos;t click from words.</div>
-              </div>
-            </Link>
-
-            <Link href="/student/memory" className="card card-hover flex items-start gap-3">
-              <div className="rounded-lg bg-cyan-100 text-cyan-700 p-2 shrink-0"><Brain size={18} /></div>
-              <div className="flex-1 min-w-0">
-                <div className="font-semibold">Memory Tune-Up</div>
-                <div className="text-xs muted mt-1">Spaced repetition for your wrong answers. 5 minutes a day, the forgetting curve never wins.</div>
-              </div>
-            </Link>
-
-            <Link href="/student/calibration" className="card card-hover flex items-start gap-3">
-              <div className="rounded-lg bg-teal-100 text-teal-700 p-2 shrink-0"><Gauge size={18} /></div>
-              <div className="flex-1 min-w-0">
-                <div className="font-semibold">Confidence Calibration</div>
-                <div className="text-xs muted mt-1">When you say &ldquo;Sure&rdquo;, are you actually right? Train the metacognitive skill that beats negative marking.</div>
-              </div>
-            </Link>
-
-            <Link href="/student/voice-teacher" className="card card-hover flex items-start gap-3">
-              <div className="rounded-lg bg-violet-100 text-violet-700 p-2 shrink-0"><Mic size={18} /></div>
-              <div className="flex-1 min-w-0">
-                <div className="font-semibold">Voice AI Teacher</div>
-                <div className="text-xs muted mt-1">Speak your doubt, hear the answer back, optionally see the animation. Hands-free study.</div>
-              </div>
-            </Link>
-
-            <Link href="/student/graph" className="card card-hover flex items-start gap-3">
-              <div className="rounded-lg bg-blue-100 text-blue-700 p-2 shrink-0"><Network size={18} /></div>
-              <div className="flex-1 min-w-0">
-                <div className="font-semibold">Knowledge Graph</div>
-                <div className="text-xs muted mt-1">A visual map of every topic you&apos;ve practiced, with prerequisite arrows. Find the foundation gap.</div>
-              </div>
-            </Link>
-
-            <Link href="/student/parent" className="card card-hover flex items-start gap-3">
-              <div className="rounded-lg bg-pink-100 text-pink-700 p-2 shrink-0"><Users size={18} /></div>
-              <div className="flex-1 min-w-0">
-                <div className="font-semibold">Share with a parent</div>
-                <div className="text-xs muted mt-1">Generate a link to share via WhatsApp. Parents see your progress read-only — no signup needed.</div>
-              </div>
-            </Link>
-          </div>
-        </div>
+              {layout.secondary.length > 0 && (
+                <details className="mt-8 group">
+                  <summary className="cursor-pointer list-none flex items-center gap-2 mb-3">
+                    <h2 className="h2">More tools</h2>
+                    <span className="text-xs muted">
+                      ({layout.secondary.length} more — click to expand)
+                    </span>
+                  </summary>
+                  <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {layout.secondary.map((key) => {
+                      const meta = TILE_META[key];
+                      const fk = meta.featureKey;
+                      const locked = !access.isLoading && !!fk && !access.allowed.has(fk);
+                      return (
+                        <StudentFeatureTile
+                          key={key}
+                          meta={meta}
+                          locked={locked}
+                          lockedTierLabel={fk ? unlockMap[fk]?.label : undefined}
+                          onLockedClick={openPaywall}
+                        />
+                      );
+                    })}
+                  </div>
+                </details>
+              )}
+            </>
+          );
+        })()}
 
         <div className="grid sm:grid-cols-3 gap-4 mt-6">
           <div className="card">
@@ -524,6 +547,16 @@ export default function StudentHome() {
             </table>
           </div>
         )}
+
+        {/* Paywall modal — opens when a free user clicks a Premium-locked
+            tile, or a Premium user clicks a Premium Plus-locked tile. */}
+        <PaywallModal
+          open={!!paywall.key}
+          onClose={() => setPaywall({ key: "", tier: null })}
+          featureKey={paywall.key || null}
+          unlockingTier={paywall.tier}
+          currentTier={access.planTier}
+        />
       </div>
     );
   }
@@ -610,35 +643,60 @@ export default function StudentHome() {
         </div>
       </div>
 
-      <div className="mt-6">
-        <div className="flex items-center gap-2 mb-3">
-          <h2 className="h2">Boost your test-taking</h2>
-          <span className="text-[10px] uppercase tracking-wide font-bold text-emerald-700 bg-emerald-100 rounded-full px-2 py-0.5">New</span>
-        </div>
-        <div className="grid sm:grid-cols-3 gap-3">
-          <Link href="/student/speed" className="card card-hover flex items-start gap-3">
-            <div className="rounded-lg bg-orange-100 text-orange-700 p-2 shrink-0"><Timer size={18} /></div>
-            <div className="flex-1 min-w-0">
-              <div className="font-semibold">Speed-Accuracy</div>
-              <div className="text-xs muted mt-1">Train your exam pace — Bloom-level timers per question.</div>
+      {/* ============ Goal-aware feature tiles for school students ============
+          Same data-driven catalogue as the independent dashboard but
+          gated by the SCHOOL's plan (resolved via useFeatureAccess →
+          source: "school"). Tiles whose featureKey isn't in the school
+          plan render locked, and clicking opens the school-student
+          paywall variant ("ask your school admin"), since school
+          students can't self-upgrade.
+          Replaces the previous 3 hardcoded tiles. */}
+      {(() => {
+        const layout = tileLayoutForGoal(null);
+        const renderTile = (key: typeof layout.primary[number]) => {
+          const meta = TILE_META[key];
+          const fk = meta.featureKey;
+          const locked = !access.isLoading && !!fk && !access.allowed.has(fk);
+          return (
+            <StudentFeatureTile
+              key={key}
+              meta={meta}
+              fullWidth={key === "sprint"}
+              locked={locked}
+              lockedTierLabel={fk ? unlockMap[fk]?.label : undefined}
+              onLockedClick={openPaywall}
+            />
+          );
+        };
+        return (
+          <>
+            <div className="mt-8">
+              <div className="flex items-center gap-2 mb-3">
+                <h2 className="h2">All your tools</h2>
+                <span className="text-[10px] uppercase tracking-wide font-bold text-emerald-700 bg-emerald-100 rounded-full px-2 py-0.5">
+                  Your school&apos;s plan
+                </span>
+              </div>
+              <div className="grid sm:grid-cols-2 gap-3">
+                {layout.primary.map(renderTile)}
+              </div>
             </div>
-          </Link>
-          <Link href="/student/traps" className="card card-hover flex items-start gap-3">
-            <div className="rounded-lg bg-rose-100 text-rose-700 p-2 shrink-0"><Crosshair size={18} /></div>
-            <div className="flex-1 min-w-0">
-              <div className="font-semibold">Trap Detector</div>
-              <div className="text-xs muted mt-1">Find which examiner-trap patterns trip you up most.</div>
-            </div>
-          </Link>
-          <Link href="/student/tutor" className="card card-hover flex items-start gap-3">
-            <div className="rounded-lg bg-indigo-100 text-indigo-700 p-2 shrink-0"><Bot size={18} /></div>
-            <div className="flex-1 min-w-0">
-              <div className="font-semibold">AI Tutor</div>
-              <div className="text-xs muted mt-1">Stuck? Chat through any concept — Socratic, not answer-dump.</div>
-            </div>
-          </Link>
-        </div>
-      </div>
+            {layout.secondary.length > 0 && (
+              <details className="mt-6 group">
+                <summary className="cursor-pointer list-none flex items-center gap-2 mb-3">
+                  <h2 className="h2">More tools</h2>
+                  <span className="text-xs muted">
+                    ({layout.secondary.length} more — click to expand)
+                  </span>
+                </summary>
+                <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {layout.secondary.map(renderTile)}
+                </div>
+              </details>
+            )}
+          </>
+        );
+      })()}
 
       <h2 className="h2 mt-8 mb-3 flex items-center gap-2">
         <ClipboardList size={20} /> Assigned to you
@@ -743,6 +801,18 @@ export default function StudentHome() {
           </table>
         </div>
       )}
+
+      {/* Paywall modal for school students — opens when they click a
+          locked tile. Variant routes them to email their Admin Head
+          rather than /pricing, since school students can't self-upgrade. */}
+      <PaywallModal
+        open={!!paywall.key}
+        onClose={() => setPaywall({ key: "", tier: null })}
+        featureKey={paywall.key || null}
+        unlockingTier={paywall.tier}
+        currentTier={access.planTier}
+        isSchoolStudent
+      />
     </div>
   );
 }

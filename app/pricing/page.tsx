@@ -56,7 +56,11 @@ function loadRazorpaySdk(): Promise<void> {
   });
 }
 
-type PlanId = "individual_monthly" | "individual_yearly";
+// Plan id used by upgrade() — accepts both legacy hardcoded ids and any
+// slug from the live DB-driven plan catalogue (e.g. "premium_monthly",
+// "premium_plus_annual"). Widened to string to keep the type system out
+// of the way of dynamically-loaded plans.
+type PlanId = string;
 type Plan = {
   id: PlanId;
   label: string;
@@ -115,6 +119,38 @@ function PricingInner() {
   const [success, setSuccess] = useState<{ tier: string; expiresAt: string } | null>(null);
   const autoFiredRef = useRef(false);
 
+  // Plans loaded live from the platform-admin catalogue (active rows only).
+  // Falls back to the hardcoded STUDENT_PLANS constant below if the fetch
+  // fails for any reason — so a misconfigured DB can't take pricing offline.
+  type DbPlan = {
+    id: string;
+    slug: string;
+    tier: string;
+    label: string;
+    blurb: string | null;
+    feature_summary: string[];
+    price_paise: number;
+    currency: string;
+    period_days: number;
+    pricing_model?: "fixed" | "per_student";
+    per_student_price_paise?: number;
+    min_students?: number;
+    max_students?: number | null;
+  };
+  const [dbPlans, setDbPlans] = useState<DbPlan[]>([]);
+  // Interactive headcount input for the per-student calculator on the
+  // For-schools section. Defaults to a sensible mid-range school size.
+  const [schoolHeadcount, setSchoolHeadcount] = useState(200);
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await fetch("/api/pricing/active-plans");
+        const j = await r.json();
+        if (r.ok && Array.isArray(j.plans)) setDbPlans(j.plans);
+      } catch { /* silent — fall back to hardcoded plans */ }
+    })();
+  }, []);
+
   // Load current user (if any)
   useEffect(() => {
     (async () => {
@@ -146,7 +182,8 @@ function PricingInner() {
   useEffect(() => {
     if (loading || autoFiredRef.current) return;
     if (!autostart) return;
-    if (autostart !== "individual_monthly" && autostart !== "individual_yearly") return;
+    // Accept any plan id — legacy hardcoded ones AND DB-driven slugs.
+    if (typeof autostart !== "string" || !autostart) return;
     if (!me) return; // can't pay without a session; visitor can click manually
     autoFiredRef.current = true;
     upgrade(autostart);
@@ -169,10 +206,19 @@ function PricingInner() {
       const { data: { session } } = await sb.auth.getSession();
       if (!session) throw new Error("Your session expired. Please sign in again.");
 
+      // Map the legacy hardcoded plan id to the new plan slug. The new
+      // checkout API accepts both keys, so this is a safety net during
+      // the transition; once /pricing renders only DB plans we'll send
+      // plan_slug exclusively.
+      const slugMap: Record<string, string> = {
+        individual_monthly: "premium_monthly",
+        individual_yearly: "premium_annual",
+      };
+      const planSlug = slugMap[planId] ?? planId;
       const orderRes = await fetch("/api/checkout", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
-        body: JSON.stringify({ plan: planId }),
+        body: JSON.stringify({ plan_slug: planSlug, plan: planId }),
       });
       const order = await orderRes.json();
       if (!orderRes.ok) throw new Error(order?.error || "Checkout failed");
@@ -373,37 +419,140 @@ function PricingInner() {
               )}
             </div>
 
-            {STUDENT_PLANS.map((p) => {
-              const cta = ctaFor(p.id);
-              return (
-                <div key={p.id} className={`card flex flex-col ${p.highlight ? "border-emerald-500 ring-2 ring-emerald-500/30 relative" : ""}`}>
-                  {p.highlight && (
-                    <span className="absolute -top-3 right-4 text-[10px] uppercase tracking-wide font-bold text-white bg-emerald-600 rounded-full px-2 py-0.5 shadow">
-                      Best value
-                    </span>
-                  )}
-                  <div className="font-bold text-lg">{p.label}</div>
-                  <div className="text-3xl font-bold mt-2">
-                    {p.priceLine}
-                    <span className="text-base font-normal muted"> /{p.id === "individual_monthly" ? "mo" : "yr"}</span>
+            {/* Premium tier — sourced live from the platform-admin catalogue
+                (lib/featureAccess.ts + /api/pricing/active-plans). When the
+                fetch hasn't returned yet OR returns nothing, we fall back
+                to the hardcoded STUDENT_PLANS so the page still renders. */}
+            {(() => {
+              const livePremium = dbPlans
+                .filter((p) => p.tier === "premium")
+                .sort((a, b) => a.period_days - b.period_days);
+              if (livePremium.length === 0) {
+                // Fallback path — render hardcoded STUDENT_PLANS as before.
+                return STUDENT_PLANS.map((p) => {
+                  const cta = ctaFor(p.id);
+                  return (
+                    <div key={p.id} className={`card flex flex-col ${p.highlight ? "border-emerald-500 ring-2 ring-emerald-500/30 relative" : ""}`}>
+                      {p.highlight && (
+                        <span className="absolute -top-3 right-4 text-[10px] uppercase tracking-wide font-bold text-white bg-emerald-600 rounded-full px-2 py-0.5 shadow">
+                          Best value
+                        </span>
+                      )}
+                      <div className="font-bold text-lg">{p.label}</div>
+                      <div className="text-3xl font-bold mt-2">
+                        {p.priceLine}
+                        <span className="text-base font-normal muted"> /{p.id === "individual_monthly" ? "mo" : "yr"}</span>
+                      </div>
+                      <p className="muted text-xs mt-1">{p.blurb}</p>
+                      <ul className="mt-4 space-y-1.5 text-sm flex-1">
+                        {p.features.map((f) => (
+                          <li key={f} className="flex items-start gap-2"><Check size={14} className="text-emerald-600 mt-0.5 shrink-0" /> {f}</li>
+                        ))}
+                      </ul>
+                      <button
+                        className={`btn w-full mt-5 ${cta.primary ? "btn-primary" : "btn-secondary"}`}
+                        onClick={() => upgrade(p.id)}
+                        disabled={cta.disabled}
+                      >
+                        {busy === p.id ? <><span className="spinner" /> {cta.text}</> : <><Sparkles size={14} /> {cta.text}</>}
+                      </button>
+                    </div>
+                  );
+                });
+              }
+              // Live DB-driven render — annual gets the "Best value" highlight.
+              return livePremium.map((p) => {
+                const isAnnual = p.period_days >= 360;
+                const isCurrent = me?.tier === (isAnnual ? "premium" : "individual");
+                const cta = busy === p.slug
+                  ? { text: "Opening checkout…", disabled: true, primary: true }
+                  : !me ? { text: "Get this plan", disabled: false, primary: true }
+                  : isCurrent ? { text: "Current plan", disabled: true, primary: false }
+                  : { text: "Upgrade", disabled: busy !== null, primary: true };
+                return (
+                  <div key={p.slug} className={`card flex flex-col ${isAnnual ? "border-emerald-500 ring-2 ring-emerald-500/30 relative" : ""}`}>
+                    {isAnnual && (
+                      <span className="absolute -top-3 right-4 text-[10px] uppercase tracking-wide font-bold text-white bg-emerald-600 rounded-full px-2 py-0.5 shadow">
+                        Best value
+                      </span>
+                    )}
+                    <div className="font-bold text-lg">{p.label}</div>
+                    <div className="text-3xl font-bold mt-2">
+                      ₹{(p.price_paise / 100).toLocaleString("en-IN")}
+                      <span className="text-base font-normal muted"> /{isAnnual ? "yr" : "mo"}</span>
+                    </div>
+                    {p.blurb && <p className="muted text-xs mt-1">{p.blurb}</p>}
+                    <ul className="mt-4 space-y-1.5 text-sm flex-1">
+                      {p.feature_summary.map((f) => (
+                        <li key={f} className="flex items-start gap-2"><Check size={14} className="text-emerald-600 mt-0.5 shrink-0" /> {f}</li>
+                      ))}
+                    </ul>
+                    <button
+                      className={`btn w-full mt-5 ${cta.primary ? "btn-primary" : "btn-secondary"}`}
+                      onClick={() => upgrade(p.slug as PlanId)}
+                      disabled={cta.disabled}
+                    >
+                      {busy === p.slug ? <><span className="spinner" /> {cta.text}</> : <><Sparkles size={14} /> {cta.text}</>}
+                    </button>
                   </div>
-                  <p className="muted text-xs mt-1">{p.blurb}</p>
-                  <ul className="mt-4 space-y-1.5 text-sm flex-1">
-                    {p.features.map((f) => (
-                      <li key={f} className="flex items-start gap-2"><Check size={14} className="text-emerald-600 mt-0.5 shrink-0" /> {f}</li>
-                    ))}
-                  </ul>
-                  <button
-                    className={`btn w-full mt-5 ${cta.primary ? "btn-primary" : "btn-secondary"}`}
-                    onClick={() => upgrade(p.id)}
-                    disabled={cta.disabled}
-                  >
-                    {busy === p.id ? <><span className="spinner" /> {cta.text}</> : <><Sparkles size={14} /> {cta.text}</>}
-                  </button>
-                </div>
-              );
-            })}
+                );
+              });
+            })()}
           </div>
+
+          {/* Premium Plus tier — only renders when the platform admin has
+              published one or more active plans in this tier. */}
+          {(() => {
+            const livePlus = dbPlans
+              .filter((p) => p.tier === "premium_plus")
+              .sort((a, b) => a.period_days - b.period_days);
+            if (livePlus.length === 0) return null;
+            return (
+              <div className="mt-10">
+                <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500 mb-4">
+                  Premium Plus — voice tutor, concept visualizer, and priority access
+                </h2>
+                <div className="grid sm:grid-cols-2 gap-4">
+                  {livePlus.map((p) => {
+                    const isAnnual = p.period_days >= 360;
+                    const isCurrent = me?.tier === "premium_plus";
+                    const cta = busy === p.slug
+                      ? { text: "Opening checkout…", disabled: true, primary: true }
+                      : !me ? { text: "Get this plan", disabled: false, primary: true }
+                      : isCurrent ? { text: "Current plan", disabled: true, primary: false }
+                      : { text: "Upgrade", disabled: busy !== null, primary: true };
+                    return (
+                      <div key={p.slug} className={`card flex flex-col ${isAnnual ? "border-violet-500 ring-2 ring-violet-500/30 relative" : ""}`}>
+                        {isAnnual && (
+                          <span className="absolute -top-3 right-4 text-[10px] uppercase tracking-wide font-bold text-white bg-violet-600 rounded-full px-2 py-0.5 shadow">
+                            Best Plus value
+                          </span>
+                        )}
+                        <div className="font-bold text-lg">{p.label}</div>
+                        <div className="text-3xl font-bold mt-2">
+                          ₹{(p.price_paise / 100).toLocaleString("en-IN")}
+                          <span className="text-base font-normal muted"> /{isAnnual ? "yr" : "mo"}</span>
+                        </div>
+                        {p.blurb && <p className="muted text-xs mt-1">{p.blurb}</p>}
+                        <ul className="mt-4 space-y-1.5 text-sm flex-1">
+                          {p.feature_summary.map((f) => (
+                            <li key={f} className="flex items-start gap-2"><Check size={14} className="text-violet-600 mt-0.5 shrink-0" /> {f}</li>
+                          ))}
+                        </ul>
+                        <button
+                          className={`btn w-full mt-5 ${cta.primary ? "btn-primary" : "btn-secondary"}`}
+                          onClick={() => upgrade(p.slug as PlanId)}
+                          disabled={cta.disabled}
+                        >
+                          {busy === p.slug ? <><span className="spinner" /> {cta.text}</> : <><Sparkles size={14} /> {cta.text}</>}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })()}
 
           {err && (
             <div className="mt-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">
@@ -412,36 +561,137 @@ function PricingInner() {
           )}
         </section>
 
-        {/* ============ For schools ============ */}
+        {/* ============ For schools ============
+            Live-rendered from active school plans (tier starts with
+            school_*). Each plan shows its per-student rate + headcount
+            bracket. The calculator below the cards lets the visitor
+            type their student count and see the projected annual cost
+            against the right tier.
+            Falls back to the static "Talk to us" card when no school
+            plans are active in the DB. */}
         <section className="mt-12">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500 mb-4">For schools</h2>
-          <div className="card bg-gradient-to-br from-sky-50 to-emerald-50 border-emerald-200">
-            <div className="flex items-start gap-4 flex-wrap">
-              <div className="flex-1 min-w-[280px]">
-                <div className="font-bold text-lg flex items-center gap-2"><Crown size={18} className="text-emerald-700" /> School Annual</div>
-                <p className="text-sm text-slate-700 mt-2">
-                  Billed per student per year. Includes the Bloom Pulse report, unlimited classes &amp; teachers,
-                  full analytics, GST invoicing, and a dedicated onboarding session.
-                </p>
-                <ul className="mt-3 space-y-1.5 text-sm">
-                  <li className="flex items-start gap-2"><Check size={14} className="text-emerald-600 mt-0.5 shrink-0" /> All teacher and Admin Head tools</li>
-                  <li className="flex items-start gap-2"><Check size={14} className="text-emerald-600 mt-0.5 shrink-0" /> Bloom Pulse PDF + Excel export</li>
-                  <li className="flex items-start gap-2"><Check size={14} className="text-emerald-600 mt-0.5 shrink-0" /> Unlimited classes, students, attempts</li>
-                  <li className="flex items-start gap-2"><Check size={14} className="text-emerald-600 mt-0.5 shrink-0" /> Volume discount past 500 students</li>
-                </ul>
-              </div>
-              <div className="text-right shrink-0">
-                <div className="text-2xl font-bold">Custom</div>
-                <p className="text-xs muted">Pricing scales with student count.</p>
-                <a
-                  href="mailto:hello@bloomiq.app?subject=BloomIQ%20school%20pricing&body=Hi%2C%20I%27d%20like%20a%20quote%20for%20our%20school.%20%0A%0ASchool%20name%3A%20%0AStudent%20count%3A%20%0AGrades%3A%20%0A"
-                  className="btn btn-primary mt-3"
-                >
-                  <Mail size={14} /> Talk to us
-                </a>
-              </div>
-            </div>
-          </div>
+
+          {(() => {
+            const liveSchool = dbPlans
+              .filter((p) => p.tier.startsWith("school_"))
+              .sort((a, b) => (a.min_students ?? 0) - (b.min_students ?? 0));
+            if (liveSchool.length === 0) {
+              return (
+                <div className="card bg-gradient-to-br from-sky-50 to-emerald-50 border-emerald-200">
+                  <div className="flex items-start gap-4 flex-wrap">
+                    <div className="flex-1 min-w-[280px]">
+                      <div className="font-bold text-lg flex items-center gap-2"><Crown size={18} className="text-emerald-700" /> School plans</div>
+                      <p className="text-sm text-slate-700 mt-2">
+                        Per-student-per-year billing. No teacher limit. GST invoicing, Bloom Pulse report,
+                        and a dedicated onboarding session included.
+                      </p>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <div className="text-2xl font-bold">Custom</div>
+                      <a
+                        href="mailto:hello@bloomiq.app?subject=BloomIQ%20school%20pricing"
+                        className="btn btn-primary mt-3"
+                      >
+                        <Mail size={14} /> Talk to us
+                      </a>
+                    </div>
+                  </div>
+                </div>
+              );
+            }
+
+            // Helper — pretty-render a per-student bracket like "20–100"
+            // or "500+ (no upper limit)".
+            const bracket = (p: DbPlan) => {
+              const min = p.min_students ?? 0;
+              const max = p.max_students ?? null;
+              if (max === null) return `${min}+ students`;
+              return `${min}–${max} students`;
+            };
+
+            // Cheapest matching plan for the entered headcount drives the
+            // calculator's quoted total. If headcount is below the smallest
+            // plan's min, we still display the smallest tier with a note.
+            const matching = liveSchool.find((p) =>
+              schoolHeadcount >= (p.min_students ?? 0)
+              && (p.max_students === null || p.max_students === undefined || schoolHeadcount <= p.max_students)
+            ) || liveSchool[0];
+            const matchRate = (matching.per_student_price_paise ?? 0) / 100;
+            const matchPeriodLabel = matching.period_days >= 360 ? "year" : matching.period_days <= 31 ? "month" : `${matching.period_days}d`;
+            const matchTotal = matchRate * schoolHeadcount;
+
+            return (
+              <>
+                <div className="grid sm:grid-cols-3 gap-3">
+                  {liveSchool.map((p) => {
+                    const rate = (p.per_student_price_paise ?? 0) / 100;
+                    const periodLabel = p.period_days >= 360 ? "yr" : p.period_days <= 31 ? "mo" : `${p.period_days}d`;
+                    const isFixed = (p.pricing_model || "fixed") === "fixed";
+                    return (
+                      <div key={p.slug} className="card flex flex-col bg-gradient-to-br from-sky-50/50 to-emerald-50/50 border-emerald-200">
+                        <div className="font-bold text-lg flex items-center gap-2"><Crown size={16} className="text-emerald-700" /> {p.label}</div>
+                        <div className="text-xs muted mt-0.5">{bracket(p)} · unlimited teachers</div>
+                        <div className="text-2xl font-bold mt-3">
+                          {isFixed
+                            ? <>₹{(p.price_paise / 100).toLocaleString("en-IN")}<span className="text-base font-normal muted"> /{periodLabel}</span></>
+                            : <>₹{rate.toLocaleString("en-IN")}<span className="text-base font-normal muted"> /student/{periodLabel}</span></>
+                          }
+                        </div>
+                        {p.blurb && <p className="text-xs muted mt-1">{p.blurb}</p>}
+                        <ul className="mt-3 space-y-1.5 text-xs flex-1">
+                          {p.feature_summary.map((f) => (
+                            <li key={f} className="flex items-start gap-2"><Check size={12} className="text-emerald-600 mt-0.5 shrink-0" /> {f}</li>
+                          ))}
+                        </ul>
+                        <a
+                          href={`mailto:hello@bloomiq.app?subject=BloomIQ%20-%20${encodeURIComponent(p.label)}`}
+                          className="btn btn-secondary text-sm mt-4 inline-flex items-center justify-center gap-1.5"
+                        >
+                          <Mail size={12} /> Get a quote
+                        </a>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Per-student calculator. Only meaningful when at least one
+                    per-student plan is visible. */}
+                {liveSchool.some((p) => (p.pricing_model || "fixed") === "per_student") && (
+                  <div className="card mt-4 bg-slate-50 border-slate-200">
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <label className="text-sm">
+                        <span className="font-semibold">My school has</span>{" "}
+                        <input
+                          className="input inline-block w-24 mx-1"
+                          type="number"
+                          min={1}
+                          step={10}
+                          value={schoolHeadcount}
+                          onChange={(e) => setSchoolHeadcount(Math.max(1, Number(e.target.value || 0)))}
+                        />{" "}
+                        <span className="muted">students.</span>
+                      </label>
+                      <div className="text-sm">
+                        <span className="muted">Falls under</span>{" "}
+                        <strong>{matching.label}</strong>
+                        <span className="muted"> at ₹{matchRate.toLocaleString("en-IN")}/student/{matchPeriodLabel} →</span>{" "}
+                        <strong className="text-emerald-700">
+                          ₹{matchTotal.toLocaleString("en-IN", { maximumFractionDigits: 0 })}
+                        </strong>
+                        <span className="muted"> per {matchPeriodLabel}.</span>
+                      </div>
+                    </div>
+                    {schoolHeadcount < (matching.min_students ?? 0) && (
+                      <p className="text-xs text-amber-700 mt-2">
+                        Note: minimum {matching.min_students} students for this tier.
+                      </p>
+                    )}
+                  </div>
+                )}
+              </>
+            );
+          })()}
         </section>
 
         {/* ============ FAQ ============ */}

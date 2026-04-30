@@ -9,6 +9,12 @@ export type Profile = {
   // BloomIQ staff flag — gates /admin/* pages. Distinct from super_teacher,
   // which is a per-school admin role. See migration 22.
   platform_admin: boolean;
+  // Independent-student onboarding answer — drives tile prioritisation on
+  // /student. Set the first time the student lands on the dashboard. Null
+  // for school students and for independent students who pre-date the
+  // onboarding flow. See migration 24.
+  exam_goal: string | null;
+  exam_goal_set_at: string | null;
   created_at: string;
 };
 
@@ -147,3 +153,62 @@ export type QuizAssignment = {
   due_at: string | null;
   created_at: string;
 };
+
+// =====================================================================
+// Plan-Admin types — see migration 25 + lib/features.ts.
+// =====================================================================
+
+export type PlanTier =
+  | "free"
+  | "premium"
+  | "premium_plus"
+  | "school_pilot"
+  | "school_standard"
+  | "school_plus";
+
+export type PlanStatus = "draft" | "pending_review" | "active" | "archived";
+
+export type PlanPricingModel = "fixed" | "per_student";
+
+export type Plan = {
+  id: string;
+  slug: string;
+  tier: PlanTier;
+  label: string;
+  blurb: string | null;
+  feature_summary: string[];
+  // Razorpay convention — always paise.
+  price_paise: number;
+  currency: string;
+  period_days: number;
+  // Array of feature keys from lib/features.ts.
+  features: string[];
+  status: PlanStatus;
+  effective_from: string | null;
+  effective_to: string | null;
+  created_by: string | null;
+  approved_by: string | null;
+  created_at: string;
+  updated_at: string;
+  approved_at: string | null;
+  // Pricing model — "fixed" uses price_paise directly (Free / Premium /
+  // Premium Plus). "per_student" uses per_student_price_paise × the
+  // school's student headcount (School Pilot / Standard / Plus). See
+  // migration 27.
+  pricing_model: PlanPricingModel;
+  per_student_price_paise: number;
+  min_students: number;
+  max_students: number | null;
+};
+
+export type PlanAuditEvent = {
+  id: number;
+  plan_id: string;
+  actor_id: string | null;
+  // 'created' | 'edited' | 'submitted' | 'approved' | 'rejected' |
+  // 'archived' | 'price_change' | 'features_change' — extensible.
+  action: string;
+  payload: Record<string, unknown>;
+  created_at: string;
+};
+

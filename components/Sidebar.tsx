@@ -58,6 +58,7 @@ const SUPER_TEACHER: Item[] = [
 // the staff user jump straight to /admin/* without typing the URL.
 const PLATFORM_ADMIN: Item[] = [
   { href: "/admin/onboard-school", label: "Onboard School", icon: Building2 },
+  { href: "/admin/plans",          label: "Plans",          icon: ListChecks },
   { href: "/admin/team",           label: "Admin Team",     icon: UserPlus },
 ];
 

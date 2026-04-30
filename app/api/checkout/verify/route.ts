@@ -4,13 +4,6 @@ import { getBearer, supabaseServer, supabaseAdmin } from "@/lib/supabase/server"
 
 export const runtime = "nodejs";
 
-// Mirrors the catalog in /api/checkout/route.ts. We re-derive tier + period
-// from the Razorpay order rather than trusting the client.
-const PLANS: Record<string, { tier: "individual" | "premium"; period_days: number }> = {
-  individual_monthly: { tier: "individual", period_days: 30 },
-  individual_yearly:  { tier: "premium",    period_days: 365 },
-};
-
 /**
  * POST /api/checkout/verify
  *
@@ -20,12 +13,27 @@ const PLANS: Record<string, { tier: "individual" | "premium"; period_days: numbe
  *   razorpay_signature: string,
  * }
  *
- * Razorpay\u2019s checkout modal posts these three values back to the page on
- * success. We verify the HMAC-SHA256 signature server-side using
- * RAZORPAY_KEY_SECRET, then flip the user\u2019s subscription row to the
- * paid tier. This is the authoritative server-side check; the webhook
- * endpoint can do the same job out-of-band for resilience.
+ * Razorpay's checkout modal posts these three values back to the page on
+ * success. We:
+ *   1) verify the HMAC-SHA256 signature server-side using RAZORPAY_KEY_SECRET
+ *   2) re-fetch the order from Razorpay so we can read the notes (plan_id,
+ *      slug, tier, period_days) authoritatively, not from the client
+ *   3) bind the user's subscription to the SPECIFIC plan_id from the order
+ *      notes — this is what implements grandfathering. If the platform
+ *      admin later approves a new active version of the same slug with
+ *      different features or price, this user stays on the version they
+ *      paid for.
+ *
+ * Backward-compat: orders created with the legacy `plan` field in notes
+ * (from before the plan-admin module shipped) are still honoured by
+ * looking up the plan by legacy slug.
  */
+
+const LEGACY_SLUG_MAP: Record<string, string> = {
+  individual_monthly: "premium_monthly",
+  individual_yearly: "premium_annual",
+};
+
 export async function POST(req: Request) {
   try {
     const token = getBearer(req);
@@ -54,11 +62,10 @@ export async function POST(req: Request) {
       .update(`${orderId}|${paymentId}`)
       .digest("hex");
     if (expected !== signature) {
-      return NextResponse.json({ error: "Signature mismatch \u2014 payment not verified." }, { status: 400 });
+      return NextResponse.json({ error: "Signature mismatch — payment not verified." }, { status: 400 });
     }
 
-    // 2) Pull the order back from Razorpay so we can read the notes (which
-    //    carry the plan id) authoritatively, not from the client.
+    // 2) Pull the order back from Razorpay so we can read the notes.
     const auth = Buffer.from(`${keyId}:${keySecret}`).toString("base64");
     const ord = await fetch(`https://api.razorpay.com/v1/orders/${orderId}`, {
       headers: { Authorization: `Basic ${auth}` },
@@ -67,31 +74,74 @@ export async function POST(req: Request) {
       const t = await ord.text();
       return NextResponse.json({ error: `Could not fetch order: ${t.slice(0, 200)}` }, { status: 500 });
     }
-    const order = (await ord.json()) as { notes?: { user_id?: string; plan?: string } };
+    const order = (await ord.json()) as {
+      notes?: {
+        user_id?: string;
+        plan_id?: string;
+        plan_slug?: string;
+        plan?: string;          // legacy
+        tier?: string;
+        period_days?: string;
+      };
+    };
     const notedUser = order.notes?.user_id;
-    const planId = order.notes?.plan || "";
-
-    // The order must have been created by THIS user. (Defence-in-depth; the
-    // signature check already implies trust, but never hurts to double up.)
     if (notedUser && notedUser !== user.id) {
       return NextResponse.json({ error: "Order does not belong to this user." }, { status: 403 });
     }
 
-    const plan = PLANS[planId];
-    if (!plan) return NextResponse.json({ error: "Unknown plan in order notes." }, { status: 400 });
-
-    // 3) Update-or-insert the subscription row.
-    //
-    // We deliberately avoid `.upsert({ onConflict: "user_id" })` here because
-    // PostgREST translates that into `ON CONFLICT (user_id) DO UPDATE`, and
-    // the unique index on subscriptions.user_id is PARTIAL (where user_id is
-    // not null) — Postgres can't match a partial index from a bare ON CONFLICT
-    // clause, and the whole transaction aborts with "no unique or exclusion
-    // constraint matching the ON CONFLICT specification". The simple two-step
-    // SELECT → UPDATE/INSERT below side-steps the issue cleanly.
-    const expiresAt = new Date(Date.now() + plan.period_days * 24 * 60 * 60 * 1000).toISOString();
+    // 3) Resolve the plan row. Prefer plan_id (new), fall back to plan_slug
+    //    or legacy `plan` key. We always re-load from the DB so we use the
+    //    correct tier + period_days as enforcement.
     const admin = supabaseAdmin();
+    let planRow: {
+      id: string;
+      slug: string;
+      tier: string;
+      period_days: number;
+    } | null = null;
 
+    if (order.notes?.plan_id) {
+      const { data } = await admin
+        .from("plans")
+        .select("id, slug, tier, period_days")
+        .eq("id", order.notes.plan_id)
+        .maybeSingle();
+      if (data) planRow = data;
+    }
+    if (!planRow) {
+      const slug = order.notes?.plan_slug
+        || (order.notes?.plan ? (LEGACY_SLUG_MAP[order.notes.plan] ?? order.notes.plan) : "");
+      if (slug) {
+        const { data } = await admin
+          .from("plans")
+          .select("id, slug, tier, period_days")
+          .eq("slug", slug)
+          .eq("status", "active")
+          .maybeSingle();
+        if (data) planRow = data;
+      }
+    }
+    if (!planRow) {
+      return NextResponse.json({ error: "Could not resolve a plan from the order notes." }, { status: 400 });
+    }
+
+    // Map our plan tier ('premium', 'premium_plus', etc.) to the legacy
+    // subscriptions.tier text the rest of the app already understands.
+    // Keeps existing tier-checking code working without a sweeping rename.
+    const legacyTierMap: Record<string, string> = {
+      free: "free",
+      premium: planRow.period_days >= 360 ? "premium" : "individual",
+      premium_plus: "premium_plus",
+      school_pilot: "premium",
+      school_standard: "premium",
+      school_plus: "premium_plus",
+    };
+    const legacyTier = legacyTierMap[planRow.tier] || planRow.tier;
+
+    const expiresAt = new Date(Date.now() + planRow.period_days * 24 * 60 * 60 * 1000).toISOString();
+
+    // 4) Update-or-insert the subscription row, binding plan_id for
+    //    grandfathering.
     const { data: existing, error: selErr } = await admin
       .from("subscriptions")
       .select("id")
@@ -103,7 +153,8 @@ export async function POST(req: Request) {
       const { error: updErr } = await admin
         .from("subscriptions")
         .update({
-          tier: plan.tier,
+          tier: legacyTier,
+          plan_id: planRow.id,
           status: "active",
           started_at: new Date().toISOString(),
           expires_at: expiresAt,
@@ -117,7 +168,8 @@ export async function POST(req: Request) {
         .insert({
           user_id: user.id,
           school_id: null,
-          tier: plan.tier,
+          tier: legacyTier,
+          plan_id: planRow.id,
           status: "active",
           started_at: new Date().toISOString(),
           expires_at: expiresAt,
@@ -125,7 +177,13 @@ export async function POST(req: Request) {
       if (insErr) return NextResponse.json({ error: insErr.message }, { status: 500 });
     }
 
-    return NextResponse.json({ ok: true, tier: plan.tier, expires_at: expiresAt });
+    return NextResponse.json({
+      ok: true,
+      tier: legacyTier,
+      plan_id: planRow.id,
+      plan_slug: planRow.slug,
+      expires_at: expiresAt,
+    });
   } catch (e) {
     return NextResponse.json(
       { error: e instanceof Error ? e.message : "Verify failed" },
