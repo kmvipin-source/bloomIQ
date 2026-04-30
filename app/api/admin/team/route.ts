@@ -106,26 +106,77 @@ export async function POST(req: Request) {
     if (listErr) return NextResponse.json({ error: listErr.message }, { status: 500 });
     let target = usersList.users.find((u) => u.email?.toLowerCase() === email);
 
-    let invited = false;
+    // -----------------------------------------------------------------
+    // Sign-in link flow (one-time URL, no plaintext password ever)
+    // -----------------------------------------------------------------
+    // Generate a single-use, short-lived URL via Supabase's admin
+    // generateLink API. The link is returned to the server (NOT emailed)
+    // and we hand it back in the API response so the granting admin can
+    // share it via Slack/WhatsApp. Properties:
+    //
+    //   - Single-use: clicked once, dead afterwards.
+    //   - Time-limited: expires per Supabase project settings (default
+    //     ~1 hour for invites and magic links).
+    //   - The recipient sets their OWN password via /auth/set-password
+    //     after clicking; the granting admin never knows the password.
+    //
+    // This avoids both problems of the older flows:
+    //   - Email-based invites never arriving (corporate spam filters)
+    //   - Plaintext temp passwords sitting forever in chat history
+    //
+    // Two link types depending on user state:
+    //   - 'invite'    — for brand-new accounts. Auto-creates the user.
+    //   - 'magiclink' — for accounts that already exist but never signed
+    //                   in (resurrects them with a fresh link).
+    let signInLink: string | null = null;
+    let createdNew = false;
+
+    const origin =
+      req.headers.get("origin") ||
+      req.headers.get("referer")?.replace(/\/[^/]*$/, "") ||
+      new URL(req.url).origin;
+    const redirectTo = `${origin.replace(/\/$/, "")}/auth/set-password?next=/admin/onboard-school`;
+
     if (!target) {
-      const origin =
-        req.headers.get("origin") ||
-        req.headers.get("referer")?.replace(/\/[^/]*$/, "") ||
-        new URL(req.url).origin;
-      const redirectTo = `${origin.replace(/\/$/, "")}/auth/set-password?next=/admin/onboard-school`;
-      const { data: inv, error: invErr } = await admin.auth.admin.inviteUserByEmail(email, {
-        data: { role: "teacher", full_name: fullNameHint || email.split("@")[0] },
-        redirectTo,
+      const { data: linkData, error: linkErr } = await admin.auth.admin.generateLink({
+        type: "invite",
+        email,
+        options: {
+          redirectTo,
+          data: {
+            role: "teacher",
+            full_name: fullNameHint || email.split("@")[0],
+          },
+        },
       });
-      if (invErr || !inv?.user) {
+      if (linkErr || !linkData?.properties?.action_link || !linkData?.user) {
         return NextResponse.json(
-          { error: `Could not invite: ${invErr?.message || "unknown error"}` },
+          { error: `Could not generate invite link: ${linkErr?.message || "unknown error"}` },
           { status: 500 }
         );
       }
-      target = inv.user;
-      invited = true;
+      target = linkData.user;
+      signInLink = linkData.properties.action_link;
+      createdNew = true;
+    } else if (!target.email_confirmed_at && !target.confirmed_at) {
+      // Account exists but never signed in (likely a stale invite).
+      // Generate a fresh single-use magic link.
+      const { data: linkData, error: linkErr } = await admin.auth.admin.generateLink({
+        type: "magiclink",
+        email,
+        options: { redirectTo },
+      });
+      if (linkErr || !linkData?.properties?.action_link) {
+        return NextResponse.json(
+          { error: `Could not generate sign-in link: ${linkErr?.message || "unknown error"}` },
+          { status: 500 }
+        );
+      }
+      signInLink = linkData.properties.action_link;
     }
+    // If target was already a confirmed active user, we don't generate
+    // a link — the grant just flips their flag and they sign in with
+    // their existing password.
 
     // Strategy: UPDATE the flag fields only. profiles.role is NOT NULL so we
     // cannot use upsert (the proposed INSERT row fails the constraint even
@@ -171,7 +222,12 @@ export async function POST(req: Request) {
       ok: true,
       user_id: target.id,
       email: target.email,
-      invited,
+      // The sign-in link is only present for new accounts and dormant
+      // ones (those that never confirmed). Existing active users get
+      // null here — the grant just flipped their flag and they sign in
+      // with their existing password.
+      sign_in_link: signInLink,
+      created_new: createdNew,
     });
   } catch (e) {
     return NextResponse.json(
@@ -180,6 +236,7 @@ export async function POST(req: Request) {
     );
   }
 }
+
 
 export async function DELETE(req: Request) {
   try {

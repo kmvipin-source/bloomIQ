@@ -10,6 +10,7 @@ import {
   TrendingUp, NotebookPen, Building2, FileEdit,
   ShieldCheck, UserPlus,
 } from "lucide-react";
+import ThemeQuickToggle from "@/components/ThemeQuickToggle";
 
 type Item = { href: string; label: string; icon: React.ComponentType<{ size?: number }> };
 
@@ -99,8 +100,14 @@ export default function Sidebar({ role }: { role: "teacher" | "student" | "super
   }
 
   return (
-    <aside className="w-60 bg-white border-r border-slate-200 min-h-screen flex flex-col">
-      <div className="p-5 border-b border-slate-100">
+    <aside
+      className="w-60 min-h-screen flex flex-col"
+      style={{
+        background: "var(--color-card)",
+        borderRight: "1px solid var(--color-border)",
+      }}
+    >
+      <div className="p-5" style={{ borderBottom: "1px solid var(--color-border)" }}>
         <Link href={`/${role}`} className="flex items-center gap-2">
           <span className="text-2xl">🌱</span>
           <span className="text-lg font-bold tracking-tight">BloomIQ</span>
@@ -114,11 +121,22 @@ export default function Sidebar({ role }: { role: "teacher" | "student" | "super
             <Link
               key={href}
               href={href}
-              className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition ${
+              className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition"
+              style={
                 active
-                  ? "bg-emerald-50 text-emerald-800 font-semibold"
-                  : "text-slate-600 hover:bg-slate-50"
-              }`}
+                  ? {
+                      background: "var(--color-accent-soft)",
+                      color: "var(--brand-700)",
+                      fontWeight: 600,
+                    }
+                  : { color: "var(--color-fg-soft)" }
+              }
+              onMouseEnter={(e) => {
+                if (!active) e.currentTarget.style.background = "var(--color-bg-soft)";
+              }}
+              onMouseLeave={(e) => {
+                if (!active) e.currentTarget.style.background = "transparent";
+              }}
             >
               <Icon size={18} />
               {label}
@@ -131,7 +149,10 @@ export default function Sidebar({ role }: { role: "teacher" | "student" | "super
             the link doesn't briefly flash for non-admin users. */}
         {isPlatformAdmin && (
           <>
-            <div className="mt-4 mb-1 px-3 flex items-center gap-1.5 text-[10px] uppercase tracking-wide font-bold text-slate-400">
+            <div
+              className="mt-4 mb-1 px-3 flex items-center gap-1.5 text-[10px] uppercase tracking-wide font-bold"
+              style={{ color: "var(--color-muted)" }}
+            >
               <ShieldCheck size={11} /> Platform Admin
             </div>
             {PLATFORM_ADMIN.map(({ href, label, icon: Icon }) => {
@@ -140,11 +161,22 @@ export default function Sidebar({ role }: { role: "teacher" | "student" | "super
                 <Link
                   key={href}
                   href={href}
-                  className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition ${
+                  className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition"
+                  style={
                     active
-                      ? "bg-slate-900 text-white font-semibold"
-                      : "text-slate-600 hover:bg-slate-50"
-                  }`}
+                      ? {
+                          background: "var(--brand-900)",
+                          color: "#fff",
+                          fontWeight: 600,
+                        }
+                      : { color: "var(--color-fg-soft)" }
+                  }
+                  onMouseEnter={(e) => {
+                    if (!active) e.currentTarget.style.background = "var(--color-bg-soft)";
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!active) e.currentTarget.style.background = "transparent";
+                  }}
                 >
                   <Icon size={18} />
                   {label}
@@ -154,12 +186,21 @@ export default function Sidebar({ role }: { role: "teacher" | "student" | "super
           </>
         )}
       </nav>
-      <div className="p-3 border-t border-slate-100">
+      <div className="p-3" style={{ borderTop: "1px solid var(--color-border)" }}>
+        {/* Compact theme picker — 5 swatches + light/dark toggle + link
+            to the full /settings/appearance page. */}
+        <ThemeQuickToggle />
         <div className="flex items-center gap-2 px-3 py-2 text-xs muted">
           <UserIcon size={14} />
           <span className="truncate">{name || "..."}</span>
         </div>
-        <button onClick={logout} className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-slate-600 hover:bg-slate-50">
+        <button
+          onClick={logout}
+          className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition"
+          style={{ color: "var(--color-fg-soft)" }}
+          onMouseEnter={(e) => { e.currentTarget.style.background = "var(--color-bg-soft)"; }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+        >
           <LogOut size={16} /> Sign out
         </button>
       </div>

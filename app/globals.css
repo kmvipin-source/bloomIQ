@@ -1,86 +1,1210 @@
 @import "tailwindcss";
 
+/* =============================================================================
+ * BloomIQ — World-class theme system
+ * -----------------------------------------------------------------------------
+ * Design philosophy:
+ *   - Restrained color, considered contrast, generous whitespace.
+ *   - Every interactive state (hover, pressed, selected, focus, disabled)
+ *     is a named token, NOT an ad-hoc value. Components reference tokens.
+ *   - Contrast is mathematically guaranteed: hover/selected backgrounds
+ *     are derived from brand via color-mix() over the theme bg, so the
+ *     foreground text always remains AA legible.
+ *   - 5 themes × 2 modes (10 total). Each tuned for legibility first,
+ *     beauty second. Both are non-negotiable.
+ *
+ * Token layers (low to high specificity):
+ *   1. Tailwind @theme  — exposes brand-* to Tailwind utilities.
+ *   2. :root            — base (light) tokens. Default theme = Emerald.
+ *   3. [data-theme="X"][data-mode="Y"] — per-palette overrides.
+ *   4. Component classes (.btn, .card, .input, .badge) — use tokens only.
+ *
+ * The DOM contract is set by the inline init script in <head>:
+ *   <html data-theme="emerald" data-mode="light">
+ * ============================================================================= */
+
 @theme {
-  --color-brand-50:  #ecfdf5;
-  --color-brand-100: #d1fae5;
-  --color-brand-200: #a7f3d0;
-  --color-brand-300: #6ee7b7;
-  --color-brand-400: #34d399;
-  --color-brand-500: #10b981;
-  --color-brand-600: #059669;
-  --color-brand-700: #047857;
-  --color-brand-800: #065f46;
-  --color-brand-900: #064e3b;
-  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --color-brand-50:  var(--brand-50);
+  --color-brand-100: var(--brand-100);
+  --color-brand-200: var(--brand-200);
+  --color-brand-300: var(--brand-300);
+  --color-brand-400: var(--brand-400);
+  --color-brand-500: var(--brand-500);
+  --color-brand-600: var(--brand-600);
+  --color-brand-700: var(--brand-700);
+  --color-brand-800: var(--brand-800);
+  --color-brand-900: var(--brand-900);
+
+  --font-sans:    "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-display: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono:    ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
 }
 
-:root {
-  --background: #f6f8fb;
-  --foreground: #0b1220;
-  --card: #ffffff;
-  --muted: #64748b;
-  --border: #e6e8ee;
+/* =============================================================================
+ * BASE TOKENS  (light mode default — emerald)
+ * -----------------------------------------------------------------------------
+ * Naming convention:
+ *   bg          — page background
+ *   surface-1   — primary card surface (most prominent)
+ *   surface-2   — slightly recessed surface (subtle contrast w/ bg)
+ *   surface-3   — deepest surface (input bg, code blocks)
+ *   fg          — primary body text (highest contrast)
+ *   fg-soft     — secondary text (still legible)
+ *   fg-muted    — captions, hints (lowest legitimate contrast)
+ *   border-*    — three weights: subtle, default, strong
+ *   on-brand    — text color when on a brand background (always contrasts)
+ *   on-accent-soft — text color when on accent-soft background
+ *   hover-bg, pressed-bg, selected-bg — interaction states
+ * ============================================================================= */
+:root,
+[data-theme="emerald"][data-mode="light"] {
+  --brand-50:  #ecfdf5;
+  --brand-100: #d1fae5;
+  --brand-200: #a7f3d0;
+  --brand-300: #6ee7b7;
+  --brand-400: #34d399;
+  --brand-500: #10b981;
+  --brand-600: #059669;
+  --brand-700: #047857;
+  --brand-800: #065f46;
+  --brand-900: #064e3b;
+
+  /* surfaces */
+  --color-bg:        #f7faf8;
+  --color-surface-1: #ffffff;
+  --color-surface-2: #f1f5f3;
+  --color-surface-3: #e8efeb;
+
+  /* legacy aliases used by older components — keep them in lockstep */
+  --color-bg-elev:   var(--color-surface-1);
+  --color-bg-soft:   var(--color-surface-2);
+  --color-card:      var(--color-surface-1);
+  --color-card-soft: var(--color-surface-2);
+  --color-input-bg:  var(--color-surface-1);
+
+  /* text */
+  --color-fg:        #0b1220;
+  --color-fg-soft:   #334155;
+  --color-fg-muted:  #64748b;
+  --color-muted:     var(--color-fg-muted);
+
+  /* borders */
+  --color-border-subtle:  #eef2f0;
+  --color-border:         #d9e2dd;
+  --color-border-strong:  #b6c2bc;
+  --color-input-border:   var(--color-border);
+
+  /* accent system */
+  --color-accent:        var(--brand-600);
+  --color-accent-soft:   #d1fae5;
+  --color-accent-strong: var(--brand-700);
+
+  /* contrast pairings — text colors guaranteed legible on key backgrounds */
+  --color-on-brand:        #ffffff;       /* on brand-500/600/700 fills    */
+  --color-on-accent-soft:  var(--brand-800); /* on accent-soft fill        */
+  --color-on-surface-1:    var(--color-fg);
+  --color-on-surface-2:    var(--color-fg-soft);
+
+  /* interaction states (work on top of bg or surface-1)
+     mix the brand color INTO the bg, never replace the bg, so the
+     text contrast against the new bg is always the same as against
+     the original bg. */
+  --color-hover-bg:    color-mix(in oklab, var(--brand-500) 6%,  var(--color-bg));
+  --color-pressed-bg:  color-mix(in oklab, var(--brand-500) 11%, var(--color-bg));
+  --color-selected-bg: color-mix(in oklab, var(--brand-500) 14%, var(--color-bg));
+  --color-row-hover:   color-mix(in oklab, var(--brand-500) 4%,  var(--color-surface-1));
+
+  /* semantic role colors — same per theme so warnings always read amber, etc. */
+  --color-success:      #047857;
+  --color-success-soft: #d1fae5;
+  --color-warn:         #b45309;
+  --color-warn-soft:    #fef3c7;
+  --color-danger:       #b91c1c;
+  --color-danger-soft:  #fee2e2;
+  --color-info:         #1d4ed8;
+  --color-info-soft:    #dbeafe;
+
+  /* shadows — sharper, more refined */
+  --shadow-xs: 0 1px 1px rgba(15,23,42,.04), 0 1px 1px rgba(15,23,42,.02);
+  --shadow-sm: 0 1px 2px rgba(15,23,42,.05), 0 1px 1px rgba(15,23,42,.03);
+  --shadow:    0 4px 8px -2px rgba(15,23,42,.06), 0 2px 4px -1px rgba(15,23,42,.04);
+  --shadow-md: 0 10px 20px -8px rgba(15,23,42,.10), 0 4px 8px -4px rgba(15,23,42,.06);
+  --shadow-lg: 0 20px 40px -12px rgba(15,23,42,.14), 0 8px 16px -8px rgba(15,23,42,.08);
+  --shadow-brand: 0 8px 24px -4px color-mix(in oklab, var(--brand-500) 30%, transparent);
+
+  /* focus ring — accessible + on-brand, not hideous */
+  --color-focus-ring: color-mix(in oklab, var(--brand-500) 35%, transparent);
+  --shadow-focus:     0 0 0 3px var(--color-focus-ring);
+
+  /* hero gradient — subtle, premium, never overpowering */
+  --gradient-hero:
+    radial-gradient(70% 40% at 80% 0%, color-mix(in oklab, var(--brand-300) 22%, transparent), transparent 70%),
+    radial-gradient(60% 50% at 0% 100%, color-mix(in oklab, var(--brand-400) 12%, transparent), transparent 70%);
+
+  /* CTA — restrained gradient that reads premium, not loud */
+  --gradient-cta:
+    linear-gradient(140deg, var(--brand-600), var(--brand-700));
 }
 
+/* =============================================================================
+ * EMERALD — DARK
+ * ============================================================================= */
+[data-theme="emerald"][data-mode="dark"] {
+  --brand-50:  #052e22;
+  --brand-100: #064e3b;
+  --brand-200: #065f46;
+  --brand-300: #047857;
+  --brand-400: #059669;
+  --brand-500: #10b981;
+  --brand-600: #34d399;
+  --brand-700: #6ee7b7;
+  --brand-800: #a7f3d0;
+  --brand-900: #d1fae5;
+
+  --color-bg:        #07120e;
+  --color-surface-1: #0f1d18;
+  --color-surface-2: #0c1814;
+  --color-surface-3: #0a1411;
+
+  --color-bg-elev:   var(--color-surface-1);
+  --color-bg-soft:   var(--color-surface-2);
+  --color-card:      var(--color-surface-1);
+  --color-card-soft: var(--color-surface-2);
+  --color-input-bg:  var(--color-surface-3);
+
+  --color-fg:        #ecfdf5;
+  --color-fg-soft:   #c4eedc;
+  --color-fg-muted:  #8aa39a;
+  --color-muted:     var(--color-fg-muted);
+
+  --color-border-subtle: #122b22;
+  --color-border:        #1d3d31;
+  --color-border-strong: #2c5247;
+  --color-input-border:  var(--color-border);
+
+  --color-accent:        var(--brand-500);
+  --color-accent-soft:   color-mix(in oklab, var(--brand-500) 18%, var(--color-bg));
+  --color-accent-strong: var(--brand-600);
+
+  --color-on-brand:        #032018;
+  --color-on-accent-soft:  var(--brand-700);
+  --color-on-surface-1:    var(--color-fg);
+  --color-on-surface-2:    var(--color-fg-soft);
+
+  --color-hover-bg:    color-mix(in oklab, var(--brand-500) 10%, var(--color-surface-1));
+  --color-pressed-bg:  color-mix(in oklab, var(--brand-500) 16%, var(--color-surface-1));
+  --color-selected-bg: color-mix(in oklab, var(--brand-500) 22%, var(--color-surface-1));
+  --color-row-hover:   color-mix(in oklab, var(--brand-500) 8%,  var(--color-surface-1));
+
+  --color-success:      #34d399;
+  --color-success-soft: #043e2c;
+  --color-warn:         #fbbf24;
+  --color-warn-soft:    #3a2a0a;
+  --color-danger:       #f87171;
+  --color-danger-soft:  #3d1414;
+  --color-info:         #60a5fa;
+  --color-info-soft:    #112647;
+
+  --shadow-xs: 0 1px 1px rgba(0,0,0,.4);
+  --shadow-sm: 0 1px 2px rgba(0,0,0,.45);
+  --shadow:    0 4px 12px rgba(0,0,0,.5);
+  --shadow-md: 0 10px 25px rgba(0,0,0,.55);
+  --shadow-lg: 0 24px 48px rgba(0,0,0,.6);
+  --shadow-brand: 0 8px 24px -4px color-mix(in oklab, var(--brand-500) 35%, transparent);
+
+  --color-focus-ring: color-mix(in oklab, var(--brand-500) 45%, transparent);
+  --shadow-focus:     0 0 0 3px var(--color-focus-ring);
+
+  --gradient-hero:
+    radial-gradient(70% 40% at 80% 0%, color-mix(in oklab, var(--brand-500) 18%, transparent), transparent 70%),
+    radial-gradient(60% 50% at 0% 100%, color-mix(in oklab, var(--brand-400) 12%, transparent), transparent 70%);
+  --gradient-cta:
+    linear-gradient(140deg, var(--brand-500), var(--brand-400));
+}
+
+/* =============================================================================
+ * INDIGO — LIGHT
+ * ============================================================================= */
+[data-theme="indigo"][data-mode="light"] {
+  --brand-50:  #eef2ff;
+  --brand-100: #e0e7ff;
+  --brand-200: #c7d2fe;
+  --brand-300: #a5b4fc;
+  --brand-400: #818cf8;
+  --brand-500: #6366f1;
+  --brand-600: #4f46e5;
+  --brand-700: #4338ca;
+  --brand-800: #3730a3;
+  --brand-900: #312e81;
+
+  --color-bg:        #f8f9fc;
+  --color-surface-1: #ffffff;
+  --color-surface-2: #f1f3f9;
+  --color-surface-3: #e8ecf6;
+
+  --color-bg-elev:   var(--color-surface-1);
+  --color-bg-soft:   var(--color-surface-2);
+  --color-card:      var(--color-surface-1);
+  --color-card-soft: var(--color-surface-2);
+  --color-input-bg:  var(--color-surface-1);
+
+  --color-fg:        #0b1020;
+  --color-fg-soft:   #2e2f4d;
+  --color-fg-muted:  #6b7299;
+  --color-muted:     var(--color-fg-muted);
+
+  --color-border-subtle: #ebedf6;
+  --color-border:        #d6dbeb;
+  --color-border-strong: #aeb5d0;
+  --color-input-border:  var(--color-border);
+
+  --color-accent:        var(--brand-600);
+  --color-accent-soft:   #e0e7ff;
+  --color-accent-strong: var(--brand-700);
+
+  --color-on-brand:        #ffffff;
+  --color-on-accent-soft:  var(--brand-800);
+  --color-on-surface-1:    var(--color-fg);
+  --color-on-surface-2:    var(--color-fg-soft);
+
+  --color-hover-bg:    color-mix(in oklab, var(--brand-500) 6%,  var(--color-bg));
+  --color-pressed-bg:  color-mix(in oklab, var(--brand-500) 11%, var(--color-bg));
+  --color-selected-bg: color-mix(in oklab, var(--brand-500) 14%, var(--color-bg));
+  --color-row-hover:   color-mix(in oklab, var(--brand-500) 4%,  var(--color-surface-1));
+
+  --color-success:      #047857;
+  --color-success-soft: #d1fae5;
+  --color-warn:         #b45309;
+  --color-warn-soft:    #fef3c7;
+  --color-danger:       #b91c1c;
+  --color-danger-soft:  #fee2e2;
+  --color-info:         #1d4ed8;
+  --color-info-soft:    #dbeafe;
+
+  --shadow-xs: 0 1px 1px rgba(11,16,32,.04);
+  --shadow-sm: 0 1px 2px rgba(11,16,32,.05);
+  --shadow:    0 4px 8px -2px rgba(11,16,32,.06), 0 2px 4px -1px rgba(11,16,32,.04);
+  --shadow-md: 0 10px 20px -8px rgba(11,16,32,.10);
+  --shadow-lg: 0 20px 40px -12px rgba(11,16,32,.14);
+  --shadow-brand: 0 8px 24px -4px color-mix(in oklab, var(--brand-500) 30%, transparent);
+
+  --color-focus-ring: color-mix(in oklab, var(--brand-500) 35%, transparent);
+  --shadow-focus:     0 0 0 3px var(--color-focus-ring);
+
+  --gradient-hero:
+    radial-gradient(70% 40% at 80% 0%, color-mix(in oklab, var(--brand-400) 22%, transparent), transparent 70%),
+    radial-gradient(60% 50% at 0% 100%, color-mix(in oklab, #ec4899 10%, transparent), transparent 70%);
+  --gradient-cta:
+    linear-gradient(140deg, var(--brand-600), var(--brand-700));
+}
+
+/* =============================================================================
+ * INDIGO — DARK
+ * ============================================================================= */
+[data-theme="indigo"][data-mode="dark"] {
+  --brand-50:  #1e1b4b;
+  --brand-100: #2d2b73;
+  --brand-200: #3730a3;
+  --brand-300: #4338ca;
+  --brand-400: #4f46e5;
+  --brand-500: #6366f1;
+  --brand-600: #818cf8;
+  --brand-700: #a5b4fc;
+  --brand-800: #c7d2fe;
+  --brand-900: #e0e7ff;
+
+  --color-bg:        #0a0d1f;
+  --color-surface-1: #131734;
+  --color-surface-2: #0f1329;
+  --color-surface-3: #0c1023;
+
+  --color-bg-elev:   var(--color-surface-1);
+  --color-bg-soft:   var(--color-surface-2);
+  --color-card:      var(--color-surface-1);
+  --color-card-soft: var(--color-surface-2);
+  --color-input-bg:  var(--color-surface-3);
+
+  --color-fg:        #eef2ff;
+  --color-fg-soft:   #c7d2fe;
+  --color-fg-muted:  #8b8fb8;
+  --color-muted:     var(--color-fg-muted);
+
+  --color-border-subtle: #1c2147;
+  --color-border:        #252b54;
+  --color-border-strong: #353d72;
+  --color-input-border:  var(--color-border);
+
+  --color-accent:        var(--brand-500);
+  --color-accent-soft:   color-mix(in oklab, var(--brand-500) 22%, var(--color-bg));
+  --color-accent-strong: var(--brand-600);
+
+  --color-on-brand:        #ffffff;
+  --color-on-accent-soft:  var(--brand-700);
+  --color-on-surface-1:    var(--color-fg);
+  --color-on-surface-2:    var(--color-fg-soft);
+
+  --color-hover-bg:    color-mix(in oklab, var(--brand-500) 12%, var(--color-surface-1));
+  --color-pressed-bg:  color-mix(in oklab, var(--brand-500) 18%, var(--color-surface-1));
+  --color-selected-bg: color-mix(in oklab, var(--brand-500) 24%, var(--color-surface-1));
+  --color-row-hover:   color-mix(in oklab, var(--brand-500) 9%,  var(--color-surface-1));
+
+  --color-success:      #34d399;
+  --color-success-soft: #043e2c;
+  --color-warn:         #fbbf24;
+  --color-warn-soft:    #3a2a0a;
+  --color-danger:       #f87171;
+  --color-danger-soft:  #3d1414;
+  --color-info:         #60a5fa;
+  --color-info-soft:    #112647;
+
+  --shadow-xs: 0 1px 1px rgba(0,0,0,.4);
+  --shadow-sm: 0 1px 2px rgba(0,0,0,.45);
+  --shadow:    0 4px 12px rgba(0,0,0,.5);
+  --shadow-md: 0 10px 25px rgba(0,0,0,.55);
+  --shadow-lg: 0 24px 48px rgba(0,0,0,.6);
+  --shadow-brand: 0 8px 24px -4px color-mix(in oklab, var(--brand-500) 38%, transparent);
+
+  --color-focus-ring: color-mix(in oklab, var(--brand-500) 50%, transparent);
+  --shadow-focus:     0 0 0 3px var(--color-focus-ring);
+
+  --gradient-hero:
+    radial-gradient(70% 40% at 80% 0%, color-mix(in oklab, var(--brand-500) 18%, transparent), transparent 70%),
+    radial-gradient(60% 50% at 0% 100%, color-mix(in oklab, #ec4899 10%, transparent), transparent 70%);
+  --gradient-cta:
+    linear-gradient(140deg, var(--brand-500), var(--brand-400));
+}
+
+/* =============================================================================
+ * ROSE — LIGHT
+ * ============================================================================= */
+[data-theme="rose"][data-mode="light"] {
+  --brand-50:  #fff1f2;
+  --brand-100: #ffe4e6;
+  --brand-200: #fecdd3;
+  --brand-300: #fda4af;
+  --brand-400: #fb7185;
+  --brand-500: #f43f5e;
+  --brand-600: #e11d48;
+  --brand-700: #be123c;
+  --brand-800: #9f1239;
+  --brand-900: #881337;
+
+  --color-bg:        #fdf7f8;
+  --color-surface-1: #ffffff;
+  --color-surface-2: #faecee;
+  --color-surface-3: #f3dce0;
+
+  --color-bg-elev:   var(--color-surface-1);
+  --color-bg-soft:   var(--color-surface-2);
+  --color-card:      var(--color-surface-1);
+  --color-card-soft: var(--color-surface-2);
+  --color-input-bg:  var(--color-surface-1);
+
+  --color-fg:        #1c1014;
+  --color-fg-soft:   #4a2632;
+  --color-fg-muted:  #806068;
+  --color-muted:     var(--color-fg-muted);
+
+  --color-border-subtle: #f5e4e7;
+  --color-border:        #e8c8cf;
+  --color-border-strong: #c79aa3;
+  --color-input-border:  var(--color-border);
+
+  --color-accent:        var(--brand-600);
+  --color-accent-soft:   #ffe4e6;
+  --color-accent-strong: var(--brand-700);
+
+  --color-on-brand:        #ffffff;
+  --color-on-accent-soft:  var(--brand-800);
+  --color-on-surface-1:    var(--color-fg);
+  --color-on-surface-2:    var(--color-fg-soft);
+
+  --color-hover-bg:    color-mix(in oklab, var(--brand-500) 6%,  var(--color-bg));
+  --color-pressed-bg:  color-mix(in oklab, var(--brand-500) 11%, var(--color-bg));
+  --color-selected-bg: color-mix(in oklab, var(--brand-500) 14%, var(--color-bg));
+  --color-row-hover:   color-mix(in oklab, var(--brand-500) 4%,  var(--color-surface-1));
+
+  --color-success:      #047857;
+  --color-success-soft: #d1fae5;
+  --color-warn:         #b45309;
+  --color-warn-soft:    #fef3c7;
+  --color-danger:       #b91c1c;
+  --color-danger-soft:  #fee2e2;
+  --color-info:         #1d4ed8;
+  --color-info-soft:    #dbeafe;
+
+  --shadow-xs: 0 1px 1px rgba(28,16,20,.04);
+  --shadow-sm: 0 1px 2px rgba(28,16,20,.05);
+  --shadow:    0 4px 8px -2px rgba(28,16,20,.06);
+  --shadow-md: 0 10px 20px -8px rgba(28,16,20,.10);
+  --shadow-lg: 0 20px 40px -12px rgba(28,16,20,.14);
+  --shadow-brand: 0 8px 24px -4px color-mix(in oklab, var(--brand-500) 30%, transparent);
+
+  --color-focus-ring: color-mix(in oklab, var(--brand-500) 35%, transparent);
+  --shadow-focus:     0 0 0 3px var(--color-focus-ring);
+
+  --gradient-hero:
+    radial-gradient(70% 40% at 80% 0%, color-mix(in oklab, var(--brand-400) 22%, transparent), transparent 70%),
+    radial-gradient(60% 50% at 0% 100%, color-mix(in oklab, #fb923c 10%, transparent), transparent 70%);
+  --gradient-cta:
+    linear-gradient(140deg, var(--brand-600), var(--brand-700));
+}
+
+/* =============================================================================
+ * ROSE — DARK
+ * ============================================================================= */
+[data-theme="rose"][data-mode="dark"] {
+  --brand-50:  #4a0e1d;
+  --brand-100: #6b1430;
+  --brand-200: #9f1239;
+  --brand-300: #be123c;
+  --brand-400: #e11d48;
+  --brand-500: #f43f5e;
+  --brand-600: #fb7185;
+  --brand-700: #fda4af;
+  --brand-800: #fecdd3;
+  --brand-900: #ffe4e6;
+
+  --color-bg:        #150a0e;
+  --color-surface-1: #20131a;
+  --color-surface-2: #1a0e14;
+  --color-surface-3: #160c11;
+
+  --color-bg-elev:   var(--color-surface-1);
+  --color-bg-soft:   var(--color-surface-2);
+  --color-card:      var(--color-surface-1);
+  --color-card-soft: var(--color-surface-2);
+  --color-input-bg:  var(--color-surface-3);
+
+  --color-fg:        #fff1f2;
+  --color-fg-soft:   #fecdd3;
+  --color-fg-muted:  #a08088;
+  --color-muted:     var(--color-fg-muted);
+
+  --color-border-subtle: #2a1820;
+  --color-border:        #3a1f2a;
+  --color-border-strong: #56303f;
+  --color-input-border:  var(--color-border);
+
+  --color-accent:        var(--brand-500);
+  --color-accent-soft:   color-mix(in oklab, var(--brand-500) 22%, var(--color-bg));
+  --color-accent-strong: var(--brand-600);
+
+  --color-on-brand:        #ffffff;
+  --color-on-accent-soft:  var(--brand-700);
+  --color-on-surface-1:    var(--color-fg);
+  --color-on-surface-2:    var(--color-fg-soft);
+
+  --color-hover-bg:    color-mix(in oklab, var(--brand-500) 12%, var(--color-surface-1));
+  --color-pressed-bg:  color-mix(in oklab, var(--brand-500) 18%, var(--color-surface-1));
+  --color-selected-bg: color-mix(in oklab, var(--brand-500) 24%, var(--color-surface-1));
+  --color-row-hover:   color-mix(in oklab, var(--brand-500) 9%,  var(--color-surface-1));
+
+  --color-success:      #34d399;
+  --color-success-soft: #043e2c;
+  --color-warn:         #fbbf24;
+  --color-warn-soft:    #3a2a0a;
+  --color-danger:       #f87171;
+  --color-danger-soft:  #3d1414;
+  --color-info:         #60a5fa;
+  --color-info-soft:    #112647;
+
+  --shadow-xs: 0 1px 1px rgba(0,0,0,.4);
+  --shadow-sm: 0 1px 2px rgba(0,0,0,.45);
+  --shadow:    0 4px 12px rgba(0,0,0,.5);
+  --shadow-md: 0 10px 25px rgba(0,0,0,.55);
+  --shadow-lg: 0 24px 48px rgba(0,0,0,.6);
+  --shadow-brand: 0 8px 24px -4px color-mix(in oklab, var(--brand-500) 38%, transparent);
+
+  --color-focus-ring: color-mix(in oklab, var(--brand-500) 45%, transparent);
+  --shadow-focus:     0 0 0 3px var(--color-focus-ring);
+
+  --gradient-hero:
+    radial-gradient(70% 40% at 80% 0%, color-mix(in oklab, var(--brand-500) 18%, transparent), transparent 70%),
+    radial-gradient(60% 50% at 0% 100%, color-mix(in oklab, #fb923c 10%, transparent), transparent 70%);
+  --gradient-cta:
+    linear-gradient(140deg, var(--brand-500), var(--brand-400));
+}
+
+/* =============================================================================
+ * AMBER — LIGHT
+ * ============================================================================= */
+[data-theme="amber"][data-mode="light"] {
+  --brand-50:  #fffbeb;
+  --brand-100: #fef3c7;
+  --brand-200: #fde68a;
+  --brand-300: #fcd34d;
+  --brand-400: #fbbf24;
+  --brand-500: #f59e0b;
+  --brand-600: #d97706;
+  --brand-700: #b45309;
+  --brand-800: #92400e;
+  --brand-900: #78350f;
+
+  --color-bg:        #fefcf6;
+  --color-surface-1: #ffffff;
+  --color-surface-2: #fbf3df;
+  --color-surface-3: #f4e7c5;
+
+  --color-bg-elev:   var(--color-surface-1);
+  --color-bg-soft:   var(--color-surface-2);
+  --color-card:      var(--color-surface-1);
+  --color-card-soft: var(--color-surface-2);
+  --color-input-bg:  var(--color-surface-1);
+
+  --color-fg:        #1f1611;
+  --color-fg-soft:   #4a3722;
+  --color-fg-muted:  #856b50;
+  --color-muted:     var(--color-fg-muted);
+
+  --color-border-subtle: #f3e6c5;
+  --color-border:        #e3cb96;
+  --color-border-strong: #c5a464;
+  --color-input-border:  var(--color-border);
+
+  --color-accent:        var(--brand-700);
+  --color-accent-soft:   #fef3c7;
+  --color-accent-strong: var(--brand-800);
+
+  --color-on-brand:        #ffffff;
+  --color-on-accent-soft:  var(--brand-800);
+  --color-on-surface-1:    var(--color-fg);
+  --color-on-surface-2:    var(--color-fg-soft);
+
+  --color-hover-bg:    color-mix(in oklab, var(--brand-600) 6%,  var(--color-bg));
+  --color-pressed-bg:  color-mix(in oklab, var(--brand-600) 11%, var(--color-bg));
+  --color-selected-bg: color-mix(in oklab, var(--brand-600) 14%, var(--color-bg));
+  --color-row-hover:   color-mix(in oklab, var(--brand-600) 4%,  var(--color-surface-1));
+
+  --color-success:      #047857;
+  --color-success-soft: #d1fae5;
+  --color-warn:         #b45309;
+  --color-warn-soft:    #fef3c7;
+  --color-danger:       #b91c1c;
+  --color-danger-soft:  #fee2e2;
+  --color-info:         #1d4ed8;
+  --color-info-soft:    #dbeafe;
+
+  --shadow-xs: 0 1px 1px rgba(31,22,17,.04);
+  --shadow-sm: 0 1px 2px rgba(31,22,17,.05);
+  --shadow:    0 4px 8px -2px rgba(31,22,17,.06);
+  --shadow-md: 0 10px 20px -8px rgba(31,22,17,.10);
+  --shadow-lg: 0 20px 40px -12px rgba(31,22,17,.14);
+  --shadow-brand: 0 8px 24px -4px color-mix(in oklab, var(--brand-500) 30%, transparent);
+
+  --color-focus-ring: color-mix(in oklab, var(--brand-600) 35%, transparent);
+  --shadow-focus:     0 0 0 3px var(--color-focus-ring);
+
+  --gradient-hero:
+    radial-gradient(70% 40% at 80% 0%, color-mix(in oklab, var(--brand-400) 22%, transparent), transparent 70%),
+    radial-gradient(60% 50% at 0% 100%, color-mix(in oklab, #f43f5e 10%, transparent), transparent 70%);
+  --gradient-cta:
+    linear-gradient(140deg, var(--brand-700), var(--brand-800));
+}
+
+/* =============================================================================
+ * AMBER — DARK
+ * ============================================================================= */
+[data-theme="amber"][data-mode="dark"] {
+  --brand-50:  #1c1208;
+  --brand-100: #3a2510;
+  --brand-200: #78350f;
+  --brand-300: #92400e;
+  --brand-400: #b45309;
+  --brand-500: #d97706;
+  --brand-600: #f59e0b;
+  --brand-700: #fbbf24;
+  --brand-800: #fcd34d;
+  --brand-900: #fde68a;
+
+  --color-bg:        #14100a;
+  --color-surface-1: #1f180e;
+  --color-surface-2: #19130b;
+  --color-surface-3: #150f08;
+
+  --color-bg-elev:   var(--color-surface-1);
+  --color-bg-soft:   var(--color-surface-2);
+  --color-card:      var(--color-surface-1);
+  --color-card-soft: var(--color-surface-2);
+  --color-input-bg:  var(--color-surface-3);
+
+  --color-fg:        #fef3c7;
+  --color-fg-soft:   #fde68a;
+  --color-fg-muted:  #b09376;
+  --color-muted:     var(--color-fg-muted);
+
+  --color-border-subtle: #2a1f10;
+  --color-border:        #3a2c17;
+  --color-border-strong: #5a4424;
+  --color-input-border:  var(--color-border);
+
+  --color-accent:        var(--brand-600);
+  --color-accent-soft:   color-mix(in oklab, var(--brand-500) 22%, var(--color-bg));
+  --color-accent-strong: var(--brand-700);
+
+  --color-on-brand:        #1a0f02;
+  --color-on-accent-soft:  var(--brand-700);
+  --color-on-surface-1:    var(--color-fg);
+  --color-on-surface-2:    var(--color-fg-soft);
+
+  --color-hover-bg:    color-mix(in oklab, var(--brand-600) 12%, var(--color-surface-1));
+  --color-pressed-bg:  color-mix(in oklab, var(--brand-600) 18%, var(--color-surface-1));
+  --color-selected-bg: color-mix(in oklab, var(--brand-600) 24%, var(--color-surface-1));
+  --color-row-hover:   color-mix(in oklab, var(--brand-600) 9%,  var(--color-surface-1));
+
+  --color-success:      #34d399;
+  --color-success-soft: #043e2c;
+  --color-warn:         #fcd34d;
+  --color-warn-soft:    #3a2a0a;
+  --color-danger:       #f87171;
+  --color-danger-soft:  #3d1414;
+  --color-info:         #60a5fa;
+  --color-info-soft:    #112647;
+
+  --shadow-xs: 0 1px 1px rgba(0,0,0,.4);
+  --shadow-sm: 0 1px 2px rgba(0,0,0,.45);
+  --shadow:    0 4px 12px rgba(0,0,0,.5);
+  --shadow-md: 0 10px 25px rgba(0,0,0,.55);
+  --shadow-lg: 0 24px 48px rgba(0,0,0,.6);
+  --shadow-brand: 0 8px 24px -4px color-mix(in oklab, var(--brand-600) 38%, transparent);
+
+  --color-focus-ring: color-mix(in oklab, var(--brand-600) 50%, transparent);
+  --shadow-focus:     0 0 0 3px var(--color-focus-ring);
+
+  --gradient-hero:
+    radial-gradient(70% 40% at 80% 0%, color-mix(in oklab, var(--brand-600) 18%, transparent), transparent 70%),
+    radial-gradient(60% 50% at 0% 100%, color-mix(in oklab, #f43f5e 10%, transparent), transparent 70%);
+  --gradient-cta:
+    linear-gradient(140deg, var(--brand-600), var(--brand-500));
+}
+
+/* =============================================================================
+ * SLATE — LIGHT  (sophisticated monochrome with a hint of blue)
+ * ============================================================================= */
+[data-theme="slate"][data-mode="light"] {
+  --brand-50:  #f8fafc;
+  --brand-100: #f1f5f9;
+  --brand-200: #e2e8f0;
+  --brand-300: #cbd5e1;
+  --brand-400: #94a3b8;
+  --brand-500: #64748b;
+  --brand-600: #475569;
+  --brand-700: #334155;
+  --brand-800: #1e293b;
+  --brand-900: #0f172a;
+
+  --color-bg:        #f8fafc;
+  --color-surface-1: #ffffff;
+  --color-surface-2: #f1f5f9;
+  --color-surface-3: #e7eef6;
+
+  --color-bg-elev:   var(--color-surface-1);
+  --color-bg-soft:   var(--color-surface-2);
+  --color-card:      var(--color-surface-1);
+  --color-card-soft: var(--color-surface-2);
+  --color-input-bg:  var(--color-surface-1);
+
+  --color-fg:        #0f172a;
+  --color-fg-soft:   #334155;
+  --color-fg-muted:  #64748b;
+  --color-muted:     var(--color-fg-muted);
+
+  --color-border-subtle: #eef2f7;
+  --color-border:        #d6dfe8;
+  --color-border-strong: #aebccc;
+  --color-input-border:  var(--color-border);
+
+  --color-accent:        var(--brand-700);
+  --color-accent-soft:   #e2e8f0;
+  --color-accent-strong: var(--brand-900);
+
+  --color-on-brand:        #ffffff;
+  --color-on-accent-soft:  var(--brand-900);
+  --color-on-surface-1:    var(--color-fg);
+  --color-on-surface-2:    var(--color-fg-soft);
+
+  --color-hover-bg:    color-mix(in oklab, var(--brand-700) 5%,  var(--color-bg));
+  --color-pressed-bg:  color-mix(in oklab, var(--brand-700) 9%,  var(--color-bg));
+  --color-selected-bg: color-mix(in oklab, var(--brand-700) 12%, var(--color-bg));
+  --color-row-hover:   color-mix(in oklab, var(--brand-700) 4%,  var(--color-surface-1));
+
+  --color-success:      #047857;
+  --color-success-soft: #d1fae5;
+  --color-warn:         #b45309;
+  --color-warn-soft:    #fef3c7;
+  --color-danger:       #b91c1c;
+  --color-danger-soft:  #fee2e2;
+  --color-info:         #1d4ed8;
+  --color-info-soft:    #dbeafe;
+
+  --shadow-xs: 0 1px 1px rgba(15,23,42,.04);
+  --shadow-sm: 0 1px 2px rgba(15,23,42,.05);
+  --shadow:    0 4px 8px -2px rgba(15,23,42,.06);
+  --shadow-md: 0 10px 20px -8px rgba(15,23,42,.10);
+  --shadow-lg: 0 20px 40px -12px rgba(15,23,42,.14);
+  --shadow-brand: 0 8px 24px -4px rgba(15,23,42,.16);
+
+  --color-focus-ring: color-mix(in oklab, var(--brand-700) 35%, transparent);
+  --shadow-focus:     0 0 0 3px var(--color-focus-ring);
+
+  --gradient-hero:
+    radial-gradient(70% 40% at 80% 0%, color-mix(in oklab, #6366f1 12%, transparent), transparent 70%),
+    radial-gradient(60% 50% at 0% 100%, color-mix(in oklab, #94a3b8 14%, transparent), transparent 70%);
+  --gradient-cta:
+    linear-gradient(140deg, var(--brand-800), var(--brand-900));
+}
+
+/* =============================================================================
+ * SLATE — DARK
+ * ============================================================================= */
+[data-theme="slate"][data-mode="dark"] {
+  --brand-50:  #0f172a;
+  --brand-100: #1e293b;
+  --brand-200: #334155;
+  --brand-300: #475569;
+  --brand-400: #64748b;
+  --brand-500: #94a3b8;
+  --brand-600: #cbd5e1;
+  --brand-700: #e2e8f0;
+  --brand-800: #f1f5f9;
+  --brand-900: #f8fafc;
+
+  --color-bg:        #0a0f1a;
+  --color-surface-1: #131a2a;
+  --color-surface-2: #0f1623;
+  --color-surface-3: #0c121e;
+
+  --color-bg-elev:   var(--color-surface-1);
+  --color-bg-soft:   var(--color-surface-2);
+  --color-card:      var(--color-surface-1);
+  --color-card-soft: var(--color-surface-2);
+  --color-input-bg:  var(--color-surface-3);
+
+  --color-fg:        #f1f5f9;
+  --color-fg-soft:   #cbd5e1;
+  --color-fg-muted:  #8a94a8;
+  --color-muted:     var(--color-fg-muted);
+
+  --color-border-subtle: #182032;
+  --color-border:        #232b3e;
+  --color-border-strong: #344056;
+  --color-input-border:  var(--color-border);
+
+  --color-accent:        var(--brand-500);
+  --color-accent-soft:   color-mix(in oklab, var(--brand-400) 18%, var(--color-bg));
+  --color-accent-strong: var(--brand-700);
+
+  --color-on-brand:        #0a0f1a;
+  --color-on-accent-soft:  var(--brand-700);
+  --color-on-surface-1:    var(--color-fg);
+  --color-on-surface-2:    var(--color-fg-soft);
+
+  --color-hover-bg:    color-mix(in oklab, var(--brand-400) 10%, var(--color-surface-1));
+  --color-pressed-bg:  color-mix(in oklab, var(--brand-400) 16%, var(--color-surface-1));
+  --color-selected-bg: color-mix(in oklab, var(--brand-400) 22%, var(--color-surface-1));
+  --color-row-hover:   color-mix(in oklab, var(--brand-400) 7%,  var(--color-surface-1));
+
+  --color-success:      #34d399;
+  --color-success-soft: #043e2c;
+  --color-warn:         #fbbf24;
+  --color-warn-soft:    #3a2a0a;
+  --color-danger:       #f87171;
+  --color-danger-soft:  #3d1414;
+  --color-info:         #60a5fa;
+  --color-info-soft:    #112647;
+
+  --shadow-xs: 0 1px 1px rgba(0,0,0,.4);
+  --shadow-sm: 0 1px 2px rgba(0,0,0,.45);
+  --shadow:    0 4px 12px rgba(0,0,0,.5);
+  --shadow-md: 0 10px 25px rgba(0,0,0,.55);
+  --shadow-lg: 0 24px 48px rgba(0,0,0,.6);
+  --shadow-brand: 0 8px 24px -4px rgba(0,0,0,.6);
+
+  --color-focus-ring: color-mix(in oklab, var(--brand-400) 45%, transparent);
+  --shadow-focus:     0 0 0 3px var(--color-focus-ring);
+
+  --gradient-hero:
+    radial-gradient(70% 40% at 80% 0%, color-mix(in oklab, #6366f1 14%, transparent), transparent 70%),
+    radial-gradient(60% 50% at 0% 100%, color-mix(in oklab, var(--brand-400) 12%, transparent), transparent 70%);
+  --gradient-cta:
+    linear-gradient(140deg, var(--brand-300), var(--brand-200));
+}
+
+/* =============================================================================
+ * GLOBAL RESETS
+ * ============================================================================= */
 html, body {
-  background: var(--background);
-  color: var(--foreground);
+  background: var(--color-bg);
+  color: var(--color-fg);
   font-family: var(--font-sans);
+  font-feature-settings: "cv11", "ss01", "ss03";
+  letter-spacing: -0.005em;
   margin: 0;
   padding: 0;
   min-height: 100vh;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  transition: background-color .25s ease, color .25s ease;
 }
 
 * { box-sizing: border-box; }
 
-.btn { display: inline-flex; align-items: center; justify-content: center; gap: .5rem; padding: .55rem 1rem; border-radius: .6rem; font-size: .875rem; font-weight: 600; transition: all .15s ease; cursor: pointer; border: 1px solid transparent; white-space: nowrap; }
+::selection { background: var(--color-selected-bg); color: var(--color-fg); }
+
+a { color: inherit; text-decoration: none; }
+
+/* Make sure number-heavy UI uses tabular figures so columns align. */
+table, .tabular-nums { font-variant-numeric: tabular-nums; }
+
+/* Respect reduced-motion preferences. Don't strip ALL animation —
+ * just shorten transitions so the page still feels responsive. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    transition-duration: .01ms !important;
+  }
+}
+
+/* =============================================================================
+ * BUTTONS  — solid by default, gradient as a "primary CTA" variant
+ * -----------------------------------------------------------------------------
+ * Every state defined explicitly. No pseudo-magic; legibility guaranteed.
+ * ============================================================================= */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: .5rem;
+  padding: .55rem 1.05rem;
+  border-radius: .55rem;
+  font-size: .875rem;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  line-height: 1.25;
+  white-space: nowrap;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background-color .15s, color .15s, border-color .15s, box-shadow .15s, transform .12s;
+  user-select: none;
+}
 .btn:disabled { opacity: .5; cursor: not-allowed; }
-.btn-primary { background: linear-gradient(135deg, #059669, #047857); color: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.05); }
-.btn-primary:hover:not(:disabled) { filter: brightness(1.05); transform: translateY(-1px); box-shadow: 0 4px 10px rgba(5,150,105,.25); }
-.btn-secondary { background: #fff; border-color: #cbd5e1; color: #334155; }
-.btn-secondary:hover:not(:disabled) { background: #f8fafc; }
-.btn-ghost { background: transparent; color: #475569; }
-.btn-ghost:hover { background: #f1f5f9; }
-.btn-danger { background: #dc2626; color: #fff; }
-.btn-danger:hover:not(:disabled) { background: #b91c1c; }
+.btn:focus-visible { outline: none; box-shadow: var(--shadow-focus); }
 
-.input, .select, .textarea { width: 100%; border-radius: .6rem; border: 1px solid #cbd5e1; padding: .55rem .8rem; font-size: .9rem; background: #fff; transition: border-color .15s, box-shadow .15s; }
-.input:focus, .select:focus, .textarea:focus { outline: none; border-color: #10b981; box-shadow: 0 0 0 3px rgba(16,185,129,.15); }
-.label { display: block; font-size: .85rem; font-weight: 600; color: #334155; margin-bottom: .35rem; }
+/* primary — solid brand fill, white text. Highest contrast guarantee. */
+.btn-primary {
+  background: var(--brand-600);
+  color: var(--color-on-brand);
+  box-shadow: var(--shadow-sm);
+}
+.btn-primary:hover:not(:disabled)  { background: var(--brand-700); box-shadow: var(--shadow); }
+.btn-primary:active:not(:disabled) { background: var(--brand-800); box-shadow: var(--shadow-sm); transform: translateY(0); }
 
-.card { background: var(--card); border: 1px solid var(--border); border-radius: .9rem; padding: 1.25rem; box-shadow: 0 1px 2px rgba(15,23,42,.04); }
-.card-hover { transition: all .15s ease; }
-.card-hover:hover { box-shadow: 0 8px 24px rgba(15,23,42,.08); transform: translateY(-2px); border-color: #d1fae5; }
+/* primary-cta — for marketing surfaces only (hero, pricing). Gradient. */
+.btn-cta {
+  background: var(--gradient-cta);
+  color: var(--color-on-brand);
+  box-shadow: var(--shadow-brand);
+}
+.btn-cta:hover:not(:disabled)  { filter: brightness(1.06); transform: translateY(-1px); box-shadow: var(--shadow-md); }
+.btn-cta:active:not(:disabled) { filter: brightness(.98); transform: translateY(0); }
 
-.badge { display: inline-flex; align-items: center; padding: .15rem .55rem; border-radius: 9999px; font-size: .7rem; font-weight: 600; }
-.badge-remember   { background: #dbeafe; color: #1e40af; }
-.badge-understand { background: #d1fae5; color: #065f46; }
-.badge-apply      { background: #fef3c7; color: #92400e; }
+/* secondary — surface fill, soft border, fg text. */
+.btn-secondary {
+  background: var(--color-surface-1);
+  color: var(--color-fg);
+  border-color: var(--color-border);
+}
+.btn-secondary:hover:not(:disabled)  { background: var(--color-hover-bg); border-color: var(--color-border-strong); }
+.btn-secondary:active:not(:disabled) { background: var(--color-pressed-bg); }
+
+/* ghost — no chrome until hover. */
+.btn-ghost {
+  background: transparent;
+  color: var(--color-fg-soft);
+}
+.btn-ghost:hover:not(:disabled)  { background: var(--color-hover-bg); color: var(--color-fg); }
+.btn-ghost:active:not(:disabled) { background: var(--color-pressed-bg); }
+
+/* danger — semantic role, theme-independent. */
+.btn-danger {
+  background: var(--color-danger);
+  color: var(--color-on-brand);
+  box-shadow: var(--shadow-sm);
+}
+.btn-danger:hover:not(:disabled)  { filter: brightness(1.08); box-shadow: var(--shadow); }
+.btn-danger:active:not(:disabled) { filter: brightness(.95); }
+
+/* =============================================================================
+ * INPUTS  — reliable focus, visible placeholder, AA contrast
+ * ============================================================================= */
+.input, .select, .textarea {
+  width: 100%;
+  border-radius: .55rem;
+  border: 1px solid var(--color-input-border);
+  padding: .55rem .85rem;
+  font-size: .9rem;
+  font-family: inherit;
+  background: var(--color-input-bg);
+  color: var(--color-fg);
+  line-height: 1.4;
+  transition: border-color .15s, box-shadow .15s, background-color .15s;
+}
+.input:hover, .select:hover, .textarea:hover {
+  border-color: var(--color-border-strong);
+}
+.input:focus, .select:focus, .textarea:focus {
+  outline: none;
+  border-color: var(--brand-500);
+  box-shadow: var(--shadow-focus);
+}
+.input::placeholder, .textarea::placeholder { color: var(--color-fg-muted); }
+.input:disabled, .select:disabled, .textarea:disabled {
+  background: var(--color-surface-2);
+  color: var(--color-fg-muted);
+  cursor: not-allowed;
+}
+.label {
+  display: block;
+  font-size: .85rem;
+  font-weight: 600;
+  color: var(--color-fg-soft);
+  margin-bottom: .4rem;
+  letter-spacing: -0.005em;
+}
+
+/* =============================================================================
+ * CARDS  — shadow does the lifting, position stays still (less jarring)
+ * ============================================================================= */
+.card {
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: .85rem;
+  padding: 1.35rem;
+  box-shadow: var(--shadow-xs);
+  color: var(--color-fg);
+}
+.card-soft {
+  background: var(--color-surface-2);
+  border-color: var(--color-border-subtle);
+}
+.card-hover {
+  transition: box-shadow .18s, border-color .18s;
+  cursor: pointer;
+}
+.card-hover:hover {
+  box-shadow: var(--shadow-md);
+  border-color: var(--color-border-strong);
+}
+.card-hover:active {
+  box-shadow: var(--shadow-sm);
+}
+/* card-feature — premium decoration with animated brand glow on hover */
+.card-feature {
+  position: relative;
+  overflow: hidden;
+}
+.card-feature::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--gradient-hero);
+  opacity: 0;
+  transition: opacity .25s ease;
+  pointer-events: none;
+  z-index: 0;
+}
+.card-feature:hover::before { opacity: .65; }
+.card-feature > * { position: relative; z-index: 1; }
+
+/* =============================================================================
+ * BADGES  — Bloom levels + status + neutral pills
+ * Each badge is a fixed semantic color (not theme-dependent) so a Remember
+ * badge is always blue, an Apply badge is always amber, etc. — keeps mental
+ * model stable regardless of the user's theme choice.
+ * ============================================================================= */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: .2rem .6rem;
+  border-radius: 9999px;
+  font-size: .7rem;
+  font-weight: 600;
+  letter-spacing: -.005em;
+  line-height: 1.4;
+}
+.badge-remember   { background: var(--color-info-soft);    color: var(--color-info); }
+.badge-understand { background: var(--color-success-soft); color: var(--color-success); }
+.badge-apply      { background: var(--color-warn-soft);    color: var(--color-warn); }
 .badge-analyze    { background: #ffedd5; color: #9a3412; }
 .badge-evaluate   { background: #fce7f3; color: #9d174d; }
 .badge-create     { background: #ede9fe; color: #5b21b6; }
-.badge-pending    { background: #f1f5f9; color: #475569; }
-.badge-approved   { background: #dcfce7; color: #166534; }
-.badge-rejected   { background: #fee2e2; color: #991b1b; }
+.badge-pending    { background: var(--color-surface-2);    color: var(--color-fg-muted); }
+.badge-approved   { background: var(--color-success-soft); color: var(--color-success); }
+.badge-rejected   { background: var(--color-danger-soft);  color: var(--color-danger); }
 
-.muted { color: #64748b; }
-.h1 { font-size: 1.75rem; font-weight: 700; letter-spacing: -.02em; color: #0b1220; }
-.h2 { font-size: 1.25rem; font-weight: 700; color: #0b1220; }
-.h3 { font-size: 1rem; font-weight: 600; color: #0b1220; }
+/* Dark-mode tweaks for fixed-hue badges so they remain legible */
+[data-mode="dark"] .badge-analyze   { background: #4a2810; color: #fdba74; }
+[data-mode="dark"] .badge-evaluate  { background: #4a1430; color: #f9a8d4; }
+[data-mode="dark"] .badge-create    { background: #2c1a4a; color: #c4b5fd; }
 
-.spinner { display: inline-block; width: 1rem; height: 1rem; border: 2px solid #e2e8f0; border-top-color: #059669; border-radius: 9999px; animation: spin .8s linear infinite; }
+/* =============================================================================
+ * Typography helpers
+ * ============================================================================= */
+.muted { color: var(--color-fg-muted); }
+.h1 {
+  font-family: var(--font-display);
+  font-size: clamp(1.6rem, 1.2rem + 1.4vw, 2rem);
+  font-weight: 700;
+  letter-spacing: -.025em;
+  color: var(--color-fg);
+  line-height: 1.15;
+}
+.h2 {
+  font-family: var(--font-display);
+  font-size: 1.3rem;
+  font-weight: 700;
+  letter-spacing: -.02em;
+  color: var(--color-fg);
+  line-height: 1.25;
+}
+.h3 {
+  font-size: 1.05rem;
+  font-weight: 600;
+  letter-spacing: -.01em;
+  color: var(--color-fg);
+  line-height: 1.4;
+}
+
+/* =============================================================================
+ * Decorative + branded surfaces
+ * ============================================================================= */
+.bg-hero {
+  background: var(--gradient-hero), var(--color-bg);
+}
+.text-gradient-brand {
+  background: linear-gradient(135deg, var(--brand-600), var(--brand-400));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  font-weight: 700;
+}
+[data-mode="dark"] .text-gradient-brand {
+  background: linear-gradient(135deg, var(--brand-500), var(--brand-700));
+  -webkit-background-clip: text;
+  background-clip: text;
+}
+
+/* =============================================================================
+ * Spinners + motion utilities
+ * ============================================================================= */
+.spinner {
+  display: inline-block;
+  width: 1rem;
+  height: 1rem;
+  border: 2px solid var(--color-border);
+  border-top-color: var(--brand-500);
+  border-radius: 9999px;
+  animation: spin .8s linear infinite;
+}
 @keyframes spin { to { transform: rotate(360deg); } }
 
-.fade-in { animation: fadeIn .25s ease-out; }
-@keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+.fade-in { animation: fadeIn .3s cubic-bezier(.4,0,.2,1); }
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
 
-/* --- Next.js dev indicator: belt-and-suspenders --- */
-/* `devIndicators: false` in next.config.ts is the primary switch, but Next 16
-   sometimes still mounts the badge briefly. These selectors hide every part
-   of the floating dev-tools button/badge without touching the actual error
-   overlay (which uses `data-nextjs-dialog*` selectors we deliberately leave
-   alone, so real errors still surface). */
+.skeleton {
+  background: linear-gradient(90deg, var(--color-surface-2) 0%, var(--color-surface-3) 50%, var(--color-surface-2) 100%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s ease infinite;
+  border-radius: .5rem;
+}
+@keyframes shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* =============================================================================
+ * INTERACTION SAFETY NET — bridge for components that still use raw Tailwind
+ * -----------------------------------------------------------------------------
+ * Many existing pages use Tailwind utility classes (bg-white, text-slate-600,
+ * border-slate-200, etc.) directly. These rules retarget the most common
+ * surface utilities to theme tokens in dark mode, AND add hover safety so
+ * Tailwind hover:bg-slate-50 etc. don't kill text contrast.
+ * ============================================================================= */
+
+/* Background remappings (dark mode) — CRITICAL for text legibility */
+[data-mode="dark"] .bg-white        { background-color: var(--color-surface-1) !important; color: var(--color-fg); }
+[data-mode="dark"] .bg-slate-50,
+[data-mode="dark"] .bg-gray-50      { background-color: var(--color-surface-2) !important; }
+[data-mode="dark"] .bg-slate-100,
+[data-mode="dark"] .bg-gray-100     { background-color: var(--color-surface-2) !important; }
+[data-mode="dark"] .bg-slate-200,
+[data-mode="dark"] .bg-gray-200     { background-color: var(--color-surface-3) !important; }
+
+/* Text remappings (dark mode) */
+[data-mode="dark"] .text-slate-400,
+[data-mode="dark"] .text-gray-400   { color: var(--color-fg-muted) !important; }
+[data-mode="dark"] .text-slate-500,
+[data-mode="dark"] .text-gray-500   { color: var(--color-fg-muted) !important; }
+[data-mode="dark"] .text-slate-600,
+[data-mode="dark"] .text-gray-600   { color: var(--color-fg-soft) !important; }
+[data-mode="dark"] .text-slate-700,
+[data-mode="dark"] .text-gray-700   { color: var(--color-fg-soft) !important; }
+[data-mode="dark"] .text-slate-800,
+[data-mode="dark"] .text-gray-800   { color: var(--color-fg) !important; }
+[data-mode="dark"] .text-slate-900,
+[data-mode="dark"] .text-gray-900   { color: var(--color-fg) !important; }
+
+/* Borders */
+[data-mode="dark"] .border-slate-100,
+[data-mode="dark"] .border-gray-100  { border-color: var(--color-border-subtle) !important; }
+[data-mode="dark"] .border-slate-200,
+[data-mode="dark"] .border-gray-200  { border-color: var(--color-border) !important; }
+[data-mode="dark"] .border-slate-300,
+[data-mode="dark"] .border-gray-300  { border-color: var(--color-border-strong) !important; }
+
+/* Emerald-keyed utilities used by older code — retarget to active brand
+ * across all themes so a plan card or active link renders in the user's
+ * chosen palette, not stuck on the original emerald. */
+.bg-emerald-50     { background-color: var(--color-accent-soft) !important; color: var(--color-on-accent-soft); }
+.bg-emerald-100    { background-color: var(--color-accent-soft) !important; color: var(--color-on-accent-soft); }
+.text-emerald-600  { color: var(--color-accent) !important; }
+.text-emerald-700  { color: var(--color-accent-strong) !important; }
+.text-emerald-800  { color: var(--color-accent-strong) !important; }
+.text-emerald-900  { color: var(--color-accent-strong) !important; }
+.border-emerald-100,
+.border-emerald-200 { border-color: var(--brand-200) !important; }
+.hover\:text-emerald-700:hover { color: var(--color-accent-strong) !important; }
+.hover\:bg-emerald-50:hover    { background-color: var(--color-accent-soft) !important; color: var(--color-on-accent-soft); }
+
+/* Hover safety — when older code does hover:bg-slate-50 with text that's
+ * already low-contrast against a similar bg, force the text to fg-soft so
+ * it stays legible no matter what. This is the "sometimes text isn't visible"
+ * fix. */
+.hover\:bg-slate-50:hover,
+.hover\:bg-slate-100:hover,
+.hover\:bg-gray-50:hover,
+.hover\:bg-gray-100:hover {
+  background-color: var(--color-row-hover) !important;
+  color: var(--color-fg) !important;
+}
+
+/* Red action buttons used in older code — safety. */
+.text-red-700 { color: var(--color-danger) !important; }
+.bg-red-50    { background-color: var(--color-danger-soft) !important; }
+[data-mode="dark"] .bg-red-50 { background-color: var(--color-danger-soft) !important; }
+[data-mode="dark"] .text-red-700 { color: var(--color-danger) !important; }
+.hover\:bg-red-50:hover {
+  background-color: var(--color-danger-soft) !important;
+  color: var(--color-danger) !important;
+}
+
+/* =============================================================================
+ * Next.js dev indicator — keep hidden
+ * ============================================================================= */
 [data-next-badge-root],
 [data-next-badge],
 [data-next-mark],

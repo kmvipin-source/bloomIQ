@@ -1,116 +1,263 @@
 import Link from "next/link";
-import { ArrowRight } from "lucide-react";
+import { ArrowRight, Sparkles, Timer, BarChart3, Brain, Target, Layers } from "lucide-react";
 import PublicNav from "@/components/PublicNav";
 
+/**
+ * Home / Landing page
+ * -------------------
+ * Premium-clean aesthetic. Theme-aware (uses CSS vars for all colors so
+ * the page picks up whichever theme the visitor has saved). Layered
+ * gradient mesh in the hero, refined typography (Inter + tighter
+ * letter-spacing on display text), card hover lift, and stat strip
+ * to add credibility.
+ */
 export default function LandingPage() {
   return (
-    <main className="min-h-screen">
-      {/* Top nav — gives visitors a clear path to pricing and sign-in without
-          having to dig through the page. Mirrors the /pricing top bar so the
-          two pages feel like one site. PublicNav is a client component so
-          it can read the Supabase session and adapt its CTAs (logged-out
-          users see Sign in / Create account; logged-in users see Dashboard
-          and Sign out). */}
-      <header className="border-b border-slate-200/60 bg-white/70 backdrop-blur sticky top-0 z-10">
+    <main className="min-h-screen bg-hero">
+      {/* Sticky top nav. Translucent + backdrop blur for the modern feel. */}
+      <header
+        className="sticky top-0 z-20 backdrop-blur"
+        style={{
+          background: "color-mix(in oklab, var(--color-card) 75%, transparent)",
+          borderBottom: "1px solid var(--color-border)",
+        }}
+      >
         <div className="max-w-6xl mx-auto px-6 py-3 flex items-center justify-between">
           <Link href="/" className="flex items-center gap-2">
             <span className="text-2xl">🌱</span>
-            <span className="font-bold tracking-tight">BloomIQ</span>
+            <span className="font-bold tracking-tight text-lg">BloomIQ</span>
           </Link>
           <PublicNav />
         </div>
       </header>
 
-      {/* Hero */}
+      {/* HERO ------------------------------------------------------------ */}
       <section className="relative overflow-hidden">
-        <div className="absolute inset-0 bg-gradient-to-br from-emerald-50 via-white to-sky-50" />
-        <div className="relative max-w-4xl mx-auto px-6 pt-20 pb-16 text-center">
-          <h1 className="text-4xl md:text-6xl font-bold tracking-tight text-slate-900 leading-tight">
-            Assess <span className="text-emerald-600">how students think</span>,
+        {/* Subtle decorative orbs — pure CSS, no images, theme-aware */}
+        <div
+          aria-hidden
+          className="absolute -top-32 -right-32 w-[480px] h-[480px] rounded-full opacity-50 blur-3xl pointer-events-none"
+          style={{ background: "var(--brand-300)" }}
+        />
+        <div
+          aria-hidden
+          className="absolute -bottom-32 -left-32 w-[420px] h-[420px] rounded-full opacity-40 blur-3xl pointer-events-none"
+          style={{ background: "var(--brand-200)" }}
+        />
+
+        <div className="relative max-w-5xl mx-auto px-6 pt-20 pb-20 text-center">
+          {/* Eyebrow chip */}
+          <div
+            className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold mb-6 fade-in"
+            style={{
+              background: "var(--color-accent-soft)",
+              color: "var(--brand-700)",
+              border: "1px solid var(--brand-200)",
+            }}
+          >
+            <Sparkles size={12} /> AI tutor + Bloom-aligned assessments
+          </div>
+
+          <h1
+            className="text-4xl md:text-6xl font-extrabold tracking-tight leading-[1.05] fade-in"
+            style={{ color: "var(--color-fg)" }}
+          >
+            Assess <span className="text-gradient-brand">how students think</span>,
             <br className="hidden sm:block" /> not just what they recall.
           </h1>
-          <p className="mt-6 text-lg text-slate-600 max-w-2xl mx-auto">
-            AI-generated multiple-choice questions tagged by Bloom&apos;s Taxonomy. See exactly which thinking levels are strong, and which need work.
+
+          <p
+            className="mt-6 text-lg max-w-2xl mx-auto leading-relaxed fade-in"
+            style={{ color: "var(--color-fg-soft)" }}
+          >
+            AI-generated multiple-choice questions, every one tagged by Bloom&apos;s Taxonomy.
+            See exactly which thinking levels are strong — and which need work.
           </p>
-          <div className="mt-10 flex flex-col sm:flex-row gap-3 items-center justify-center">
-            <Link href="/signup" className="btn btn-primary text-base px-8 py-3 inline-flex items-center gap-2">
+
+          <div className="mt-10 flex flex-col sm:flex-row gap-3 items-center justify-center fade-in">
+            <Link
+              href="/signup"
+              className="btn btn-primary text-base px-7 py-3 inline-flex items-center gap-2"
+            >
               Get started free <ArrowRight size={18} />
             </Link>
-            <Link href="/pricing" className="text-sm text-slate-600 hover:text-emerald-700 font-medium px-4 py-2">
+            <Link
+              href="/pricing"
+              className="text-sm font-semibold px-4 py-2 rounded-lg transition"
+              style={{ color: "var(--color-fg-soft)" }}
+            >
               See plans &amp; pricing →
             </Link>
+          </div>
+
+          {/* Stat strip — adds credibility, theme-aware. */}
+          <div className="mt-14 grid grid-cols-3 gap-4 max-w-2xl mx-auto">
+            <Stat n="6" label="Bloom levels tagged" />
+            <Stat n="21" label="Learning tools" />
+            <Stat n="₹300/yr" label="Premium starts at" />
           </div>
         </div>
       </section>
 
-      {/* Bloom levels visualization */}
+      {/* BLOOM PYRAMID --------------------------------------------------- */}
       <section className="max-w-3xl mx-auto px-6 py-20">
         <div className="text-center mb-10">
-          <h2 className="text-2xl md:text-3xl font-bold">Six levels. One clear picture.</h2>
-          <p className="mt-3 text-slate-600">
-            Every question is tagged. Every answer reveals which level of thinking is solid — and which needs more practice.
+          <h2 className="h1">Six levels. One clear picture.</h2>
+          <p className="mt-3 muted max-w-xl mx-auto">
+            Every question is tagged. Every answer reveals which level of thinking is solid —
+            and which needs more practice.
           </p>
         </div>
-        <div className="grid gap-2">
+        <div className="grid gap-2.5">
           {[
-            { l: "Create",     d: "Design something new",         c: "bg-violet-100 text-violet-900",   w: "100%" },
-            { l: "Evaluate",   d: "Justify a decision",           c: "bg-pink-100 text-pink-900",       w: "88%"  },
-            { l: "Analyze",    d: "Compare and contrast",         c: "bg-orange-100 text-orange-900",   w: "76%"  },
-            { l: "Apply",      d: "Use what you know",            c: "bg-amber-100 text-amber-900",     w: "64%"  },
-            { l: "Understand", d: "Explain in your own words",    c: "bg-emerald-100 text-emerald-900", w: "52%"  },
-            { l: "Remember",   d: "Recall facts and definitions", c: "bg-sky-100 text-sky-900",         w: "40%"  },
+            { l: "Create",     d: "Design something new",         w: "100%", g: "linear-gradient(90deg, #ede9fe, #c4b5fd)", c: "#5b21b6" },
+            { l: "Evaluate",   d: "Justify a decision",           w: "88%",  g: "linear-gradient(90deg, #fce7f3, #f9a8d4)", c: "#9d174d" },
+            { l: "Analyze",    d: "Compare and contrast",         w: "76%",  g: "linear-gradient(90deg, #ffedd5, #fdba74)", c: "#9a3412" },
+            { l: "Apply",      d: "Use what you know",            w: "64%",  g: "linear-gradient(90deg, #fef3c7, #fcd34d)", c: "#92400e" },
+            { l: "Understand", d: "Explain in your own words",    w: "52%",  g: "linear-gradient(90deg, #d1fae5, #6ee7b7)", c: "#065f46" },
+            { l: "Remember",   d: "Recall facts and definitions", w: "40%",  g: "linear-gradient(90deg, #dbeafe, #93c5fd)", c: "#1e40af" },
           ].map((r) => (
             <div key={r.l} className="flex items-center justify-center">
-              <div className={`${r.c} rounded-md px-4 py-3 text-center`} style={{ width: r.w }}>
-                <span className="font-semibold">{r.l}</span>
-                <span className="text-slate-600 text-sm ml-2">— {r.d}</span>
+              <div
+                className="rounded-xl px-4 py-3 text-center transition-transform hover:-translate-y-0.5"
+                style={{
+                  width: r.w,
+                  background: r.g,
+                  color: r.c,
+                  boxShadow: "var(--shadow-sm)",
+                }}
+              >
+                <span className="font-bold">{r.l}</span>
+                <span className="text-sm ml-2 opacity-80">— {r.d}</span>
               </div>
             </div>
           ))}
         </div>
       </section>
 
-      {/* Three features */}
-      <section className="bg-white border-y border-slate-200">
-        <div className="max-w-5xl mx-auto px-6 py-16 grid md:grid-cols-3 gap-6">
-          {[
-            { i: "✨", t: "AI-generated MCQs",        d: "From notes, an image, a topic — questions tagged by Bloom level, ready to review." },
-            { i: "⏱️", t: "Live timed quizzes",       d: "Share a code, students join from any device, auto-submit on time-up." },
-            { i: "📊", t: "Thinking-level analytics", d: "Per-class and per-student progress across topics and Bloom levels — over time." },
-          ].map((f) => (
-            <div key={f.t} className="card card-hover">
-              <div className="text-3xl mb-3">{f.i}</div>
-              <h3 className="font-bold text-lg">{f.t}</h3>
-              <p className="text-slate-600 mt-2 text-sm">{f.d}</p>
-            </div>
-          ))}
+      {/* FEATURES -------------------------------------------------------- */}
+      <section style={{ borderTop: "1px solid var(--color-border)", borderBottom: "1px solid var(--color-border)", background: "var(--color-card)" }}>
+        <div className="max-w-5xl mx-auto px-6 py-20">
+          <div className="text-center mb-12">
+            <h2 className="h1">Everything you need, nothing you don&apos;t.</h2>
+            <p className="mt-3 muted max-w-xl mx-auto">
+              Built for teachers and serious students. No fluff, no celebrity-teacher fluff,
+              no 90-minute lecture videos.
+            </p>
+          </div>
+          <div className="grid md:grid-cols-3 gap-6">
+            <FeatureCard
+              icon={<Sparkles size={22} />}
+              title="AI-generated MCQs"
+              desc="From notes, an image, or a topic — questions tagged by Bloom level, ready to review."
+            />
+            <FeatureCard
+              icon={<Timer size={22} />}
+              title="Live timed quizzes"
+              desc="Share a code, students join from any device, auto-submit on time-up."
+            />
+            <FeatureCard
+              icon={<BarChart3 size={22} />}
+              title="Thinking-level analytics"
+              desc="Per-class and per-student progress across topics and Bloom levels — over time."
+            />
+            <FeatureCard
+              icon={<Brain size={22} />}
+              title="AI tutor + Coach"
+              desc="A patient tutor who explains; a coach who calls out your slipping areas."
+            />
+            <FeatureCard
+              icon={<Target size={22} />}
+              title="Exam-prep tools"
+              desc="JEE/NEET/CAT/UPSC mock-rank predictor, past-paper X-ray, trap detector."
+            />
+            <FeatureCard
+              icon={<Layers size={22} />}
+              title="School-grade plans"
+              desc="Per-student pricing, teacher dashboards, class management, no per-seat fees."
+            />
+          </div>
         </div>
       </section>
 
-      {/* Bottom CTA */}
-      <section className="max-w-3xl mx-auto px-6 py-16 text-center">
-        <h2 className="text-2xl font-bold mb-2">Ready to try it?</h2>
-        <p className="text-slate-600 mb-6">Free forever for 3 practice tests a day. Upgrade anytime.</p>
-        <div className="flex flex-col sm:flex-row gap-3 items-center justify-center">
-          <Link href="/signup" className="btn btn-primary text-base px-8 py-3 inline-flex items-center gap-2">
+      {/* BOTTOM CTA ------------------------------------------------------ */}
+      <section className="max-w-3xl mx-auto px-6 py-20 text-center">
+        <h2 className="h1">Ready to try it?</h2>
+        <p className="mt-3 muted">
+          Free forever for 3 practice tests a day. Upgrade anytime to unlock the full toolkit.
+        </p>
+        <div className="mt-8 flex flex-col sm:flex-row gap-3 items-center justify-center">
+          <Link
+            href="/signup"
+            className="btn btn-primary text-base px-7 py-3 inline-flex items-center gap-2"
+          >
             Get started free <ArrowRight size={18} />
           </Link>
-          <Link href="/pricing" className="text-sm text-slate-600 hover:text-emerald-700 font-medium px-4 py-2">
+          <Link
+            href="/pricing"
+            className="text-sm font-semibold px-4 py-2 rounded-lg transition"
+            style={{ color: "var(--color-fg-soft)" }}
+          >
             Compare plans →
           </Link>
         </div>
       </section>
 
-      <footer className="max-w-6xl mx-auto px-6 py-8 text-center text-sm text-slate-500 border-t border-slate-200 space-y-2">
-        <div>Built for teachers and learners who care about <em>how</em> the thinking happens. © BloomIQ</div>
+      <footer
+        className="max-w-6xl mx-auto px-6 py-8 text-center text-sm space-y-2"
+        style={{ color: "var(--color-muted)", borderTop: "1px solid var(--color-border)" }}
+      >
+        <div>
+          Built for teachers and learners who care about <em>how</em> the thinking happens. © BloomIQ
+        </div>
         <div className="text-xs">
-          <Link href="/terms" className="hover:text-emerald-700">Terms of Service</Link>
+          <Link href="/terms" className="hover:underline">Terms of Service</Link>
           <span className="mx-2">·</span>
-          <Link href="/privacy" className="hover:text-emerald-700">Privacy Policy</Link>
+          <Link href="/privacy" className="hover:underline">Privacy Policy</Link>
           <span className="mx-2">·</span>
-          <Link href="/pricing" className="hover:text-emerald-700">Pricing</Link>
+          <Link href="/pricing" className="hover:underline">Pricing</Link>
+          <span className="mx-2">·</span>
+          <Link href="/settings/appearance" className="hover:underline">Appearance</Link>
         </div>
       </footer>
     </main>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+
+function Stat({ n, label }: { n: string; label: string }) {
+  return (
+    <div className="card text-center" style={{ padding: "1rem 0.75rem" }}>
+      <div className="text-2xl font-extrabold text-gradient-brand">{n}</div>
+      <div className="text-xs muted mt-1">{label}</div>
+    </div>
+  );
+}
+
+function FeatureCard({
+  icon,
+  title,
+  desc,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  desc: string;
+}) {
+  return (
+    <div className="card card-hover card-feature">
+      <div
+        className="w-11 h-11 rounded-xl flex items-center justify-center mb-4"
+        style={{
+          background: "var(--gradient-cta)",
+          color: "#fff",
+          boxShadow: "var(--shadow-brand)",
+        }}
+      >
+        {icon}
+      </div>
+      <h3 className="font-bold text-lg" style={{ color: "var(--color-fg)" }}>{title}</h3>
+      <p className="mt-2 text-sm muted leading-relaxed">{desc}</p>
+    </div>
   );
 }

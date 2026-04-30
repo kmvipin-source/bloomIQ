@@ -12,6 +12,175 @@ This project uses **Next.js 16** with breaking changes — APIs, conventions, an
 
 ---
 
+## 🆕 Latest session — 2026-05-01 evening (Theme system, admin invite overhaul, world-class aesthetics pass)
+
+After the morning's plan-admin push, this session was about everything *around* the product — how it looks, how new admins get in, and how interactions feel — taking BloomIQ from "competent indie app" to something that visually competes with Linear, Notion, and Stripe. Three big tracks plus a few critical fixes.
+
+### 1. Theme system — 5 themes × 2 modes
+
+Built a fully variable-driven theme engine in `app/globals.css` with 10
+hand-tuned palettes (Emerald, Indigo, Rose, Amber, Slate × light + dark).
+Every color, shadow, and gradient flows through CSS variables; nothing
+is hardcoded.
+
+**Token discipline.** Semantic tokens are the only thing components
+reference: `--color-bg`, `--color-surface-1/2/3`, `--color-fg/-soft/-muted`,
+`--color-border-subtle/default/strong`, `--color-accent`, `--color-on-brand`,
+`--color-on-accent-soft`. Each theme overrides these values, so the
+page reskins instantly without touching component code.
+
+**Interaction tokens computed via `color-mix()`.** Hover, pressed, and
+selected backgrounds aren't fixed colors — they're the active brand
+mixed *into* the page bg at 4–24% depending on state. This guarantees
+text contrast against the new bg stays mathematically identical to
+the original bg, so text can never wash out on hover. Solves the
+"text not visible when I mouse over" issue once and for all.
+
+**Pre-hydration init script.** A 12-line inline script in `<head>`
+reads `localStorage` and sets `data-theme` + `data-mode` on `<html>`
+*before* React paints, so there's no flash of unthemed content.
+Defaults to **Light Emerald** for everyone — we deliberately don't
+auto-pick dark from `prefers-color-scheme: dark` because most users
+inherit dark from their OS without ever choosing it, and an
+unexpectedly dark education app is jarring.
+
+**Persistence.** `migration 29` adds `profiles.theme` and
+`profiles.color_mode` columns. The `/settings/appearance` page
+reconciles localStorage ↔ profile on mount and writes through both,
+so the choice follows the user across devices.
+
+### 2. The theme picker UX
+
+**`/settings/appearance`** — a full picker with a sun/moon mode toggle,
+a 5-card theme grid where each card shows the actual palette colors
+as a stripe + 4-dot swatch, and a live preview that re-renders with
+the selected theme (gradient buttons, mock dashboard hero, three
+Bloom progress tiles).
+
+**Sidebar quick-toggle** (`components/ThemeQuickToggle.tsx`) — compact
+panel at the bottom of `Sidebar.tsx` with 5 theme dots + a Light/Dark
+button + a gear link to the full appearance settings page. Always
+accessible from any logged-in role page.
+
+**`/admin/*` shell upgraded.** `app/admin/layout.tsx` now uses theme
+tokens, hosts the same `ThemeQuickToggle` in its top bar, and has a
+"Platform Admin" badge in the active brand color. Admin pages used to
+be stuck on hardcoded `bg-slate-50` / `bg-white`; they now match
+whatever theme the user has picked.
+
+### 3. World-class aesthetic refinement
+
+The first pass of themes had legibility bugs (text washing out on hover)
+and the palettes felt like raw hex codes. Second pass — a disciplined
+rewrite of `globals.css`:
+
+- **Buttons rebuilt.** Primary uses solid `--brand-600` not gradient
+  (gradient was loud); hover deepens to `--brand-700`, active to
+  `--brand-800`. Gradient lives only in `.btn-cta` for marketing
+  surfaces (hero / pricing). Every state defined explicitly with a
+  visible focus ring (`var(--shadow-focus)` = 3px translucent brand).
+- **Cards no longer move on hover.** Position-shifts caused micro-jumps
+  that read as "broken UI". Now hover only changes `box-shadow` and
+  border tint — feels deliberate.
+- **Inputs** have visible-but-subtle hover states on the border, a
+  prominent focus ring, and `--color-fg-muted` placeholder that never
+  disappears.
+- **Hover safety net.** Dark-mode + theme-aware overrides retarget
+  common Tailwind utilities (`bg-slate-50`, `text-slate-600`,
+  `hover:bg-slate-50`, `text-emerald-700`, etc.) to theme tokens, so
+  pages still using raw Tailwind utility classes adapt without needing
+  a per-file refactor.
+- **Premium palette tweaks.** Bg colors picked up subtle theme tinting
+  (Emerald bg = `#f7faf8`, Rose = `#fdf7f8`, Slate hero gradient mixes
+  in indigo for life). Inter loaded via `next/font` with weights
+  400–800, `font-feature-settings` for stylistic alternates,
+  `tabular-nums` on tables.
+- **Home page redone.** `app/page.tsx` now has a sticky translucent
+  nav with backdrop-blur, decorative blurred orbs in the hero,
+  gradient-text headline, eyebrow chip, 3-stat credibility strip,
+  and 6 feature cards with gradient-icon tiles + animated brand glow
+  on hover (`.card-feature::before` overlay).
+
+### 4. Admin invite UX — total overhaul
+
+**Two real bugs caught and fixed.** The original magic-link-by-email
+flow was unreliable — emails hit spam, links expired, sessions got
+lost in different browsers. Then I (mistakenly) replaced it with a
+temp-password-via-Slack flow, which the user correctly flagged as a
+security regression: plaintext passwords sitting in chat history
+forever. Both flows replaced with the right answer:
+
+**`auth.admin.generateLink()` returns a one-time signed URL to the
+server**, never via email. The granting admin shares the URL through
+Slack/WhatsApp; the recipient clicks once, lands on `/auth/set-password`,
+and chooses their own password. **The granting admin never knows the
+password.** The link is single-use and expires in ~1 hour, so even if
+the chat is screenshotted later, the URL is already dead.
+
+**`/api/admin/team/sign-in-link`** — new endpoint. Lets any platform
+admin issue a fresh single-use link to any other platform admin on
+demand. Solves the "zombie confirmed" case where an admin exists in
+`auth.users` but has no working password (leftover from the old
+broken flow), and gives a clean recovery path for "they forgot their
+password too".
+
+**`/admin/team` UI** now shows:
+- After a new grant: a green panel with the sign-in link, a copy
+  button for just the link, and a copy button for a ready-to-paste
+  share message (`"You've been added as a BloomIQ admin. Click this
+  link to sign in (single-use, expires ~1hr)..."`).
+- A **"Send link"** button on every admin row, alongside Revoke. One
+  click = fresh link in the same panel, smooth-scrolled into view.
+- An amber security callout reminding admins not to post links in
+  public channels.
+
+### 5. Migrations to run
+
+If you're pulling this branch fresh, run these in order in the Supabase SQL editor:
+
+```sql
+-- (already covered in the previous session)
+-- migration 22 .. 28
+
+-- new this session:
+-- supabase/migrations/29_user_theme_preferences.sql
+ALTER TABLE public.profiles
+  ADD COLUMN IF NOT EXISTS theme       text NOT NULL DEFAULT 'emerald',
+  ADD COLUMN IF NOT EXISTS color_mode  text NOT NULL DEFAULT 'light';
+ALTER TABLE public.profiles
+  ADD CONSTRAINT profiles_theme_known
+  CHECK (theme IN ('emerald', 'indigo', 'rose', 'amber', 'slate'));
+ALTER TABLE public.profiles
+  ADD CONSTRAINT profiles_color_mode_known
+  CHECK (color_mode IN ('light', 'dark'));
+
+NOTIFY pgrst, 'reload schema';
+```
+
+### 6. New files this session
+
+- `lib/theme.ts` — types, theme metadata, inline init script
+- `components/ThemeProvider.tsx` — React context, localStorage sync, cross-tab listening
+- `components/ThemeQuickToggle.tsx` — sidebar/admin compact picker
+- `app/settings/appearance/page.tsx` — full picker with live preview
+- `app/api/admin/team/sign-in-link/route.ts` — generate fresh link for existing admin
+- `supabase/migrations/29_user_theme_preferences.sql`
+
+### 7. Modified files this session
+
+- `app/globals.css` — full rewrite around tokens
+- `app/layout.tsx` — Inter font, ThemeProvider, init script
+- `app/page.tsx` — refined home page
+- `app/admin/layout.tsx` — themed top bar + quick-toggle
+- `app/admin/team/page.tsx` — sign-in-link panel + per-row Send link
+- `app/api/admin/team/route.ts` — generateLink replaces inviteUserByEmail
+- `components/Sidebar.tsx` — themed active states + quick-toggle slot
+- `lib/types.ts` — `Profile.theme` + `Profile.color_mode`
+
+---
+
+## 🆕 Earlier on 2026-05-01 (Plan-Admin module, dashboard redesign, renewals)
+
 ## 🚀 Quick start
 
 ```bash

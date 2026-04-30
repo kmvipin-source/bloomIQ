@@ -1,7 +1,19 @@
 import type { Metadata, Viewport } from "next";
+import { Inter } from "next/font/google";
 import "./globals.css";
 import PWARegister from "@/components/PWARegister";
 import AuthHealer from "@/components/AuthHealer";
+import { ThemeProvider } from "@/components/ThemeProvider";
+import { THEME_INIT_SCRIPT } from "@/lib/theme";
+
+// Premium-clean fonts. Inter is the workhorse; we load common weights
+// and let the @theme block in globals.css name it as --font-sans.
+const inter = Inter({
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700", "800"],
+  display: "swap",
+  variable: "--font-inter",
+});
 
 export const metadata: Metadata = {
   title: "BloomIQ — Smart assessments aligned with Bloom's Taxonomy",
@@ -31,11 +43,25 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    // suppressHydrationWarning on <html> is required because the inline
+    // script mutates data-theme + data-mode BEFORE React renders. Without
+    // it, React logs a hydration mismatch warning on every page load.
+    // We also keep it on <body> (added in a separate fix) because some
+    // browser extensions inject attributes there.
+    <html lang="en" className={inter.variable} suppressHydrationWarning>
+      <head>
+        {/* The pre-hydration init script. Must run synchronously before
+            paint to set data-theme + data-mode from localStorage and
+            avoid a flash of unthemed content. Inlined as a string to
+            avoid a network roundtrip. */}
+        <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
+      </head>
       <body suppressHydrationWarning>
-        <AuthHealer />
-        {children}
-        <PWARegister />
+        <ThemeProvider>
+          <AuthHealer />
+          {children}
+          <PWARegister />
+        </ThemeProvider>
       </body>
     </html>
   );

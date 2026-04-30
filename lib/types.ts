@@ -15,6 +15,11 @@ export type Profile = {
   // onboarding flow. See migration 24.
   exam_goal: string | null;
   exam_goal_set_at: string | null;
+  // Visual preference — server-persisted copy of the localStorage value
+  // set by ThemeProvider so the choice follows the user across devices.
+  // See migration 29. Constrained to the 5 theme names + 2 color modes.
+  theme: "emerald" | "indigo" | "rose" | "amber" | "slate";
+  color_mode: "light" | "dark";
   created_at: string;
 };
 
