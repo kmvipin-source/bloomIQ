@@ -6,6 +6,9 @@ export type Profile = {
   full_name: string | null;
   school: string | null;
   grade: string | null;
+  // BloomIQ staff flag — gates /admin/* pages. Distinct from super_teacher,
+  // which is a per-school admin role. See migration 22.
+  platform_admin: boolean;
   created_at: string;
 };
 
@@ -14,6 +17,11 @@ export type School = {
   name: string;
   super_teacher_id: string | null;
   join_code: string | null;
+  // Invite tracking populated when the school is provisioned by a platform
+  // admin via /admin/onboard-school. Null for legacy / self-created schools.
+  invited_admin_email: string | null;
+  invited_at: string | null;
+  onboarded_by: string | null;
   created_at: string;
 };
 

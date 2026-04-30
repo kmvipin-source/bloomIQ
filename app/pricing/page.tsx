@@ -477,6 +477,12 @@ function PricingInner() {
         <p className="text-xs muted mt-10 text-center">
           Razorpay processes all payments. We never see or store your card details.
         </p>
+
+        <div className="text-xs text-slate-500 text-center mt-4 border-t border-slate-200 pt-6">
+          <Link href="/terms" className="hover:text-emerald-700">Terms of Service</Link>
+          <span className="mx-2">·</span>
+          <Link href="/privacy" className="hover:text-emerald-700">Privacy Policy</Link>
+        </div>
       </div>
     </main>
   );

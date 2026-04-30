@@ -46,14 +46,17 @@ next-env.d.ts
 /playwright/.cache/
 /.auth/
 
-# playwright
-/test-results/
-/playwright-report/
-/playwright/.cache/
-/.auth/
-
-# secrets / Windows temp / Office lock files
+# secrets — NEVER commit
 APIKey.txt
+*.key
+.env
+.env.local
+.env.*.local
+
+# Windows / Office temp + lock files
 ~$*
-*.tmp
 ~WRL*
+*.tmp
+
+# investor / business docs — keep out of source control
+*.docx

@@ -4,14 +4,10 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { supabaseBrowser } from "@/lib/supabase/client";
+import { Eye, EyeOff } from "lucide-react";
 
 const SCHOOL_DOMAIN = "bloomiq.invalid";
 
-// Read ?next=... directly from window.location at submit time. We deliberately
-// avoid `useSearchParams` here because it forces the page into a Suspense
-// boundary, which in Next 16 dev mode can leave the user staring at a blank
-// "Rendering" state if anything upstream is slow. Reading on demand keeps the
-// page a plain, immediately-rendered client component.
 function readNextParam(): string | null {
   if (typeof window === "undefined") return null;
   try {
@@ -26,8 +22,39 @@ export default function LoginPage() {
 
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
+  const [showPwd, setShowPwd] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  const [forgotMode, setForgotMode] = useState(false);
+  const [forgotBusy, setForgotBusy] = useState(false);
+  const [forgotMsg, setForgotMsg] = useState<string | null>(null);
+
+  async function sendReset() {
+    setErr(null);
+    setForgotMsg(null);
+    const raw = identifier.trim();
+    if (!raw || !raw.includes("@")) {
+      setErr("Enter your email address (not username) to get a reset link.");
+      return;
+    }
+    setForgotBusy(true);
+    try {
+      const sb = supabaseBrowser();
+      const origin = typeof window !== "undefined" ? window.location.origin : "";
+      const { error } = await sb.auth.resetPasswordForEmail(raw, {
+        redirectTo: `${origin}/auth/set-password`,
+      });
+      if (error) throw error;
+      setForgotMsg(
+        `If ${raw} has a BloomIQ account, we've emailed a password reset link. Open it on this device to finish.`
+      );
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Could not send reset email.");
+    } finally {
+      setForgotBusy(false);
+    }
+  }
 
   async function audit(token: string) {
     try {
@@ -65,16 +92,9 @@ export default function LoginPage() {
       const { data: { session } } = await sb.auth.getSession();
       if (session) audit(session.access_token);
 
-      // Single-session enforcement for INDEPENDENT students only.
-      // Teachers, Admin Heads, and school students stay multi-device by design.
-      // We invalidate any other active sessions for this user so the same
-      // login can’t be used on two devices at once — a small but effective
-      // friction against credential sharing on the free tier.
       const isIndependentStudent =
         prof?.role === "student" && !prof?.is_school_student;
       if (isIndependentStudent) {
-        // `signOut({ scope: "others" })` keeps the current session alive while
-        // killing every other refresh token tied to this user. Best-effort.
         try { await sb.auth.signOut({ scope: "others" }); } catch { /* ignore */ }
       }
 
@@ -112,35 +132,88 @@ export default function LoginPage() {
                 autoFocus
                 autoComplete="username"
                 value={identifier}
-                onChange={(e) => setIdentifier(e.target.value)}
+                onChange={(e) => { setIdentifier(e.target.value); setForgotMsg(null); }}
                 placeholder="your.email@example.com"
               />
             </div>
             <div>
-              <label className="label">Password</label>
-              <input
-                className="input"
-                type="password"
-                required
-                autoComplete="current-password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-              />
+              <label className="label flex items-center justify-between">
+                <span>Password</span>
+                <button
+                  type="button"
+                  className="text-xs text-emerald-700 hover:underline font-semibold"
+                  onClick={() => { setForgotMode((v) => !v); setForgotMsg(null); setErr(null); }}
+                >
+                  {forgotMode ? "Cancel" : "Forgot password?"}
+                </button>
+              </label>
+              <div className="relative">
+                <input
+                  className="input pr-10"
+                  type={showPwd ? "text" : "password"}
+                  required={!forgotMode}
+                  disabled={forgotMode}
+                  autoComplete="current-password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPwd((v) => !v)}
+                  className="absolute inset-y-0 right-2 my-auto text-slate-500 hover:text-slate-700 p-1 disabled:opacity-30"
+                  aria-label={showPwd ? "Hide password" : "Show password"}
+                  disabled={forgotMode}
+                  tabIndex={-1}
+                >
+                  {showPwd ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              </div>
+              {forgotMode && (
+                <p className="text-xs muted mt-1">
+                  Type your email above, then click <strong>Send reset link</strong>.
+                </p>
+              )}
             </div>
             {err && (
               <div className="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">
                 {err}
               </div>
             )}
-            <button className="btn btn-primary w-full" disabled={busy}>
-              {busy && <span className="spinner" />} Sign in
-            </button>
+            {forgotMsg && (
+              <div className="text-sm text-emerald-800 bg-emerald-50 border border-emerald-200 px-3 py-2 rounded-lg">
+                {forgotMsg}
+              </div>
+            )}
+            {forgotMode ? (
+              <button
+                type="button"
+                className="btn btn-primary w-full"
+                disabled={forgotBusy}
+                onClick={sendReset}
+              >
+                {forgotBusy && <span className="spinner" />} Send reset link
+              </button>
+            ) : (
+              <button className="btn btn-primary w-full" disabled={busy}>
+                {busy && <span className="spinner" />} Sign in
+              </button>
+            )}
           </form>
 
           <div className="mt-6 text-sm text-center text-slate-600">
             New here?{" "}
             <Link href="/signup" className="text-emerald-700 font-semibold">Create an account</Link>
           </div>
+
+          {/* Implicit-acceptance legal note. Reinforces continued ToS
+              acceptance for returning users so we can update Terms with
+              notice and rely on continued sign-in as renewed acceptance. */}
+          <p className="mt-4 text-[11px] text-slate-500 text-center leading-relaxed">
+            By signing in, you agree to our{" "}
+            <Link href="/terms" className="text-emerald-700 hover:underline">Terms of Service</Link>{" "}
+            and{" "}
+            <Link href="/privacy" className="text-emerald-700 hover:underline">Privacy Policy</Link>.
+          </p>
         </div>
 
         <p className="text-xs text-slate-500 text-center mt-4">

@@ -1,29 +1,23 @@
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
+import PublicNav from "@/components/PublicNav";
 
 export default function LandingPage() {
   return (
     <main className="min-h-screen">
       {/* Top nav — gives visitors a clear path to pricing and sign-in without
           having to dig through the page. Mirrors the /pricing top bar so the
-          two pages feel like one site. */}
+          two pages feel like one site. PublicNav is a client component so
+          it can read the Supabase session and adapt its CTAs (logged-out
+          users see Sign in / Create account; logged-in users see Dashboard
+          and Sign out). */}
       <header className="border-b border-slate-200/60 bg-white/70 backdrop-blur sticky top-0 z-10">
         <div className="max-w-6xl mx-auto px-6 py-3 flex items-center justify-between">
           <Link href="/" className="flex items-center gap-2">
             <span className="text-2xl">🌱</span>
             <span className="font-bold tracking-tight">BloomIQ</span>
           </Link>
-          <nav className="flex items-center gap-2 sm:gap-4">
-            <Link href="/pricing" className="text-sm font-semibold text-slate-700 hover:text-emerald-700 px-2 py-1">
-              Pricing
-            </Link>
-            <Link href="/login" className="text-sm font-semibold text-slate-700 hover:text-emerald-700 px-2 py-1">
-              Sign in
-            </Link>
-            <Link href="/signup" className="btn btn-primary text-sm">
-              Create account
-            </Link>
-          </nav>
+          <PublicNav />
         </div>
       </header>
 
@@ -107,8 +101,15 @@ export default function LandingPage() {
         </div>
       </section>
 
-      <footer className="max-w-6xl mx-auto px-6 py-8 text-center text-sm text-slate-500 border-t border-slate-200">
-        Built for teachers and learners who care about <em>how</em> the thinking happens. © BloomIQ
+      <footer className="max-w-6xl mx-auto px-6 py-8 text-center text-sm text-slate-500 border-t border-slate-200 space-y-2">
+        <div>Built for teachers and learners who care about <em>how</em> the thinking happens. © BloomIQ</div>
+        <div className="text-xs">
+          <Link href="/terms" className="hover:text-emerald-700">Terms of Service</Link>
+          <span className="mx-2">·</span>
+          <Link href="/privacy" className="hover:text-emerald-700">Privacy Policy</Link>
+          <span className="mx-2">·</span>
+          <Link href="/pricing" className="hover:text-emerald-700">Pricing</Link>
+        </div>
       </footer>
     </main>
   );

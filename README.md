@@ -9,7 +9,172 @@ sources, Bloom-level analytics, printable exam papers, and reporting suites.
 
 ---
 
-## 🆕 Latest session — 2026-04-29 (big feature push)
+## 🆕 Latest session — 2026-04-30 (Platform Admin, school onboarding, ToS)
+
+A focused round on **how a paying school actually gets onto BloomIQ**, plus
+modern auth UX and legal acceptance. Every change is additive — no existing
+flow was removed, only gated more cleanly.
+
+### 1. Platform Admin role (BloomIQ staff, separate from school super_teacher)
+
+A new `profiles.platform_admin` boolean flag identifies BloomIQ operators
+(you and your colleagues). Distinct from `super_teacher`, which remains a
+per-school admin role. Platform admins access an internal `/admin/*` area:
+
+- **`/admin/onboard-school`** — form to provision a paying school. Takes
+  school name + Admin Head full name + email; creates the `schools` row
+  with a generated join code, then calls `supabase.auth.admin.inviteUserByEmail`
+  on the Admin Head. Lists recent onboardings with pending / accepted status.
+- **`/admin/team`** — manage the platform admin team itself. Grant the flag
+  to a colleague by email (auto-invites them if they don't have an account
+  yet). Revoke. Self-revoke and last-admin revoke are blocked server-side
+  and client-side to prevent total lockout.
+
+Bootstrap: the very first admin must be flipped on via SQL (chicken-and-egg);
+after that, everything is self-serve from `/admin/team`.
+
+```sql
+update public.profiles
+set platform_admin = true
+where id = (select id from auth.users where email = 'YOUR@email.com');
+```
+
+### 2. School Admin Head onboarding flow
+
+Admin Head signup is **invite-only** now — the role tile is gone from
+`/signup` and a server-side check rejects `?role=super_teacher`. The
+end-to-end flow:
+
+1. School pays (offline today; payment-webhook hookup wired but not enabled).
+2. You go to `/admin/onboard-school` and submit the form.
+3. Supabase emails the Admin Head an invite link.
+4. Clicking the link auto-authenticates them and lands them on
+   `/auth/set-password` (NEW — see below).
+5. They pick a password, then bounce to `/school` — already named, with the
+   join code visible. No "Set up your school" screen.
+
+### 3. `/auth/set-password` — universal password-set screen
+
+The reason an earlier round of testing failed: Supabase invite links
+auto-authenticate but don't set a password, so the invitee couldn't sign
+in next time. Fixed by routing every invite **and** password reset
+through `/auth/set-password`, which forces an explicit password choice.
+
+Reused for the new **"Forgot password?"** link on `/login`, so anyone can
+self-recover without needing the platform admin.
+
+### 4. Modernised password UX
+
+`/signup`, `/login`, `/auth/set-password`:
+
+- Single password field (no "confirm password") — modern standard since
+  show/hide is universal.
+- Show/hide eye toggle.
+- 8-character minimum (was 6).
+- 3-segment strength meter on signup + set-password.
+- Submit stays disabled until length + ToS conditions are met.
+
+### 5. Auth-aware home navigation
+
+New **`components/PublicNav.tsx`** drives the top bar on `/` and `/pricing`.
+When logged out: Pricing | Sign in | Create account. When logged in:
+Pricing | Dashboard | Sign out (Dashboard routes to the right home for
+the user's role + platform_admin flag).
+
+Fixes the "I clicked Create account and it took me to a super_teacher
+page" confusion when a logged-in user lands on the home page.
+
+### 6. Sidebar Platform Admin section
+
+`components/Sidebar.tsx` now reads `profiles.platform_admin`. When true,
+adds a small "PLATFORM ADMIN" section to the sidebar (under the role nav)
+with links to `/admin/onboard-school` and `/admin/team`. Active state uses
+slate-900 instead of emerald to make it visually distinct from the role
+nav. Section is invisible to non-admin users.
+
+### 7. Terms of Service + Privacy Policy
+
+Real public pages at **`/terms`** and **`/privacy`**, linked from:
+
+- Home + Pricing footers (Terms · Privacy · Pricing).
+- Required click-wrap checkbox above the Submit button on `/signup`.
+- Implicit-acceptance line on `/login` ("By signing in, you agree...").
+- Implicit-acceptance line on `/auth/set-password` (this is the binding
+  moment for invitees who never went through `/signup`).
+
+ToS acceptance + version (`2026-04-30`) is stamped into Supabase
+`user_metadata.tos_accepted_at` at signup AND at set-password completion,
+so we have a clean audit record per user.
+
+**Both pages are clearly marked as starting drafts**: an italic note at
+the bottom flags that a qualified Indian SaaS lawyer needs to review
+before BloomIQ's first paying customer (DPDP Act 2023, IT Act 2000,
+Consumer Protection Act 2019).
+
+### 8. Database migrations
+
+- **`22_platform_admin_and_invite.sql`** — adds `profiles.platform_admin`,
+  `schools.invited_admin_email / invited_at / onboarded_by`, the
+  `is_platform_admin()` security-definer helper, and RLS policies that
+  give platform admins read/write on schools + profiles for onboarding.
+- **`23_platform_admin_provenance.sql`** — adds
+  `profiles.platform_admin_granted_at / granted_by` so the team page can
+  show "you were added by Vipin on 30 Apr".
+
+Run both in Supabase SQL editor before testing the new flow.
+
+### 9. Files added / modified — at a glance
+
+```
+NEW
+  app/admin/layout.tsx
+  app/admin/onboard-school/page.tsx
+  app/admin/team/page.tsx
+  app/api/admin/onboard-school/route.ts
+  app/api/admin/team/route.ts
+  app/auth/set-password/page.tsx
+  app/terms/page.tsx
+  app/privacy/page.tsx
+  components/PublicNav.tsx
+  supabase/migrations/22_platform_admin_and_invite.sql
+  supabase/migrations/23_platform_admin_provenance.sql
+
+MODIFIED
+  app/page.tsx              (auth-aware nav, footer Terms/Privacy links)
+  app/pricing/page.tsx      (footer Terms/Privacy links)
+  app/signup/page.tsx       (super_teacher tile removed; password UX;
+                             logged-in redirect; ToS checkbox)
+  app/login/page.tsx        (Forgot password; show/hide; ToS line)
+  components/Sidebar.tsx    (Platform Admin section for staff)
+  lib/types.ts              (Profile.platform_admin; School.invited_*)
+  .gitignore                (APIKey.txt, *.docx, Office temp files)
+```
+
+### 10. Manual setup checklist before first real test
+
+1. Run migrations 22 + 23 in Supabase SQL editor.
+2. Bootstrap your first platform admin via the SQL block in section 1.
+3. In Supabase Dashboard → Authentication → URL Configuration, add the
+   `/auth/set-password` URL to Redirect URLs (both dev and prod) so
+   invite + reset emails land correctly.
+4. Customise the Supabase invite + password-recovery email templates
+   under Authentication → Email Templates so they read like BloomIQ.
+5. Before going live to real customers: switch Supabase Auth → SMTP
+   Settings to a real provider (Resend, Postmark, SES) — the default
+   Supabase mail is rate-limited and marked test-only.
+6. Have a lawyer review `/terms` and `/privacy`.
+
+### 11. Known-not-yet-done
+
+- Self-serve school payment + webhook (currently offline / "Talk to us").
+- Database tracking of platform_admin grant audit trail beyond
+  `granted_by`.
+- Re-invite button on `/admin/onboard-school` for stuck pending invites.
+- ToS acceptance backfill prompt for users created before this round.
+
+---
+
+## 🆕 Earlier session — 2026-04-29 (big feature push)
 
 Major expansion across admin / teacher / student. Full breakdown in
 **`SESSION_NOTES.md`**. Headlines:
@@ -855,32 +1020,4 @@ scripts/
 
 In rough priority:
 
-1. **Razorpay live-mode cutover** — code is mode-agnostic; only env vars change. Need real KYC + bank account on Razorpay first.
-2. **Subscription cancel / manage UI** for the student (today: only the verify endpoint writes to `subscriptions`; no self-service cancel)
-3. **School-plan purchase UI** — schema is ready (partial unique on `school_id`, `subs_owner_xor` CHECK), but currently "Talk to us" only on `/pricing`
-4. **Razorpay webhook** at `/api/checkout/webhook` for resilience (independent of the verify path; same SELECT → UPDATE/INSERT pattern, never `onConflict`)
-5. **Branded receipt email** via nodemailer in the verify endpoint (Razorpay sends its own receipt today)
-6. Per-attempt **IP capture** on quiz submissions (schema ready: `quiz_attempts.ip` + `.user_agent`)
-7. **Parent reports** for independent students (`profiles.parent_email` is ready)
-8. **Mock-test mode** for independent students (timed, exam-style)
-9. **Resend / SendGrid** instead of Gmail SMTP for digest reliability
-10. **Cron-scheduled weekly digest** (Vercel Cron)
-11. **PDF export** for exam papers (currently browser print only)
-12. **Inline question edit** from the question bank (today: edit happens in Review only)
-13. **Multi-page past-paper upload** (currently one image at a time)
-
----
-
-## 📝 Notes
-
-- The `_archive/` folder contains stale `.js` page files moved out of the route tree — safe to delete.
-- The original `/teacher/bank` page was removed and now redirects to `/teacher/quizzes/new` (the Composer absorbed its purpose).
-- The original `/student/independent` page was removed and now redirects to `/student`.
-- Quiz codes and class codes use the same `generateQuizCode()` helper — a 6-char unambiguous code (no I/O/L/0/1).
-- Synthetic email domain for school students: `bloomiq.invalid` (RFC reserved, never deliverable).
-
----
-
-## 💤 Goodnight!
-
-You've built a lot. Sleep well. The first thing to do tomorrow is the four steps under **🌅 Start here tomorrow morning** at the top — restart the dev server, clear browser storage, recreate test accounts, sign in. If anything still breaks, check Console + terminal and we'll trace it from there.
+1. **Razorpay live-mode cutover** — code is mode-agnostic; only env vars change.
