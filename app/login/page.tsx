@@ -134,6 +134,7 @@ export default function LoginPage() {
                 value={identifier}
                 onChange={(e) => { setIdentifier(e.target.value); setForgotMsg(null); }}
                 placeholder="your.email@example.com"
+                suppressHydrationWarning
               />
             </div>
             <div>
@@ -143,6 +144,7 @@ export default function LoginPage() {
                   type="button"
                   className="text-xs text-emerald-700 hover:underline font-semibold"
                   onClick={() => { setForgotMode((v) => !v); setForgotMsg(null); setErr(null); }}
+                  suppressHydrationWarning
                 >
                   {forgotMode ? "Cancel" : "Forgot password?"}
                 </button>
@@ -156,6 +158,7 @@ export default function LoginPage() {
                   autoComplete="current-password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
+                  suppressHydrationWarning
                 />
                 <button
                   type="button"
@@ -164,6 +167,7 @@ export default function LoginPage() {
                   aria-label={showPwd ? "Hide password" : "Show password"}
                   disabled={forgotMode}
                   tabIndex={-1}
+                  suppressHydrationWarning
                 >
                   {showPwd ? <EyeOff size={16} /> : <Eye size={16} />}
                 </button>
@@ -190,11 +194,12 @@ export default function LoginPage() {
                 className="btn btn-primary w-full"
                 disabled={forgotBusy}
                 onClick={sendReset}
+                suppressHydrationWarning
               >
                 {forgotBusy && <span className="spinner" />} Send reset link
               </button>
             ) : (
-              <button className="btn btn-primary w-full" disabled={busy}>
+              <button className="btn btn-primary w-full" disabled={busy} suppressHydrationWarning>
                 {busy && <span className="spinner" />} Sign in
               </button>
             )}

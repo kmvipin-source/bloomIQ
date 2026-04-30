@@ -51,8 +51,4 @@ export async function GET() {
     );
   }
 }
- Error ? e.message : "Failed" },
-      { status: 500 }
-    );
-  }
-}
+
