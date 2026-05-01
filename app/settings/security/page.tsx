@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import QRCode from "qrcode";
 import { supabaseBrowser } from "@/lib/supabase/client";
 import { ShieldCheck, KeyRound, ArrowLeft, Loader2, AlertTriangle, CheckCircle2 } from "lucide-react";
 
@@ -46,6 +47,7 @@ export default function SecuritySettingsPage() {
     factorId: string;
     uri: string;
     secret: string;
+    qrDataUrl: string;
   } | null>(null);
   const [verifyCode, setVerifyCode] = useState("");
   const [verifyBusy, setVerifyBusy] = useState(false);
@@ -98,10 +100,18 @@ export default function SecuritySettingsPage() {
         friendlyName: `BloomIQ ${new Date().toISOString().slice(0, 10)}`,
       });
       if (enrErr || !data) throw new Error(enrErr?.message || "Enrollment failed.");
+      // Render QR locally — never send the TOTP secret to a third-party
+      // image API. qrcode lib produces a data URL we can drop into <img>.
+      const qrDataUrl = await QRCode.toDataURL(data.totp.uri, {
+        margin: 1,
+        width: 240,
+        errorCorrectionLevel: "M",
+      });
       setPendingFactor({
         factorId: data.id,
         uri: data.totp.uri,
         secret: data.totp.secret,
+        qrDataUrl,
       });
       setVerifyCode("");
     } catch (e) {
@@ -218,17 +228,22 @@ export default function SecuritySettingsPage() {
         {pendingFactor ? (
           <>
             <p className="text-sm muted mb-3">
-              Open your authenticator app (Google Authenticator, 1Password, Authy, Microsoft Authenticator, etc.) and add a new account using one of the options below. Then enter the current 6-digit code to confirm.
+              Open your authenticator app (Google Authenticator, 1Password, Authy, Microsoft Authenticator, etc.) and add a new account by scanning this QR code. Then enter the 6-digit code shown by the app to confirm.
             </p>
-            <div className="space-y-2 mb-4">
-              <div>
-                <div className="text-xs muted mb-1">Option A — scan / open this URL with your authenticator</div>
-                <code className="block text-[11px] font-mono bg-slate-100 rounded px-2 py-2 break-all select-all">
-                  {pendingFactor.uri}
-                </code>
+            <div className="grid sm:grid-cols-[auto_1fr] gap-4 items-start mb-4">
+              <div className="rounded-lg border border-slate-200 bg-white p-2 inline-block">
+                {/* QR rendered locally via qrcode npm pkg — secret never leaves
+                    the browser. Right-click → save if user wants to print it. */}
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={pendingFactor.qrDataUrl}
+                  alt="2FA QR code"
+                  width={240}
+                  height={240}
+                />
               </div>
               <div>
-                <div className="text-xs muted mb-1">Option B — type this secret into the app manually</div>
+                <div className="text-xs muted mb-1">Can&rsquo;t scan? Type this secret into the app manually:</div>
                 <code className="block text-[12px] font-mono bg-slate-100 rounded px-2 py-2 break-all select-all">
                   {pendingFactor.secret}
                 </code>
