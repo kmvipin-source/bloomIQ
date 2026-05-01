@@ -19,90 +19,295 @@ export const maxDuration = 90;
 // since these are rendered with dangerouslySetInnerHTML on the client.
 // =============================================================================
 
-const SYSTEM = `You are an expert teacher creating a step-by-step animated explainer of a concept for a student. The frames will be cross-faded into a flipbook so the student SEES the concept come alive.
+const SYSTEM = `You are a competitive-exam concept visualizer. Output a sequence of 5 frames; the React renderer will use Motion to interpolate element positions between frames so shapes that share an id move smoothly. Your job is to give the renderer clean keyframes.
 
-Output a sequence of 4-5 frames. Each frame is:
-- a RICH labeled SVG (viewBox 0 0 800 480, no scripts) with EMBEDDED SMIL ANIMATIONS
-- a 1-2 sentence caption explaining what the frame shows
-- a duration in ms (4000-6500)
+================================================================================
+STAGE 1 — INTERNAL PLANNING (think this through, do NOT emit it)
+================================================================================
+Before writing any JSON, mentally answer:
+  Q1: What domain is the topic? (mechanics / electromagnetism / optics /
+      thermodynamics / cell biology / organic chemistry / electronics /
+      data-structures / economics / etc.)
+  Q2: What are the 5 actual phases the student needs to see? They MUST be the
+      real, named stages of the concept — not generic "intro / middle / end".
+        - For "Projectile motion" → Launch / Ascent / Peak / Descent / Impact
+        - For "Krebs cycle"      → Acetyl-CoA enters / Citrate forms /
+                                   α-Ketoglutarate / Succinyl-CoA / Oxaloacetate regen
+        - For "Carnot cycle"     → Isothermal expansion (T_h) / Adiabatic
+                                   expansion / Isothermal compression (T_c) /
+                                   Adiabatic compression / Net work label
+        - For "Op-amp inverting amplifier" → Input applied / Virtual short /
+                                             Current through R_in / Same current
+                                             through R_f / V_out = -(R_f/R_in)·V_in
+  Q3: What entities live in each phase? Name them with semantic ids:
+      "piston", "gas_molecule_1", "hot_reservoir", "cold_reservoir",
+      "v_in_label", "tension_arrow_left", "rope", "pulley_wheel",
+      "mitochondrion", "atp_molecule", etc.
+      DO NOT use generic ids like "circle1", "rect2", "ball" when the actual
+      thing is "electron" or "succinate" or "load_resistor".
+  Q4: What's the takeaway formula or rule that should appear in frame 5? It
+      must be the canonical equation/principle for this exact topic
+      (F = ma, η = 1 - T_c/T_h, V_out = -A·V_in, ΔG = ΔH - TΔS, etc).
 
-The frames must tell a story: frame 1 sets up the scene, each subsequent frame adds, transforms, or zooms in on a key part. Build the concept progressively. The LAST frame should show the full concept in its complete form.
+If the topic isn't a real scientific/mathematical concept (e.g. "draw a cat"),
+gracefully treat it as the closest learning concept (anatomy of a cat) — never
+output abstract decorative shapes.
 
-==============================
-THE BIG RULE: EVERY FRAME MUST MOVE.
-==============================
-A static SVG is not enough. Inside EVERY frame, embed at least 3 SMIL animations that loop while the frame is on screen. Pick what fits the concept:
+================================================================================
+STAGE 2 — JSON OUTPUT (this is what you emit)
+================================================================================
 
-1. <animateMotion dur="3s" repeatCount="indefinite"><mpath href="#path-id"/></animateMotion>
-   Moves an element along a path. Perfect for: electrons orbiting, blood through vessels, current through a circuit, water through a cycle, planets orbiting, particles in a reaction.
-
-2. <animateTransform attributeName="transform" type="rotate" from="0 cx cy" to="360 cx cy" dur="6s" repeatCount="indefinite"/>
-   Rotates a group around (cx,cy). Perfect for: gears, planets, wheels, rotating fields.
-
-3. <animate attributeName="r" dur="1.5s" repeatCount="indefinite" values="20;28;20" keyTimes="0;0.5;1"/>
-   Pulses size or color. Perfect for: heartbeat, neuron firing, signal nodes, hot spots, attention focus.
-
-4. <animate attributeName="stroke-dashoffset" from="200" to="0" dur="2s" repeatCount="indefinite"/>
-   Draws a flowing line (combine with stroke-dasharray="8 8"). Perfect for: current, signal flow, conveyor belts, time arrows.
-
-5. <animate attributeName="opacity" values="0.3;1;0.3" dur="2s" repeatCount="indefinite"/>
-   Fades in and out. Perfect for: glowing, breathing, blinking indicators.
-
-CONCRETE EXAMPLES (inspiration, do NOT copy verbatim):
-- Atom: nucleus + 2 electrons each on their own elliptical <path id="orbit1"> with <circle><animateMotion><mpath href="#orbit1"/></animateMotion></circle>.
-- Heart pump: heart shape with <animate attributeName="transform" type="scale" values="1;1.08;1" dur="0.9s" repeatCount="indefinite"/> for the pulse, plus dashed arrows on vessels showing flow.
-- Photosynthesis: sunlight rays as <line> elements with stroke-dashoffset animating; CO2/O2 molecules as small <circle>s moving along curved paths into and out of the leaf.
-- Newton's third law: rocket with thrust flame whose height pulses; exhaust particles travel down along motion paths; rocket itself gently translates upward.
-
-SVG quality bar (still applies):
-- viewBox="0 0 800 480"
-- 8-14 distinct visual elements per frame
-- Gradients via <defs><linearGradient/></defs> on at least 2 main shapes
-- Label every important shape with <text>
-- Palette: #10b981 #f59e0b #ef4444 #6366f1 #ec4899 #06b6d4 - mix 3+ hues per frame
-- Background: soft gradient or grid (not blank white)
-- One shared shadow <filter> in <defs> for depth
-- Final frame: include a "key takeaway" rect + text at the bottom
-
-Allowed elements: <svg>, <defs>, <linearGradient>, <radialGradient>, <stop>, <filter>, <feGaussianBlur>, <feOffset>, <feMerge>, <feMergeNode>, <marker>, <rect>, <circle>, <ellipse>, <line>, <path>, <polygon>, <polyline>, <text>, <tspan>, <g>, <use>, <title>, <animate>, <animateTransform>, <animateMotion>, <mpath>, <set>.
-NOT allowed: <script>, <foreignObject>, <iframe>, <object>, <embed>, on* event handlers, javascript: URLs, external href.
-
-Each frame's SVG should LOOK related to the previous one (same scene, progressive additions) so the cross-fade reads as motion. Reuse position+size of stable elements across frames.
-
-Keep total chars per SVG under 6500. Final frame can be slightly richer.
-
-Respond with VALID JSON only:
+Output VALID JSON only, no markdown fences:
 {
   "title": "<short concept title>",
   "summary": "<2-3 sentences summarising the key idea>",
   "frames": [
     {
-      "svg": "<svg viewBox=\\"0 0 800 480\\" xmlns=\\"http://www.w3.org/2000/svg\\">...</svg>",
-      "caption": "...",
-      "duration_ms": 5000
+      "step_label": "Launch",
+      "caption": "Ball leaves the ground at 20 m/s, 45° from horizontal. Velocity arrow tilts up-right.",
+      "duration_ms": 4500,
+      "elements": [
+        { "id": "title",        "type": "text", "x": 30,  "y": 34,  "text": "Projectile motion", "fontSize": 22, "fontWeight": "700", "fill": "#0f172a" },
+        { "id": "phase_badge",  "type": "text", "x": 30,  "y": 78,  "text": "Phase 1 of 5 — Launch", "fontSize": 13, "fill": "#475569" },
+        { "id": "axis_x",       "type": "line", "x1": 80, "y1": 360, "x2": 720, "y2": 360, "stroke": "#94a3b8", "strokeWidth": 2 },
+        { "id": "axis_y",       "type": "line", "x1": 80, "y1": 360, "x2": 80,  "y2": 110, "stroke": "#94a3b8", "strokeWidth": 2 },
+        { "id": "axis_x_label", "type": "text", "x": 700, "y": 380, "text": "x (m)", "fontSize": 12, "fill": "#475569" },
+        { "id": "axis_y_label", "type": "text", "x": 50,  "y": 110, "text": "y (m)", "fontSize": 12, "fill": "#475569" },
+        { "id": "ground",       "type": "rect", "x": 80,  "y": 360, "width": 640, "height": 14, "fill": "#94a3b8->#475569" },
+        { "id": "ball",         "type": "circle", "cx": 100, "cy": 350, "r": 14, "fill": "#ef4444->#b91c1c", "shadow": true, "emphasize": true },
+        { "id": "v_arrow",      "type": "line", "x1": 100, "y1": 350, "x2": 170, "y2": 280, "stroke": "#6366f1", "strokeWidth": 4, "animate": "wiggle" },
+        { "id": "v_label",      "type": "text", "x": 178, "y": 278, "text": "v₀ = 20 m/s", "fontSize": 14, "fill": "#3730a3", "fontWeight": "600" },
+        { "id": "theta_label",  "type": "text", "x": 130, "y": 340, "text": "θ = 45°", "fontSize": 13, "fill": "#0f172a" },
+        { "id": "g_arrow",      "type": "line", "x1": 100, "y1": 350, "x2": 100, "y2": 392, "stroke": "#0f172a", "strokeWidth": 2 },
+        { "id": "g_label",      "type": "text", "x": 60,  "y": 405, "text": "g = 9.8 m/s²", "fontSize": 12, "fill": "#0f172a" },
+        { "id": "trajectory",   "type": "path", "d": "M100 350 Q400 90 700 350", "stroke": "#10b981", "strokeWidth": 3, "fill": "none", "strokeDasharray": "6 6", "animate": "flow" }
+      ]
     }
   ]
-}`;
+}
 
-type Frame = { svg: string; caption: string; duration_ms: number };
+(Note how every coordinate respects the layout regions: title at y=34, phase badge at y=78, axes at y=360 + x=80, scene shapes between y=110..360, ground at y=360, takeaway would go at y=420..460. No two non-text shapes overlap. 6 motion-flagged elements with 3 different presets — emphasize/wiggle/flow.)
 
-function sanitizeSvg(raw: string): string {
-  if (typeof raw !== "string") return "";
-  let s = raw.trim();
-  s = s.replace(/<\?xml[^>]*\?>/gi, "");
-  s = s.replace(/<!DOCTYPE[^>]*>/gi, "");
-  s = s.replace(/<script[\s\S]*?<\/script>/gi, "");
-  s = s.replace(/<foreignObject[\s\S]*?<\/foreignObject>/gi, "");
-  s = s.replace(/<iframe[\s\S]*?<\/iframe>/gi, "");
-  s = s.replace(/<object[\s\S]*?<\/object>/gi, "");
-  s = s.replace(/<embed[\s\S]*?<\/embed>/gi, "");
-  s = s.replace(/\son[a-z]+\s*=\s*"[^"]*"/gi, "");
-  s = s.replace(/\son[a-z]+\s*=\s*'[^']*'/gi, "");
-  s = s.replace(/href\s*=\s*"javascript:[^"]*"/gi, "");
-  s = s.replace(/href\s*=\s*'javascript:[^']*'/gi, "");
-  if (!/^<svg[\s>]/i.test(s)) return "";
-  // Generous cap so verbose SMIL <animate values=...> tags don't get truncated.
-  return s.slice(0, 12000);
+Rules:
+- viewBox is implicitly 0 0 800 480. Coordinates fit within it. Use the full canvas — fill it visually with detail.
+- **CANVAS LAYOUT — strictly observe these regions, do NOT place hero elements outside their box:**
+  - **Title strip:** y = 0..50. A single text element with the concept title can sit here (fontSize 22, fontWeight 700, x ≈ 30).
+  - **Top label gutter:** y = 50..100. Use for global axis labels, legend, equation badge, "Step focus" annotation.
+  - **MAIN SCENE:** y = 100..360, x = 80..720. The diagram lives here. Hero shapes (pulley wheel, atom, op-amp triangle, cell membrane, P-V plot, etc.) go inside this box. Scenes wider than 640 should breathe a little — leave 30..50 px of empty margin around the focal cluster.
+  - **Side gutters:** x = 0..80 and x = 720..800. Use for axis labels (m/s, kPa), legends, vector key, secondary annotations. Do not put primary shapes here.
+  - **Takeaway strip:** y = 400..470. The final-frame summary rect goes here (a wide rect spanning x = 60..740, height 50, with a centred text containing the canonical formula).
+- **NO OVERLAP RULE:** unless two shapes are physically connected (a tension arrow touching a mass, a label tied to its element with a 4 px gap), keep at least 24 px of empty space between non-text shapes. Text labels may sit just above/below/beside their target, but never on top of another shape.
+- **AXIS / FRAME PROPS** (always include when the topic has a measurable axis):
+  - Mechanics: ground line at y=380 + x-axis gridlines + y-axis gridlines + axis arrows.
+  - Thermodynamics / kinetics graphs: P–V axes anchored at (120,360) → (700,360) horizontal and (120,360) → (120,110) vertical, with arrowheads at the far ends and tick labels at quarters.
+  - Circuits: power rails as horizontal lines at y=140 (V+) and y=340 (GND), components live between them.
+- **MINIMUM 10 elements per frame**, target 12-16. Sparse frames look amateur. Include axes, gridlines, labels, units, decorative supporting shapes (clouds, trees, springs, vector tails) wherever they make the physics readable.
+- Re-use the same "id" across frames for elements that should TWEEN (the ball at different positions, an arrow that rotates). New ids appear/disappear as the story progresses. Stable scene elements (ground, axis, sun) keep the same id throughout.
+- Allowed types: "circle" {cx,cy,r}, "rect" {x,y,width,height,rx?}, "ellipse" {cx,cy,rx,ry}, "line" {x1,y1,x2,y2}, "path" {d}, "polygon" {points}, "text" {x,y,text}, "group" {children: Element[], transform?}.
+- Common props on every element: fill, stroke, strokeWidth, strokeDasharray, opacity (0..1), rotate (deg), fontSize (text), fontWeight (text).
+- **VISUAL CHROME** props (use them to lift the design):
+  - "fill" / "stroke" can be a 2-stop gradient string with the syntax "<color1>-><color2>" (e.g. "#10b981->#0ea5e9"). The renderer auto-generates a vertical <linearGradient>. Use this on at least 2 main shapes per frame.
+  - "shadow": true → soft drop shadow under the shape. Use on round / hero shapes.
+  - "glow": true → outer glow halo. Use sparingly on the focal element.
+  - "emphasize": true → the renderer adds a gentle pulse animation to this element while the frame is on screen. Use on EXACTLY ONE element per frame — the thing the student should look at.
+- **AMBIENT MOTION** — the frame should never look static. Add an "animate" preset to AT LEAST 5 elements per frame, ideally 6-8. Use a MIX of presets (don't use the same one on every flagged element — variety reads as dynamic). Pick whichever fits the physics:
+  - "spin": continuous rotation around the element's centre. Use for: gears, wheels, turbines, rotating fields, planets, orbits seen from above.
+  - "bob": small up-down oscillation. Use for: floating objects, breathing chest, hovering drone, suspended weight on a spring.
+  - "drift": slow horizontal drift back and forth. Use for: clouds, waves moving across the scene, particles in a fluid.
+  - "flash": opacity blink (1→0.4→1). Use for: lights, indicators, neuron firing, pulsing power source, "current here" markers.
+  - "wiggle": tiny rotational shake. Use for: vibrating molecules, an arrow being pointed at, a button being clicked.
+  - "flow": animated stroke-dashoffset (the line "moves"). Use only on path/line elements. Perfect for: current flow, signal flow, water flowing in a pipe, conveyor belts.
+  - "orbit": small circular motion around the element's centre. Use for: electrons around a nucleus, satellites, particles in a centripetal field.
+  Combine animate + emphasize on different elements; never on the same element.
+- **MOTION DIVERSITY CHECK** — before emitting, count: each frame should use at least 3 distinct preset names. A frame with 5 "spin" elements is wrong. A frame with spin + flow + flash + bob + emphasize feels alive.
+- Frames tell a story. Frame 1 = setup. Last frame = full concept + a clearly labelled "takeaway" rect at the bottom containing the key formula or rule.
+- Step labels are SHORT ("Launch", "Peak", "Descent", "Impact"). Captions are 1-2 sentences and refer to specific element ids if helpful.
+- **CONTENT FIDELITY** (this is the most important rule):
+  - The visual must match the concept's *actual* mechanism, not a generic stand-in. A pulley problem MUST show a pulley wheel (circle) with a rope (path) draped over it, masses (rects) hanging from each side, and tension arrows. It must not show a generic ball-and-line scene that "looks pulley-ish".
+  - Every text label must be a real domain term: "tension T", "gravity mg", "θ = 30°", "ATP", "succinate", "v_in", "V_out = -(R_f/R_in)·V_in", "P-V diagram", "isothermal", etc. Never use placeholder text like "Step 1" or "Force" without specifics.
+  - For numerical concepts, include real numbers: "v₀ = 20 m/s", "g = 9.8 m/s²", "θ = 45°", "R_f = 10 kΩ".
+  - Domain checklists:
+    - **Mechanics** → ground line, gravity arrow with mg label, vector arrows with magnitude, x/y axes when angle matters, FBD-style force decomposition where relevant.
+    - **Thermodynamics** → P-V or T-S axes, gas particles inside a container, hot/cold reservoir rectangles labelled with temperatures, work and heat arrows.
+    - **Electronics / circuits** → component symbols (resistor zigzag via path, capacitor as two parallel lines, inductor as loops, op-amp triangle, transistor symbol), wires as paths, voltage / current labels.
+    - **Cell biology / metabolism** → labelled organelles or substrate molecules with arrows showing enzymatic conversion. Each step shows the actual molecule name (Acetyl-CoA, Pyruvate, etc).
+    - **Organic chemistry** → Kekulé-style structures: rings, bond lines, atomic labels (C, H, O, N), reaction arrows with conditions over them.
+    - **Optics** → light rays as straight paths with arrowheads, lens/mirror cross-section, normal lines, angles labelled (i, r, c).
+    - **Data structures / algorithms** → boxes for nodes/cells, arrows for pointers, the active node emphasised, index labels.
+- **WHAT TWEEN BETWEEN FRAMES MEANS:** if the same physical entity exists in frame N and frame N+1, give it the SAME id and the renderer will smoothly interpolate its position/size/rotation. Use this to make motion read continuously: a piston compressing the gas → same "piston" id with different x; the ball flying through air → same "ball" id with different (cx, cy); the electron orbiting → same "electron" id with the orbit preset PLUS slightly different cx/cy keyframes per frame so the orbit precesses.
+- Palette: #10b981 (green), #f59e0b (amber), #ef4444 (red), #6366f1 (indigo), #ec4899 (pink), #06b6d4 (cyan), #8b5cf6 (purple), #0f172a (slate-900 for text). Mix at least 3 hues per frame.
+- For text, use Unicode glyphs freely: subscripts (v₀, t₁), superscripts (m²), symbols (θ, π, Δ, →, ↑, ↓), and inline equations ("F = ma", "v² = u² + 2as"). At least 3 text labels per frame, plus units where applicable ("m/s", "N", "kg").
+- duration_ms: 3500..6500. Big visual changes deserve more time.
+
+WORKED EXAMPLES — note the SEMANTIC ids and the domain-specific elements:
+
+1) "Projectile motion at 45°":
+   - Phases: Launch / Ascent / Peak / Descent / Impact + range label
+   - Persistent ids across frames: "ground", "axis_x", "axis_y", "ball", "trajectory_path", "v_arrow", "g_arrow"
+   - Frame 1 elements: ground rect, x-axis line, y-axis line, ball (cx=80,cy=400), v_arrow (45° from ball), v_label "v₀ = 20 m/s", angle_arc, theta_label "θ=45°", g_arrow (down from ball), g_label "g = 9.8 m/s²", trajectory_path (dashed parabola), title text. emphasize=true on v_arrow, animate=flow on trajectory_path.
+   - Frame 5 takeaway rect with "Range R = v₀²·sin(2θ)/g = 40.8 m"
+
+2) "Newton's third law in a pulley":
+   - Phases: System at rest / Pull starts / Mass A rises / Mass B falls / Equilibrium with action-reaction pairs labelled
+   - Persistent ids: "ceiling", "pulley_axle", "pulley_wheel" (animate=spin), "rope" (path with stroke="#475569"), "mass_a" (rect), "mass_b" (rect), "tension_left_arrow", "tension_right_arrow", "weight_a_arrow", "weight_b_arrow"
+   - Tension arrows must be opposite on the rope at the wheel (showing T = T pair). Weight arrows must point down with labels "m_A g" and "m_B g".
+   - Frame 5 takeaway: "Action = -Reaction:  T_rope on A = -T_A on rope"
+
+3) "Krebs cycle (citric acid cycle)":
+   - Phases: Acetyl-CoA + OAA → Citrate / Citrate → α-KG (release CO₂, NADH) / α-KG → Succinyl-CoA (release CO₂, NADH) / Succinyl-CoA → Succinate (GTP) / Fumarate → Malate → OAA (regen, release FADH₂, NADH)
+   - Persistent ids: "mito_outer" (ellipse), "mito_inner" (ellipse), and the cycle backbone: 8 "node_X" circles arranged in a circle each labelled with the substrate name. Arrows between nodes are paths with animate=flow.
+   - Per-step: emphasise the current substrate node; show the released byproduct (CO₂, NADH, GTP, FADH₂) drifting outward via animate=drift.
+   - Frame 5 takeaway: "Per acetyl-CoA: 3 NADH + 1 FADH₂ + 1 GTP + 2 CO₂"
+
+4) "Op-amp inverting amplifier":
+   - Phases: Op-amp idle / V_in applied / Virtual short ( V- = V+ = 0 ) / Current i = V_in/R_in flows through R_f / V_out = -i·R_f
+   - Persistent ids: "opamp_triangle" (polygon), "v_minus_pin", "v_plus_pin", "ground", "r_in" (zigzag path), "r_f" (zigzag path), "v_in_label", "v_out_label", "current_arrow"
+   - animate=flash on v_in_label, animate=flow on the wire path showing current direction.
+   - Frame 5 takeaway: "V_out = -(R_f / R_in) · V_in"
+
+Output the JSON. No explanation outside the JSON.`;
+
+// Typed element shape — matches what the client renderer in
+// app/student/visualizer/page.tsx expects. Loose-typed here because the
+// JSON comes from an LLM and we sanitise field by field.
+type ElType =
+  | "circle" | "rect" | "ellipse" | "line" | "path" | "polygon" | "text" | "group";
+
+type AnimatePreset = "spin" | "bob" | "drift" | "flash" | "wiggle" | "flow" | "orbit";
+
+type Element = {
+  id: string;
+  type: ElType;
+  // Geometry — only the relevant subset is used for each type.
+  cx?: number; cy?: number; r?: number; rx?: number; ry?: number;
+  x?: number; y?: number; width?: number; height?: number;
+  x1?: number; y1?: number; x2?: number; y2?: number;
+  d?: string; points?: string; text?: string;
+  // Common props
+  fill?: string; stroke?: string; strokeWidth?: number; strokeDasharray?: string;
+  opacity?: number; rotate?: number;
+  fontSize?: number; fontWeight?: string;
+  transform?: string;
+  children?: Element[];
+  // Visual chrome — renderer interprets these; AI may set them.
+  shadow?: boolean;     // drop a soft shadow under the shape
+  glow?: boolean;       // outer glow halo
+  emphasize?: boolean;  // pulse loop on this element while frame is on screen
+  animate?: AnimatePreset; // per-frame ambient motion preset
+};
+
+const ANIMATE_PRESETS = new Set<AnimatePreset>([
+  "spin", "bob", "drift", "flash", "wiggle", "flow", "orbit",
+]);
+
+type Frame = {
+  step_label: string;
+  caption: string;
+  duration_ms: number;
+  elements: Element[];
+};
+
+const ALLOWED_TYPES = new Set<ElType>([
+  "circle", "rect", "ellipse", "line", "path", "polygon", "text", "group",
+]);
+
+const COLOR_RE = /^(#[0-9a-fA-F]{3,8}|rgb[a]?\([^)]+\)|none|currentColor|[a-zA-Z]+)$/;
+
+function num(v: unknown, fallback?: number): number | undefined {
+  const n = typeof v === "number" ? v : (v != null ? Number(v) : NaN);
+  if (Number.isFinite(n)) return n as number;
+  return fallback;
+}
+
+function safeStr(v: unknown, max = 200): string | undefined {
+  if (typeof v !== "string") return undefined;
+  const s = v.trim().slice(0, max);
+  return s.length ? s : undefined;
+}
+
+function cleanElement(raw: unknown, depth = 0): Element | null {
+  if (!raw || typeof raw !== "object" || depth > 2) return null;
+  const o = raw as Record<string, unknown>;
+  const type = String(o.type || "").trim() as ElType;
+  if (!ALLOWED_TYPES.has(type)) return null;
+  const id = safeStr(o.id, 64);
+  if (!id) return null;
+
+  const el: Element = { id, type };
+
+  // Geometry per type — drop fields that don't apply.
+  if (type === "circle") {
+    el.cx = num(o.cx); el.cy = num(o.cy); el.r = num(o.r);
+  } else if (type === "rect") {
+    el.x = num(o.x); el.y = num(o.y);
+    el.width = num(o.width); el.height = num(o.height);
+    if (num(o.rx) !== undefined) el.rx = num(o.rx);
+    if (num(o.ry) !== undefined) el.ry = num(o.ry);
+  } else if (type === "ellipse") {
+    el.cx = num(o.cx); el.cy = num(o.cy);
+    el.rx = num(o.rx); el.ry = num(o.ry);
+  } else if (type === "line") {
+    el.x1 = num(o.x1); el.y1 = num(o.y1);
+    el.x2 = num(o.x2); el.y2 = num(o.y2);
+  } else if (type === "path") {
+    const d = safeStr(o.d, 1500);
+    if (!d) return null;
+    el.d = d.replace(/[<>{}]/g, "");
+  } else if (type === "polygon") {
+    const pts = safeStr(o.points, 1500);
+    if (!pts) return null;
+    el.points = pts.replace(/[<>{}]/g, "");
+  } else if (type === "text") {
+    el.x = num(o.x); el.y = num(o.y);
+    const t = safeStr(o.text, 200);
+    if (!t) return null;
+    el.text = t;
+    if (num(o.fontSize) !== undefined) el.fontSize = num(o.fontSize);
+    const fw = safeStr(o.fontWeight, 16);
+    if (fw && /^[0-9a-z]+$/i.test(fw)) el.fontWeight = fw;
+  } else if (type === "group") {
+    const kidsRaw = Array.isArray(o.children) ? (o.children as unknown[]) : [];
+    el.children = kidsRaw
+      .map((c) => cleanElement(c, depth + 1))
+      .filter((c): c is Element => c !== null)
+      .slice(0, 24);
+    const tr = safeStr(o.transform, 200);
+    if (tr) el.transform = tr.replace(/[<>{}]/g, "");
+  }
+
+  // Allow gradient syntax "color1->color2" in addition to plain colors. The
+  // renderer turns this into an auto-generated <linearGradient>.
+  const fill = safeFillOrGradient(o.fill);   if (fill) el.fill = fill;
+  const stroke = safeFillOrGradient(o.stroke); if (stroke) el.stroke = stroke;
+  if (num(o.strokeWidth) !== undefined) el.strokeWidth = num(o.strokeWidth);
+  const sd = safeStr(o.strokeDasharray, 64);
+  if (sd && /^[0-9.\s]+$/.test(sd)) el.strokeDasharray = sd;
+  const op = num(o.opacity);
+  if (op !== undefined) el.opacity = Math.max(0, Math.min(1, op));
+  const rot = num(o.rotate);
+  if (rot !== undefined) el.rotate = rot;
+  if (o.shadow === true) el.shadow = true;
+  if (o.glow === true) el.glow = true;
+  if (o.emphasize === true) el.emphasize = true;
+  if (typeof o.animate === "string" && ANIMATE_PRESETS.has(o.animate as AnimatePreset)) {
+    el.animate = o.animate as AnimatePreset;
+  }
+  return el;
+}
+
+// "#10b981->#0ea5e9" is a 2-stop linear gradient; otherwise reuse safeColor.
+function safeFillOrGradient(v: unknown): string | undefined {
+  if (typeof v !== "string") return undefined;
+  const s = v.trim();
+  if (!s) return undefined;
+  if (s.includes("->")) {
+    const parts = s.split("->").map((p) => p.trim()).filter(Boolean);
+    if (parts.length === 2 && parts.every((p) => COLOR_RE.test(p))) {
+      return parts[0] + "->" + parts[1];
+    }
+    return undefined;
+  }
+  return COLOR_RE.test(s) ? s : undefined;
 }
 
 function cleanFrames(arr: unknown): Frame[] {
@@ -110,11 +315,21 @@ function cleanFrames(arr: unknown): Frame[] {
   return (arr as unknown[])
     .map((f) => {
       const o = (f || {}) as Record<string, unknown>;
-      const svg = sanitizeSvg(String(o.svg || ""));
+      const elementsRaw = Array.isArray(o.elements) ? (o.elements as unknown[]) : [];
+      const elements = elementsRaw
+        .map((e) => cleanElement(e))
+        .filter((e): e is Element => e !== null)
+        .slice(0, 24);
       const caption = String(o.caption || "").trim().slice(0, 400);
-      const dur = Math.max(2000, Math.min(8000, Math.round(Number(o.duration_ms) || 4500)));
-      if (!svg || !caption) return null;
-      return { svg, caption, duration_ms: dur };
+      const stepLabel = String(o.step_label || "").trim().slice(0, 80) || `Step`;
+      const dur = Math.max(2500, Math.min(8000, Math.round(Number(o.duration_ms) || 4500)));
+      if (elements.length < 6 || !caption) return null;
+      return {
+        step_label: stepLabel,
+        caption,
+        duration_ms: dur,
+        elements,
+      };
     })
     .filter((f): f is Frame => f !== null)
     .slice(0, 6);
@@ -137,7 +352,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Topic too long (max 200 chars)." }, { status: 400 });
     }
 
-    const userPrompt = `Topic: ${topic}\n\nProduce the JSON now. Remember: 4-5 SVG frames, each tells one step of the story, with embedded SMIL motion.`;
+    const userPrompt = `Topic: ${topic}\n\nProduce the JSON now. 5 frames, typed elements, ids reused across frames for elements that should tween.`;
     const raw = await groqJSON(SYSTEM, userPrompt);
 
     const frames = cleanFrames((raw as { frames?: unknown }).frames);
