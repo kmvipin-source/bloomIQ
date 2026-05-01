@@ -122,26 +122,34 @@ end $$;
 -- -----------------------------------------------------------------------------
 -- Before: `profiles read all auth` granted SELECT to every authenticated user
 -- regardless of school. Closes a HIGH-severity RLS audit finding.
--- After: caller can SELECT a profile only when they share a school_id with it,
--- when caller is the row's owner, when caller is super_teacher of the row's
--- school, or when caller is a platform admin.
+-- After: split into multiple permissive SELECT policies — Postgres ORs them
+-- when evaluating. Each policy must be independently non-recursive so that
+-- when a policy's qual contains `select ... from profiles`, that inner query
+-- can match the simple self-read policy and avoid infinite recursion.
+--
+-- Self read keeps `auth.uid() = id` simple. Same-school's subquery on profiles
+-- is resolved by the self-read policy at the inner level.
 -- =============================================================================
-drop policy if exists "profiles read all auth" on public.profiles;
-
+drop policy if exists "profiles read all auth"        on public.profiles;
 drop policy if exists "profiles read by platform admin" on public.profiles;
-drop policy if exists "profiles read same school"        on public.profiles;
-drop policy if exists "profiles read self"               on public.profiles;
-drop policy if exists "profiles super read"              on public.profiles;
+drop policy if exists "profiles read same school"      on public.profiles;
+drop policy if exists "profiles read self"             on public.profiles;
+drop policy if exists "profiles super read"            on public.profiles;
+drop policy if exists "profiles select"                on public.profiles;
 
-create policy "profiles select" on public.profiles
+create policy "profiles read self" on public.profiles
+  for select using ((select auth.uid()) = id);
+
+create policy "profiles read by super" on public.profiles
+  for select using (public.is_super_for_user(id));
+
+create policy "profiles read by platform admin" on public.profiles
+  for select using (public.is_platform_admin());
+
+create policy "profiles read same school" on public.profiles
   for select using (
-    (select auth.uid()) = id
-    or public.is_super_for_user(id)
-    or public.is_platform_admin()
-    or (
-      school_id is not null
-      and school_id in (select p.school_id from public.profiles p where p.id = (select auth.uid()))
-    )
+    school_id is not null
+    and school_id in (select p.school_id from public.profiles p where p.id = (select auth.uid()))
   );
 
 -- =============================================================================
