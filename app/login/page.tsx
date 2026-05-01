@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { supabaseBrowser } from "@/lib/supabase/client";
-import { Eye, EyeOff, GraduationCap, BookOpen, Building2, ShieldCheck } from "lucide-react";
+import { Eye, EyeOff, GraduationCap, BookOpen, Building2, ShieldCheck, KeyRound } from "lucide-react";
+import LoginCaptcha, { recordLoginFailure, clearLoginFailures, captchaRequired } from "@/components/LoginCaptcha";
 
 const SCHOOL_DOMAIN = "bloomiq.invalid";
 const TOS_VERSION = "2026-04-30";
@@ -102,6 +103,19 @@ export default function LoginPage() {
 
   const [tosOk, setTosOk] = useState(false);
 
+  // Adaptive bot deterrent. Set true the moment we hit FAIL_THRESHOLD on
+  // this identifier; user must solve a one-shot math puzzle to re-enable.
+  const [needCaptcha, setNeedCaptcha] = useState(false);
+  const [captchaPassed, setCaptchaPassed] = useState(false);
+
+  // 2FA state. After password succeeds, if the user has a verified TOTP
+  // factor, we pause and ask for the 6-digit code.
+  const [mfaPhase, setMfaPhase] = useState<"idle" | "needs_code">("idle");
+  const [mfaFactorId, setMfaFactorId] = useState<string | null>(null);
+  const [mfaChallengeId, setMfaChallengeId] = useState<string | null>(null);
+  const [mfaCode, setMfaCode] = useState("");
+  const [mfaBusy, setMfaBusy] = useState(false);
+
   const [roleTab, setRoleTab] = useState<RoleTab>("student");
   const [studentMode, setStudentMode] = useState<StudentMode>("school");
   // When the Student tab is active, the sub-mode (school vs independent)
@@ -143,11 +157,54 @@ export default function LoginPage() {
     } catch { /* best-effort */ }
   }
 
+  async function finalizeSignIn(): Promise<void> {
+    const sb = supabaseBrowser();
+    const { data: { user } } = await sb.auth.getUser();
+    if (!user) throw new Error("Signed in but session is empty. Please try again.");
+
+    const meta = (user.user_metadata || {}) as { tos_version?: string };
+    if (meta.tos_version !== TOS_VERSION) {
+      try {
+        await sb.auth.updateUser({
+          data: { tos_accepted_at: new Date().toISOString(), tos_version: TOS_VERSION },
+        });
+      } catch { /* ignore */ }
+    }
+
+    const { data: prof } = await sb
+      .from("profiles")
+      .select("role, is_school_student, platform_admin")
+      .eq("id", user.id)
+      .single();
+
+    const { data: { session } } = await sb.auth.getSession();
+    if (session) audit(session.access_token);
+
+    const isIndependentStudent =
+      prof?.role === "student" && !prof?.is_school_student;
+    if (isIndependentStudent) {
+      try { await sb.auth.signOut({ scope: "others" }); } catch { /* ignore */ }
+    }
+
+    const next = readNextParam();
+    const home =
+      prof?.platform_admin ? "/admin/onboard-school" :
+      prof?.role === "teacher" ? "/teacher" :
+      prof?.role === "super_teacher" ? "/school" :
+      "/student";
+    clearLoginFailures(identifier);
+    router.push(next || home);
+  }
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setErr(null);
     if (!tosOk) {
       setErr("Please tick the box to accept the Terms of Service and Privacy Policy.");
+      return;
+    }
+    if (needCaptcha && !captchaPassed) {
+      setErr("Please solve the puzzle to continue.");
       return;
     }
     setBusy(true);
@@ -160,52 +217,91 @@ export default function LoginPage() {
       const email = raw.includes("@") ? raw : `${raw.toLowerCase()}@${SCHOOL_DOMAIN}`;
 
       const { error } = await sb.auth.signInWithPassword({ email, password });
-      if (error) throw new Error("Email/username or password is incorrect.");
-
-      const { data: { user } } = await sb.auth.getUser();
-      if (!user) throw new Error("Signed in but session is empty. Please try again.");
-
-      // Stamp ToS acceptance on every sign-in where the version differs
-      // from what's recorded. Best-effort — failure here doesn't block login.
-      const meta = (user.user_metadata || {}) as { tos_version?: string };
-      if (meta.tos_version !== TOS_VERSION) {
-        try {
-          await sb.auth.updateUser({
-            data: { tos_accepted_at: new Date().toISOString(), tos_version: TOS_VERSION },
-          });
-        } catch { /* ignore */ }
+      if (error) {
+        const fails = recordLoginFailure(raw);
+        if (captchaRequired(raw)) { setNeedCaptcha(true); setCaptchaPassed(false); }
+        throw new Error(
+          fails >= 3
+            ? "Email/username or password is incorrect. Solve the puzzle below to keep trying."
+            : "Email/username or password is incorrect."
+        );
       }
+
+      // Determine MFA requirement. School students are skipped — many are
+      // kids without authenticator apps; their teacher manages credentials
+      // already. Everyone else who has a verified TOTP factor must clear
+      // the second challenge before we redirect.
+      const { data: { user } } = await sb.auth.getUser();
+      if (!user) throw new Error("Signed in but session is empty.");
 
       const { data: prof } = await sb
         .from("profiles")
-        .select("role, is_school_student, platform_admin")
+        .select("is_school_student")
         .eq("id", user.id)
         .single();
+      const skipMfa = !!prof?.is_school_student;
 
-      const { data: { session } } = await sb.auth.getSession();
-      if (session) audit(session.access_token);
-
-      const isIndependentStudent =
-        prof?.role === "student" && !prof?.is_school_student;
-      if (isIndependentStudent) {
-        try { await sb.auth.signOut({ scope: "others" }); } catch { /* ignore */ }
+      if (!skipMfa) {
+        try {
+          const { data: factors } = await sb.auth.mfa.listFactors();
+          const totp = (factors?.totp || []).find((f) => f.status === "verified");
+          if (totp) {
+            const { data: challenge, error: chErr } = await sb.auth.mfa.challenge({ factorId: totp.id });
+            if (chErr || !challenge) throw new Error(chErr?.message || "Could not start 2FA challenge.");
+            setMfaFactorId(totp.id);
+            setMfaChallengeId(challenge.id);
+            setMfaPhase("needs_code");
+            setBusy(false);
+            return; // wait for verifyMfa()
+          }
+        } catch (mfaProbeErr) {
+          // If MFA isn't enabled at the project level, listFactors errors.
+          // That's OK — proceed without MFA.
+          if (process.env.NODE_ENV !== "production") {
+            // eslint-disable-next-line no-console
+            console.warn("[mfa] probe failed; proceeding without 2FA", mfaProbeErr);
+          }
+        }
       }
 
-      const next = readNextParam();
-      // platform_admin is exclusive: regardless of profiles.role, send the
-      // user to the admin dashboard. No hybrid student/teacher/school home.
-      const home =
-        prof?.platform_admin ? "/admin/onboard-school" :
-        prof?.role === "teacher" ? "/teacher" :
-        prof?.role === "super_teacher" ? "/school" :
-        "/student";
-      router.push(next || home);
+      await finalizeSignIn();
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Sign in failed.");
     } finally {
       setBusy(false);
     }
   }
+
+  async function verifyMfa() {
+    setErr(null);
+    if (!mfaFactorId || !mfaChallengeId) return;
+    if (!/^\d{6}$/.test(mfaCode.trim())) {
+      setErr("Enter the 6-digit code from your authenticator app.");
+      return;
+    }
+    setMfaBusy(true);
+    try {
+      const sb = supabaseBrowser();
+      const { error } = await sb.auth.mfa.verify({
+        factorId: mfaFactorId,
+        challengeId: mfaChallengeId,
+        code: mfaCode.trim(),
+      });
+      if (error) throw new Error(error.message || "Invalid code. Try again.");
+      await finalizeSignIn();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "2FA verification failed.");
+    } finally {
+      setMfaBusy(false);
+    }
+  }
+
+  // Re-evaluate captcha gate whenever the identifier changes — a user who
+  // switches accounts after some failures should not be punished.
+  useEffect(() => {
+    setNeedCaptcha(captchaRequired(identifier));
+    setCaptchaPassed(false);
+  }, [identifier]);
 
   return (
     <main className="min-h-screen grid place-items-center px-6 py-10 bg-gradient-to-br from-emerald-50 via-white to-sky-50">
@@ -353,10 +449,16 @@ export default function LoginPage() {
                 {forgotMsg}
               </div>
             )}
+            {!forgotMode && needCaptcha && !captchaPassed && mfaPhase === "idle" && (
+              <LoginCaptcha
+                onPass={() => { setCaptchaPassed(true); setErr(null); }}
+              />
+            )}
+
             {/* Explicit click-wrap. Required on every sign-in so consent is
                 refreshed each session and we can re-stamp tos_version onto
                 user_metadata when Terms are updated. */}
-            {!forgotMode && (
+            {!forgotMode && mfaPhase === "idle" && (
               <label className="flex items-start gap-2 text-xs text-slate-700 leading-relaxed">
                 <input
                   type="checkbox"
@@ -373,6 +475,31 @@ export default function LoginPage() {
                 </span>
               </label>
             )}
+
+            {/* 2FA challenge — only renders after the password step succeeds
+                AND the user has a verified TOTP factor. */}
+            {mfaPhase === "needs_code" && (
+              <div className="rounded-lg border-2 border-emerald-300 bg-emerald-50 px-3 py-3 space-y-2">
+                <div className="flex items-center gap-2 font-semibold text-emerald-900 text-sm">
+                  <KeyRound size={16} /> Enter your 2FA code
+                </div>
+                <p className="text-xs text-emerald-900/80">
+                  Open your authenticator app (Google Authenticator, 1Password, Authy, etc.) and enter the current 6-digit code for BloomIQ.
+                </p>
+                <input
+                  className="input font-mono tracking-widest text-center"
+                  inputMode="numeric"
+                  pattern="[0-9]{6}"
+                  maxLength={6}
+                  value={mfaCode}
+                  onChange={(e) => setMfaCode(e.target.value.replace(/\D/g, ""))}
+                  placeholder="123456"
+                  autoFocus
+                  suppressHydrationWarning
+                />
+              </div>
+            )}
+
             {forgotMode ? (
               <button
                 type="button"
@@ -383,8 +510,22 @@ export default function LoginPage() {
               >
                 {forgotBusy && <span className="spinner" />} Send reset link
               </button>
+            ) : mfaPhase === "needs_code" ? (
+              <button
+                type="button"
+                className="btn btn-primary w-full"
+                disabled={mfaBusy || mfaCode.length !== 6}
+                onClick={verifyMfa}
+                suppressHydrationWarning
+              >
+                {mfaBusy && <span className="spinner" />} Verify code
+              </button>
             ) : (
-              <button className="btn btn-primary w-full" disabled={busy || !tosOk} suppressHydrationWarning>
+              <button
+                className="btn btn-primary w-full"
+                disabled={busy || !tosOk || (needCaptcha && !captchaPassed)}
+                suppressHydrationWarning
+              >
                 {busy && <span className="spinner" />} Sign in
               </button>
             )}

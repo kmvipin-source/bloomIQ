@@ -26,6 +26,7 @@ const ADMIN_LINKS = [
   { href: "/admin/onboard-school", label: "Onboard School", icon: Building2 },
   { href: "/admin/plans",          label: "Plans",          icon: ListChecks },
   { href: "/admin/team",           label: "Admin Team",     icon: UserPlus },
+  { href: "/settings/security",    label: "Security",       icon: ShieldCheck },
 ];
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {

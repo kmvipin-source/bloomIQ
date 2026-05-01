@@ -8,6 +8,7 @@ import {
   Home, Sparkles, ClipboardCheck, ListChecks,
   BarChart3, FileText, LogOut, User as UserIcon, Users,
   TrendingUp, NotebookPen, Building2, FileEdit,
+  ShieldCheck,
 } from "lucide-react";
 import ThemeQuickToggle from "@/components/ThemeQuickToggle";
 
@@ -139,6 +140,19 @@ export default function Sidebar({ role }: { role: "teacher" | "student" | "super
           <UserIcon size={14} />
           <span className="truncate">{name || "..."}</span>
         </div>
+        {/* 2FA management — hidden for school students; their teacher
+            manages credentials, no point asking 8-year-olds to set up TOTP. */}
+        {isSchoolStudent === false && (
+          <Link
+            href="/settings/security"
+            className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition"
+            style={{ color: "var(--color-fg-soft)" }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = "var(--color-bg-soft)"; }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+          >
+            <ShieldCheck size={16} /> Security
+          </Link>
+        )}
         <button
           onClick={logout}
           className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition"
