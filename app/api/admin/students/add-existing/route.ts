@@ -23,6 +23,11 @@ export async function POST(req: Request) {
     const body = await req.json().catch(() => ({}));
     const classId: string = String(body.class_id || "").trim();
     const studentId: string = String(body.student_id || "").trim();
+    const rollNumberRaw = body.roll_number;
+    const rollNumber: string | null =
+      typeof rollNumberRaw === "string" && rollNumberRaw.trim().length > 0
+        ? rollNumberRaw.trim()
+        : (typeof rollNumberRaw === "number" ? String(rollNumberRaw) : null);
     if (!classId || !studentId) {
       return NextResponse.json({ error: "class_id and student_id are required" }, { status: 400 });
     }
@@ -65,16 +70,28 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "You don't have permission to reuse that student." }, { status: 403 });
     }
 
-    // 3) Add membership (idempotent — skip if already a member)
+    // 3) Add membership (idempotent — skip if already a member). If a
+    // roll_number was supplied AND the student is already in the class,
+    // update the existing row's roll_number so the teacher can fix it via
+    // re-add without a separate "set roll" UI.
     const { error } = await admin.from("class_members").insert({
       class_id: classId,
       student_id: studentId,
+      roll_number: rollNumber,
     });
-    if (error && !error.message.toLowerCase().includes("duplicate")) {
+    const alreadyMember = !!(error && error.message.toLowerCase().includes("duplicate"));
+    if (error && !alreadyMember) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
+    if (alreadyMember && rollNumber !== null) {
+      await admin
+        .from("class_members")
+        .update({ roll_number: rollNumber })
+        .eq("class_id", classId)
+        .eq("student_id", studentId);
+    }
 
-    return NextResponse.json({ ok: true, alreadyMember: !!error });
+    return NextResponse.json({ ok: true, alreadyMember });
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : "Failed" }, { status: 500 });
   }

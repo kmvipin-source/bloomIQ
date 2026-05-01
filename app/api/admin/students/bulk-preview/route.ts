@@ -58,12 +58,31 @@ type PreviewRow = {
   index: number;
   raw: string;
   fullName: string;
+  rollNumber: string | null;
   status: "ready" | "duplicate" | "duplicate-in-this-class" | "duplicate-in-paste" | "invalid";
   reason?: string;
   suggestedUsername: string;
   suggestedPassword: string;
   matches: PreviewMatch[];
 };
+
+/**
+ * Split a paste line into { name, roll }. Accepts:
+ *   - "Priya Sharma"            → { name: "Priya Sharma", roll: null }
+ *   - "Priya Sharma, 12"        → { name: "Priya Sharma", roll: "12" }
+ *   - "Priya Sharma\t12"        → ditto
+ *   - "Priya Sharma | 12"       → ditto
+ * The first separator (tab, comma, or pipe) wins so names with spaces are fine.
+ */
+function parseLine(raw: string): { name: string; roll: string | null } {
+  const s = String(raw || "").trim();
+  if (!s) return { name: "", roll: null };
+  const m = s.match(/^([^\t,|]+)[\t,|](.*)$/);
+  if (!m) return { name: s.replace(/\s+/g, " "), roll: null };
+  const name = m[1].trim().replace(/\s+/g, " ");
+  const roll = m[2].trim();
+  return { name, roll: roll.length > 0 ? roll : null };
+}
 
 /**
  * POST /api/admin/students/bulk-preview
@@ -166,7 +185,9 @@ export async function POST(req: Request) {
     const seenInPaste = new Map<string, number>(); // normalised name -> first index
 
     const rows: PreviewRow[] = namesRaw.map((raw, i) => {
-      const fullName = String(raw || "").trim().replace(/\s+/g, " ");
+      const parsed = parseLine(String(raw ?? ""));
+      const fullName = parsed.name;
+      const rollNumber = parsed.roll;
       let username = suggestUsername();
       for (let attempt = 0; attempt < 5 && takenUsernames.has(username); attempt++) {
         username = suggestUsername();
@@ -175,7 +196,7 @@ export async function POST(req: Request) {
       const password = suggestPassword();
 
       if (!fullName) {
-        return { index: i, raw: String(raw ?? ""), fullName: "", status: "invalid", reason: "Empty line", suggestedUsername: username, suggestedPassword: password, matches: [] };
+        return { index: i, raw: String(raw ?? ""), fullName: "", rollNumber, status: "invalid", reason: "Empty line", suggestedUsername: username, suggestedPassword: password, matches: [] };
       }
 
       // Check for dup within the paste itself (case-insensitive normalised).
@@ -185,6 +206,7 @@ export async function POST(req: Request) {
           index: i,
           raw: String(raw),
           fullName,
+          rollNumber,
           status: "duplicate-in-paste",
           reason: `Same as line ${seenInPaste.get(norm)! + 1}`,
           suggestedUsername: username,
@@ -204,16 +226,14 @@ export async function POST(req: Request) {
         }));
 
       if (matches.length === 0) {
-        return { index: i, raw: String(raw), fullName, status: "ready", suggestedUsername: username, suggestedPassword: password, matches: [] };
+        return { index: i, raw: String(raw), fullName, rollNumber, status: "ready", suggestedUsername: username, suggestedPassword: password, matches: [] };
       }
-      // If any match is already in THIS class, that's almost certainly the
-      // same kid - flag it as "already in this class" so the default action
-      // is to skip rather than create a duplicate.
       const alreadyHere = matches.some((m) => m.inThisClass);
       return {
         index: i,
         raw: String(raw),
         fullName,
+        rollNumber,
         status: alreadyHere ? "duplicate-in-this-class" : "duplicate",
         suggestedUsername: username,
         suggestedPassword: password,

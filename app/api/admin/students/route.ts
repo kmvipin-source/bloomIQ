@@ -62,6 +62,12 @@ export async function POST(req: Request) {
     const username: string = String(body.username || "").trim().toLowerCase();
     const password: string = String(body.password || "");
     const force: boolean = !!body.force;
+    // Optional per-class roll number. Trimmed; empty becomes null.
+    const rollNumberRaw = body.roll_number;
+    const rollNumber: string | null =
+      typeof rollNumberRaw === "string" && rollNumberRaw.trim().length > 0
+        ? rollNumberRaw.trim()
+        : (typeof rollNumberRaw === "number" ? String(rollNumberRaw) : null);
 
     if (!classId) return NextResponse.json({ error: "class_id is required" }, { status: 400 });
     if (!fullName) return NextResponse.json({ error: "Student name is required" }, { status: 400 });
@@ -204,6 +210,7 @@ export async function POST(req: Request) {
     const { error: memErr } = await admin.from("class_members").insert({
       class_id: classId,
       student_id: newId,
+      roll_number: rollNumber,
     });
     if (memErr && !memErr.message.toLowerCase().includes("duplicate")) {
       await admin.auth.admin.deleteUser(newId).catch(() => {});

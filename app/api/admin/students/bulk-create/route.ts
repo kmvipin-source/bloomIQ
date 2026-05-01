@@ -18,6 +18,7 @@ type IncomingRow = {
   password: string;
   action: "create" | "use_existing" | "skip";
   existingId?: string | null;
+  rollNumber?: string | null;
 };
 
 type OutcomeRow = {
@@ -81,6 +82,10 @@ export async function POST(req: Request) {
       const username = String(r.username || "").trim().toLowerCase();
       const password = String(r.password || "");
       const action = r.action;
+      const rollNumber: string | null =
+        typeof r.rollNumber === "string" && r.rollNumber.trim().length > 0
+          ? r.rollNumber.trim()
+          : null;
 
       if (action === "skip") {
         outcomes.push({ index: idx, fullName, username: null, password: null, status: "skipped", reason: "Skipped by teacher" });
@@ -95,7 +100,10 @@ export async function POST(req: Request) {
         }
         const { error: memErr } = await admin
           .from("class_members")
-          .upsert({ class_id: classId, student_id: existingId }, { onConflict: "class_id,student_id" });
+          .upsert(
+            { class_id: classId, student_id: existingId, roll_number: rollNumber },
+            { onConflict: "class_id,student_id" }
+          );
         if (memErr) {
           outcomes.push({ index: idx, fullName, username: null, password: null, status: "failed", reason: memErr.message });
         } else {
@@ -156,7 +164,7 @@ export async function POST(req: Request) {
 
       const { error: memErr } = await admin
         .from("class_members")
-        .insert({ class_id: classId, student_id: newId });
+        .insert({ class_id: classId, student_id: newId, roll_number: rollNumber });
       if (memErr && !memErr.message.toLowerCase().includes("duplicate")) {
         // Roll back the auth user so we don't leave an orphan.
         await admin.auth.admin.deleteUser(newId).catch(() => {});

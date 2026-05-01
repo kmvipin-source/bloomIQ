@@ -1,0 +1,17 @@
+-- =============================================================================
+-- Migration 33 — class_members.roll_number
+-- -----------------------------------------------------------------------------
+-- Optional per-class roll-number (text — typically integers like "12" but
+-- some schools use formats like "10A-12"; keep flexible). Surfaced on both
+-- the individual Add Student form and the Bulk Add paste (Name, Roll
+-- pairs). No uniqueness constraint — the field is informational, and
+-- requiring uniqueness would rejection-spam teachers mid-paste.
+-- =============================================================================
+alter table public.class_members
+  add column if not exists roll_number text;
+
+create index if not exists class_members_class_roll_idx
+  on public.class_members (class_id, roll_number)
+  where roll_number is not null;
+
+notify pgrst, 'reload schema';
