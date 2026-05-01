@@ -6,14 +6,17 @@ export const runtime = "nodejs";
 /**
  * GET /api/pricing/active-plans
  *
- * Public endpoint — no auth required. Returns every plan currently in
- * status='active', sorted by tier rank then price. Used by /pricing to
- * render the cards dynamically so any platform-admin price change shows
- * up immediately without a code redeploy.
+ * Public endpoint — no auth required. Returns every plan in the
+ * catalogue, sorted by tier rank then price. Used by /pricing to render
+ * the cards dynamically so any platform-admin price change shows up
+ * immediately without a code redeploy.
  *
- * RLS already exposes status='active' rows publicly via the
- * "plans read active public" policy in migration 25, so we use the
- * anon-key client. No service-role bypass needed.
+ * Post-migration-30 the plans table is a flat catalogue (one row per
+ * SKU, no status workflow). The RLS policy "plans read public" exposes
+ * every row publicly via the anon key. No service-role bypass needed.
+ *
+ * The endpoint name still says "active-plans" for backward compat with
+ * already-deployed consumers; "active" now just means "in the catalogue".
  */
 
 const TIER_ORDER: Record<string, number> = {
@@ -27,12 +30,11 @@ const TIER_ORDER: Record<string, number> = {
 
 export async function GET() {
   try {
-    // Anon Supabase client — RLS will filter to status='active' for us.
+    // Anon Supabase client — public RLS policy exposes every row.
     const sb = supabaseServer();
     const { data: plans, error } = await sb
       .from("plans")
-      .select("id, slug, tier, label, blurb, feature_summary, price_paise, currency, period_days, features, pricing_model, per_student_price_paise, min_students, max_students")
-      .eq("status", "active");
+      .select("id, slug, tier, label, blurb, feature_summary, price_paise, currency, period_days, features, pricing_model, per_student_price_paise, min_students, max_students");
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
     const sorted = (plans || []).slice().sort((a, b) => {

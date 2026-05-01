@@ -171,10 +171,19 @@ export type PlanTier =
   | "school_standard"
   | "school_plus";
 
-export type PlanStatus = "draft" | "pending_review" | "active" | "archived";
-
 export type PlanPricingModel = "fixed" | "per_student";
 
+/**
+ * A SKU in the catalogue. Post-migration-30 these are stable rows that
+ * the platform admin edits IN PLACE — there's no draft/active workflow,
+ * no version history, no audit log. The seeded set is 8 (Free + Premium
+ * Monthly/Annual + Premium Plus Monthly/Annual + 3 school tiers).
+ *
+ * When you edit a plan:
+ *   - new signups + renewals see the new price + features
+ *   - existing subscribers keep their locked price (subscriptions.price_paid_paise)
+ *     until expires_at, but get the new features live
+ */
 export type Plan = {
   id: string;
   slug: string;
@@ -188,14 +197,8 @@ export type Plan = {
   period_days: number;
   // Array of feature keys from lib/features.ts.
   features: string[];
-  status: PlanStatus;
-  effective_from: string | null;
-  effective_to: string | null;
-  created_by: string | null;
-  approved_by: string | null;
   created_at: string;
   updated_at: string;
-  approved_at: string | null;
   // Pricing model — "fixed" uses price_paise directly (Free / Premium /
   // Premium Plus). "per_student" uses per_student_price_paise × the
   // school's student headcount (School Pilot / Standard / Plus). See
@@ -204,16 +207,5 @@ export type Plan = {
   per_student_price_paise: number;
   min_students: number;
   max_students: number | null;
-};
-
-export type PlanAuditEvent = {
-  id: number;
-  plan_id: string;
-  actor_id: string | null;
-  // 'created' | 'edited' | 'submitted' | 'approved' | 'rejected' |
-  // 'archived' | 'price_change' | 'features_change' — extensible.
-  action: string;
-  payload: Record<string, unknown>;
-  created_at: string;
 };
 
