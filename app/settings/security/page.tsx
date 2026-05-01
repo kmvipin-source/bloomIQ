@@ -95,9 +95,24 @@ export default function SecuritySettingsPage() {
     setEnrolling(true);
     try {
       const sb = supabaseBrowser();
+
+      // Drop any leftover unverified TOTP factors first. They linger if a
+      // previous enrollment was abandoned without confirming, and Supabase
+      // refuses a fresh enroll with a duplicate friendlyName.
+      try {
+        const { data: existing } = await sb.auth.mfa.listFactors();
+        for (const f of (existing?.totp || [])) {
+          if (f.status !== "verified") {
+            await sb.auth.mfa.unenroll({ factorId: f.id }).catch(() => {});
+          }
+        }
+      } catch { /* best-effort */ }
+
       const { data, error: enrErr } = await sb.auth.mfa.enroll({
         factorType: "totp",
-        friendlyName: `BloomIQ ${new Date().toISOString().slice(0, 10)}`,
+        // Timestamp (not just date) so two enroll attempts on the same day
+        // can't collide on friendlyName even if cleanup raced.
+        friendlyName: `BloomIQ ${new Date().toISOString()}`,
       });
       if (enrErr || !data) throw new Error(enrErr?.message || "Enrollment failed.");
       // Render QR locally — never send the TOTP secret to a third-party
