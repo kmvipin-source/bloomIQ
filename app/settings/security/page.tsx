@@ -96,24 +96,51 @@ export default function SecuritySettingsPage() {
     try {
       const sb = supabaseBrowser();
 
-      // Drop any leftover unverified TOTP factors first. They linger if a
-      // previous enrollment was abandoned without confirming, and Supabase
-      // refuses a fresh enroll with a duplicate friendlyName.
-      try {
-        const { data: existing } = await sb.auth.mfa.listFactors();
-        for (const f of (existing?.totp || [])) {
-          if (f.status !== "verified") {
+      // Cleanup pass: drop every UNVERIFIED TOTP factor. They linger when a
+      // previous enrollment was abandoned without confirming.
+      async function dropUnverified(): Promise<void> {
+        try {
+          const { data: existing } = await sb.auth.mfa.listFactors();
+          for (const f of (existing?.totp || [])) {
+            if (f.status !== "verified") {
+              await sb.auth.mfa.unenroll({ factorId: f.id }).catch(() => {});
+            }
+          }
+        } catch { /* best-effort */ }
+      }
+
+      function uniqName(): string {
+        const t = Date.now().toString(36);
+        const r = Math.random().toString(36).slice(2, 8);
+        return `BloomIQ ${t}-${r}`;
+      }
+
+      await dropUnverified();
+
+      let { data, error: enrErr } = await sb.auth.mfa.enroll({
+        factorType: "totp",
+        friendlyName: uniqName(),
+      });
+
+      // If we still hit a duplicate-name error, the unverified factor is
+      // probably hidden from listFactors. Drop ALL TOTP factors (yes,
+      // including verified — but we're enrolling a fresh one anyway, so
+      // there should be no verified factor at this point) and retry once.
+      if (enrErr && /already exists/i.test(enrErr.message)) {
+        try {
+          const { data: all } = await sb.auth.mfa.listFactors();
+          for (const f of (all?.totp || [])) {
             await sb.auth.mfa.unenroll({ factorId: f.id }).catch(() => {});
           }
-        }
-      } catch { /* best-effort */ }
+        } catch { /* ignore */ }
+        const retry = await sb.auth.mfa.enroll({
+          factorType: "totp",
+          friendlyName: uniqName(),
+        });
+        data = retry.data;
+        enrErr = retry.error;
+      }
 
-      const { data, error: enrErr } = await sb.auth.mfa.enroll({
-        factorType: "totp",
-        // Timestamp (not just date) so two enroll attempts on the same day
-        // can't collide on friendlyName even if cleanup raced.
-        friendlyName: `BloomIQ ${new Date().toISOString()}`,
-      });
       if (enrErr || !data) throw new Error(enrErr?.message || "Enrollment failed.");
       // Render QR locally — never send the TOTP secret to a third-party
       // image API. qrcode lib produces a data URL we can drop into <img>.

@@ -316,13 +316,16 @@ export default function LoginPage() {
               fires regardless of the active tab; tabs only re-label fields
               and the heading so users know which kind of account they're
               signing in with. */}
+          {/* Platform Admin is intentionally hidden from /login — staff use
+              the same form (auth is single-endpoint) but the tab is private,
+              so casual visitors don't see a 'Platform' option. */}
           <div
-            className="grid grid-cols-4 gap-2 mb-5 p-1.5 rounded-xl"
+            className="grid grid-cols-3 gap-2 mb-5 p-1.5 rounded-xl"
             style={{ background: "var(--color-bg-soft, #f1f5f9)" }}
             role="tablist"
             aria-label="Sign in as"
           >
-            {(Object.keys(ROLE_TABS) as RoleTab[]).map((k) => {
+            {(["student", "teacher", "school"] as RoleTab[]).map((k) => {
               const t = ROLE_TABS[k];
               const active = k === roleTab;
               return (
