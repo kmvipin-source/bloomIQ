@@ -4,9 +4,56 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { supabaseBrowser } from "@/lib/supabase/client";
-import { Eye, EyeOff } from "lucide-react";
+import { Eye, EyeOff, GraduationCap, BookOpen, Building2, ShieldCheck } from "lucide-react";
 
 const SCHOOL_DOMAIN = "bloomiq.invalid";
+
+type RoleTab = "student" | "teacher" | "school" | "admin";
+
+// Tab metadata. Auth itself is the same single Supabase call regardless of
+// tab — these strings only customise heading, identifier label, and hints
+// so the user knows which kind of account they're signing in with.
+const ROLE_TABS: Record<RoleTab, {
+  label: string;
+  heading: string;
+  identifierLabel: string;
+  identifierPlaceholder: string;
+  hint: string;
+  Icon: React.ComponentType<{ size?: number }>;
+}> = {
+  student: {
+    label: "Student",
+    heading: "Student sign in",
+    identifierLabel: "Email or username",
+    identifierPlaceholder: "your.email@example.com or your.username",
+    hint: "School student? Use the username your teacher gave you. Independent learner? Sign in with your email.",
+    Icon: GraduationCap,
+  },
+  teacher: {
+    label: "Teacher",
+    heading: "Teacher sign in",
+    identifierLabel: "Work email",
+    identifierPlaceholder: "you@school.edu",
+    hint: "Teachers sign in with the email you used at signup.",
+    Icon: BookOpen,
+  },
+  school: {
+    label: "Admin Head",
+    heading: "Admin Head (Principal) sign in",
+    identifierLabel: "Work email",
+    identifierPlaceholder: "principal@school.edu",
+    hint: "School Admin Heads / Principals — sign in with the email BloomIQ invited.",
+    Icon: Building2,
+  },
+  admin: {
+    label: "Platform",
+    heading: "Platform Admin sign in",
+    identifierLabel: "Email",
+    identifierPlaceholder: "you@bloomiq.example",
+    hint: "BloomIQ staff only.",
+    Icon: ShieldCheck,
+  },
+};
 
 function readNextParam(): string | null {
   if (typeof window === "undefined") return null;
@@ -29,6 +76,9 @@ export default function LoginPage() {
   const [forgotMode, setForgotMode] = useState(false);
   const [forgotBusy, setForgotBusy] = useState(false);
   const [forgotMsg, setForgotMsg] = useState<string | null>(null);
+
+  const [roleTab, setRoleTab] = useState<RoleTab>("student");
+  const tab = ROLE_TABS[roleTab];
 
   async function sendReset() {
     setErr(null);
@@ -123,11 +173,46 @@ export default function LoginPage() {
         </Link>
 
         <div className="card">
-          <h1 className="text-2xl font-bold mb-6">Sign in</h1>
+          {/* Role tabs — purely informational. The same Supabase signin call
+              fires regardless of the active tab; tabs only re-label fields
+              and the heading so users know which kind of account they're
+              signing in with. */}
+          <div
+            className="flex gap-1 mb-5 p-1 rounded-lg"
+            style={{ background: "var(--color-bg-soft, #f1f5f9)" }}
+            role="tablist"
+            aria-label="Sign in as"
+          >
+            {(Object.keys(ROLE_TABS) as RoleTab[]).map((k) => {
+              const t = ROLE_TABS[k];
+              const active = k === roleTab;
+              return (
+                <button
+                  key={k}
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  onClick={() => setRoleTab(k)}
+                  className="flex-1 inline-flex items-center justify-center gap-1.5 text-xs sm:text-sm font-semibold py-2 rounded-md transition"
+                  style={{
+                    background: active ? "var(--color-card, #fff)" : "transparent",
+                    color: active ? "var(--brand-700, #047857)" : "var(--color-fg-soft, #475569)",
+                    boxShadow: active ? "0 1px 3px rgba(0,0,0,0.06)" : undefined,
+                  }}
+                >
+                  <t.Icon size={14} /> {t.label}
+                </button>
+              );
+            })}
+          </div>
+
+          <h1 className="text-2xl font-bold mb-6 flex items-center gap-2">
+            <tab.Icon size={22} /> {tab.heading}
+          </h1>
 
           <form onSubmit={submit} className="space-y-4">
             <div>
-              <label className="label">Email or username</label>
+              <label className="label">{tab.identifierLabel}</label>
               <input
                 className="input"
                 type="text"
@@ -136,7 +221,7 @@ export default function LoginPage() {
                 autoComplete="username"
                 value={identifier}
                 onChange={(e) => { setIdentifier(e.target.value); setForgotMsg(null); }}
-                placeholder="your.email@example.com"
+                placeholder={tab.identifierPlaceholder}
                 suppressHydrationWarning
               />
             </div>
@@ -225,7 +310,7 @@ export default function LoginPage() {
         </div>
 
         <p className="text-xs text-slate-500 text-center mt-4">
-          School student? Use the username your teacher gave you.
+          {tab.hint}
         </p>
       </div>
     </main>
