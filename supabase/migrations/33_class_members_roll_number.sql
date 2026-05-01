@@ -10,6 +10,12 @@
 alter table public.class_members
   add column if not exists roll_number text;
 
+-- Alphanumeric only — keep schools from pasting "12 / Section A" garbage.
+alter table public.class_members drop constraint if exists class_members_roll_alnum;
+alter table public.class_members
+  add constraint class_members_roll_alnum
+  check (roll_number is null or roll_number ~ '^[A-Za-z0-9]+$');
+
 create index if not exists class_members_class_roll_idx
   on public.class_members (class_id, roll_number)
   where roll_number is not null;

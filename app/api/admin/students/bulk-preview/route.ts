@@ -84,6 +84,8 @@ function parseLine(raw: string): { name: string; roll: string | null } {
   return { name, roll: roll.length > 0 ? roll : null };
 }
 
+const ROLL_RE = /^[A-Za-z0-9]+$/;
+
 /**
  * POST /api/admin/students/bulk-preview
  *
@@ -197,6 +199,9 @@ export async function POST(req: Request) {
 
       if (!fullName) {
         return { index: i, raw: String(raw ?? ""), fullName: "", rollNumber, status: "invalid", reason: "Empty line", suggestedUsername: username, suggestedPassword: password, matches: [] };
+      }
+      if (rollNumber !== null && !ROLL_RE.test(rollNumber)) {
+        return { index: i, raw: String(raw), fullName, rollNumber, status: "invalid", reason: `Roll "${rollNumber}" must be alphanumeric`, suggestedUsername: username, suggestedPassword: password, matches: [] };
       }
 
       // Check for dup within the paste itself (case-insensitive normalised).

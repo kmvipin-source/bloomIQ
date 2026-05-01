@@ -31,6 +31,9 @@ export async function POST(req: Request) {
     if (!classId || !studentId) {
       return NextResponse.json({ error: "class_id and student_id are required" }, { status: 400 });
     }
+    if (rollNumber !== null && !/^[A-Za-z0-9]+$/.test(rollNumber)) {
+      return NextResponse.json({ error: "Roll number must be alphanumeric (letters and digits only)." }, { status: 400 });
+    }
 
     // 1) Caller must own the target class
     const { data: cls } = await sb.from("classes").select("id, owner_id").eq("id", classId).single();

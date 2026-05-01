@@ -349,6 +349,7 @@ export default function ClassDetailPage() {
     if (!newName.trim()) return setAddErr("Enter a student name.");
     if (!newUsername.trim()) return setAddErr("Pick a username.");
     if (newPassword.length < 6) return setAddErr("Password must be at least 6 characters.");
+    if (newRoll.trim() && !/^[A-Za-z0-9]+$/.test(newRoll.trim())) return setAddErr("Roll number must be alphanumeric (letters and digits only).");
 
     setAddBusy(true);
     try {
@@ -734,12 +735,13 @@ export default function ClassDetailPage() {
               />
             </div>
             <div>
-              <label className="label">Roll no. <span className="muted text-xs">(optional)</span></label>
+              <label className="label">Roll no. <span className="muted text-xs">(optional, A–Z / 0–9)</span></label>
               <input
                 className="input"
                 value={newRoll}
-                onChange={(e) => setNewRoll(e.target.value)}
-                placeholder="e.g. 12"
+                onChange={(e) => setNewRoll(e.target.value.replace(/[^A-Za-z0-9]/g, ""))}
+                pattern="[A-Za-z0-9]+"
+                placeholder="e.g. 12 or 10A12"
               />
             </div>
             <div>

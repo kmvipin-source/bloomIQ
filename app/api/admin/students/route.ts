@@ -9,6 +9,7 @@ import {
 export const runtime = "nodejs";
 
 const USERNAME_RE = /^[a-z0-9][a-z0-9._-]{2,29}$/i;
+const ROLL_RE = /^[A-Za-z0-9]+$/;
 
 function normaliseName(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, " ").trim();
@@ -78,6 +79,9 @@ export async function POST(req: Request) {
     }
     if (password.length < 6) {
       return NextResponse.json({ error: "Password must be at least 6 characters." }, { status: 400 });
+    }
+    if (rollNumber !== null && !ROLL_RE.test(rollNumber)) {
+      return NextResponse.json({ error: "Roll number must be alphanumeric (letters and digits only)." }, { status: 400 });
     }
 
     const { data: cls } = await sb.from("classes").select("id, owner_id").eq("id", classId).single();

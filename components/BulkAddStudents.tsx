@@ -344,7 +344,8 @@ export default function BulkAddStudents({
                             className="input text-xs font-mono"
                             style={{ width: 72 }}
                             value={r.rollEdit}
-                            onChange={(e) => setRow(r.index, { rollEdit: e.target.value })}
+                            onChange={(e) => setRow(r.index, { rollEdit: e.target.value.replace(/[^A-Za-z0-9]/g, "") })}
+                            pattern="[A-Za-z0-9]+"
                             placeholder="—"
                           />
                         </td>

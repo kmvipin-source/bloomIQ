@@ -10,6 +10,7 @@ export const runtime = "nodejs";
 export const maxDuration = 60;
 
 const USERNAME_RE = /^[a-z0-9][a-z0-9._-]{2,29}$/i;
+const ROLL_RE = /^[A-Za-z0-9]+$/;
 
 type IncomingRow = {
   index: number;
@@ -86,6 +87,10 @@ export async function POST(req: Request) {
         typeof r.rollNumber === "string" && r.rollNumber.trim().length > 0
           ? r.rollNumber.trim()
           : null;
+      if (rollNumber !== null && !ROLL_RE.test(rollNumber)) {
+        outcomes.push({ index: idx, fullName, username: null, password: null, status: "failed", reason: `Roll number "${rollNumber}" must be alphanumeric` });
+        continue;
+      }
 
       if (action === "skip") {
         outcomes.push({ index: idx, fullName, username: null, password: null, status: "skipped", reason: "Skipped by teacher" });
