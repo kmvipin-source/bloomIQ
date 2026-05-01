@@ -7,6 +7,7 @@ import { supabaseBrowser } from "@/lib/supabase/client";
 import { Eye, EyeOff, GraduationCap, BookOpen, Building2, ShieldCheck } from "lucide-react";
 
 const SCHOOL_DOMAIN = "bloomiq.invalid";
+const TOS_VERSION = "2026-04-30";
 
 type RoleTab = "student" | "teacher" | "school" | "admin";
 type StudentMode = "school" | "independent";
@@ -99,6 +100,8 @@ export default function LoginPage() {
   const [forgotBusy, setForgotBusy] = useState(false);
   const [forgotMsg, setForgotMsg] = useState<string | null>(null);
 
+  const [tosOk, setTosOk] = useState(false);
+
   const [roleTab, setRoleTab] = useState<RoleTab>("student");
   const [studentMode, setStudentMode] = useState<StudentMode>("school");
   // When the Student tab is active, the sub-mode (school vs independent)
@@ -143,6 +146,10 @@ export default function LoginPage() {
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setErr(null);
+    if (!tosOk) {
+      setErr("Please tick the box to accept the Terms of Service and Privacy Policy.");
+      return;
+    }
     setBusy(true);
 
     try {
@@ -157,6 +164,17 @@ export default function LoginPage() {
 
       const { data: { user } } = await sb.auth.getUser();
       if (!user) throw new Error("Signed in but session is empty. Please try again.");
+
+      // Stamp ToS acceptance on every sign-in where the version differs
+      // from what's recorded. Best-effort — failure here doesn't block login.
+      const meta = (user.user_metadata || {}) as { tos_version?: string };
+      if (meta.tos_version !== TOS_VERSION) {
+        try {
+          await sb.auth.updateUser({
+            data: { tos_accepted_at: new Date().toISOString(), tos_version: TOS_VERSION },
+          });
+        } catch { /* ignore */ }
+      }
 
       const { data: prof } = await sb
         .from("profiles")
@@ -335,6 +353,26 @@ export default function LoginPage() {
                 {forgotMsg}
               </div>
             )}
+            {/* Explicit click-wrap. Required on every sign-in so consent is
+                refreshed each session and we can re-stamp tos_version onto
+                user_metadata when Terms are updated. */}
+            {!forgotMode && (
+              <label className="flex items-start gap-2 text-xs text-slate-700 leading-relaxed">
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={tosOk}
+                  onChange={(e) => setTosOk(e.target.checked)}
+                  suppressHydrationWarning
+                />
+                <span>
+                  I agree to BloomIQ&rsquo;s{" "}
+                  <Link href="/terms" className="text-emerald-700 hover:underline font-semibold">Terms of Service</Link>{" "}
+                  and{" "}
+                  <Link href="/privacy" className="text-emerald-700 hover:underline font-semibold">Privacy Policy</Link>.
+                </span>
+              </label>
+            )}
             {forgotMode ? (
               <button
                 type="button"
@@ -346,7 +384,7 @@ export default function LoginPage() {
                 {forgotBusy && <span className="spinner" />} Send reset link
               </button>
             ) : (
-              <button className="btn btn-primary w-full" disabled={busy} suppressHydrationWarning>
+              <button className="btn btn-primary w-full" disabled={busy || !tosOk} suppressHydrationWarning>
                 {busy && <span className="spinner" />} Sign in
               </button>
             )}
@@ -356,16 +394,6 @@ export default function LoginPage() {
             New here?{" "}
             <Link href="/signup" className="text-emerald-700 font-semibold">Create an account</Link>
           </div>
-
-          {/* Implicit-acceptance legal note. Reinforces continued ToS
-              acceptance for returning users so we can update Terms with
-              notice and rely on continued sign-in as renewed acceptance. */}
-          <p className="mt-4 text-[11px] text-slate-500 text-center leading-relaxed">
-            By signing in, you agree to our{" "}
-            <Link href="/terms" className="text-emerald-700 hover:underline">Terms of Service</Link>{" "}
-            and{" "}
-            <Link href="/privacy" className="text-emerald-700 hover:underline">Privacy Policy</Link>.
-          </p>
         </div>
 
         <p className="text-xs text-slate-500 text-center mt-4">
