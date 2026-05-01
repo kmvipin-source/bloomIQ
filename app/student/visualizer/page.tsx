@@ -2,18 +2,60 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { AnimatePresence, motion } from "motion/react";
 import { supabaseBrowser } from "@/lib/supabase/client";
 import {
-  Film, Sparkles, ArrowLeft, Loader2, Play, Pause, ChevronLeft, ChevronRight, History, RotateCcw,
+  Film, Sparkles, ArrowLeft, Loader2, Play, Pause,
+  ChevronLeft, ChevronRight, History, RotateCcw,
 } from "lucide-react";
 
-type Frame = { svg: string; caption: string; duration_ms: number };
+// =============================================================================
+// Concept Visualizer — data-driven, motion-powered renderer.
+// -----------------------------------------------------------------------------
+// The API now returns frames with TYPED elements (circle/rect/line/path/...)
+// so Motion can interpolate between frames using shared layoutIds. Older rows
+// in concept_animations are SVG-string-based — we still render those via
+// dangerouslySetInnerHTML for back-compat.
+// =============================================================================
+
+type ElType =
+  | "circle" | "rect" | "ellipse" | "line" | "path" | "polygon" | "text" | "group";
+
+type Element = {
+  id: string;
+  type: ElType;
+  cx?: number; cy?: number; r?: number; rx?: number; ry?: number;
+  x?: number; y?: number; width?: number; height?: number;
+  x1?: number; y1?: number; x2?: number; y2?: number;
+  d?: string; points?: string; text?: string;
+  fill?: string; stroke?: string; strokeWidth?: number; strokeDasharray?: string;
+  opacity?: number; rotate?: number;
+  fontSize?: number; fontWeight?: string;
+  transform?: string;
+  children?: Element[];
+  shadow?: boolean;
+  glow?: boolean;
+  emphasize?: boolean;
+  animate?: "spin" | "bob" | "drift" | "flash" | "wiggle" | "flow" | "orbit";
+};
+
+type Frame = {
+  // New typed shape
+  elements?: Element[];
+  step_label?: string;
+  caption: string;
+  duration_ms: number;
+  // Legacy shape (rows created before migration to typed elements)
+  svg?: string;
+};
+
 type Animation = {
   id: string;
   title: string;
   summary: string | null;
   frames: Frame[];
 };
+
 type HistoryRow = {
   id: string;
   topic: string;
@@ -21,6 +63,334 @@ type HistoryRow = {
   created_at: string;
 };
 
+const SPRING = { type: "spring", stiffness: 120, damping: 18, mass: 0.7 } as const;
+
+// Resolve a fill/stroke string. Accepts plain color OR "color1->color2"
+// gradient syntax. Returns the SVG paint reference + an optional def fragment
+// to insert into <defs>.
+function resolvePaint(
+  raw: string | undefined,
+  refKey: string,
+): { paint: string | undefined; defs: { id: string; from: string; to: string } | null } {
+  if (!raw) return { paint: undefined, defs: null };
+  if (raw.includes("->")) {
+    const [from, to] = raw.split("->").map((s) => s.trim());
+    if (from && to) {
+      const id = `vz-grad-${refKey}`;
+      return { paint: `url(#${id})`, defs: { id, from, to } };
+    }
+  }
+  return { paint: raw, defs: null };
+}
+
+const PULSE_ANIMATE = {
+  scale: [1, 1.07, 1],
+  opacity: [1, 0.92, 1],
+};
+const PULSE_TRANSITION = { duration: 1.6, repeat: Infinity, ease: "easeInOut" as const };
+
+// Per-frame ambient motion presets. Each returns a (animate, transition)
+// pair that loops while the frame is on screen.
+function presetMotion(name: NonNullable<Element["animate"]>): {
+  animate: Record<string, number[]>;
+  transition: { duration: number; repeat: typeof Infinity; ease: "easeInOut" | "linear" };
+} {
+  switch (name) {
+    case "spin":
+      return { animate: { rotate: [0, 360] }, transition: { duration: 6, repeat: Infinity, ease: "linear" } };
+    case "bob":
+      return { animate: { y: [0, -8, 0] }, transition: { duration: 1.8, repeat: Infinity, ease: "easeInOut" } };
+    case "drift":
+      return { animate: { x: [0, 12, 0, -12, 0] }, transition: { duration: 5, repeat: Infinity, ease: "easeInOut" } };
+    case "flash":
+      return { animate: { opacity: [1, 0.4, 1] }, transition: { duration: 1.2, repeat: Infinity, ease: "easeInOut" } };
+    case "wiggle":
+      return { animate: { rotate: [-3, 3, -3] }, transition: { duration: 0.6, repeat: Infinity, ease: "easeInOut" } };
+    case "flow":
+      return { animate: { strokeDashoffset: [0, -32] }, transition: { duration: 1.5, repeat: Infinity, ease: "linear" } };
+    case "orbit":
+      return {
+        animate: { x: [0, 8, 0, -8, 0], y: [0, -8, 0, 8, 0] },
+        transition: { duration: 4, repeat: Infinity, ease: "linear" },
+      };
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Element renderer — emits a single motion SVG node for one element. Shared
+// layoutId across frames is what lets shapes tween between keyframes.
+// -----------------------------------------------------------------------------
+function ElementNode({
+  el,
+  frameKey,
+  registerDef,
+}: {
+  el: Element;
+  frameKey: string;
+  registerDef: (def: { id: string; from: string; to: string }) => void;
+}) {
+  const fillRef = resolvePaint(el.fill, frameKey + "-" + el.id + "-f");
+  const strokeRef = resolvePaint(el.stroke, frameKey + "-" + el.id + "-s");
+  if (fillRef.defs) registerDef(fillRef.defs);
+  if (strokeRef.defs) registerDef(strokeRef.defs);
+
+  // Origin for rotate / pulse. SVG transform-origin must be set in pixel units.
+  const origin = `${el.cx ?? el.x ?? 400}px ${el.cy ?? el.y ?? 240}px`;
+
+  const filters: string[] = [];
+  if (el.shadow) filters.push("url(#vz-shadow)");
+  if (el.glow) filters.push("url(#vz-glow)");
+  const filterAttr = filters.length ? filters.join(" ") : undefined;
+
+  // Build the loop animation. Emphasize wins (it's the focal pulse), else
+  // the per-element preset, else no loop and we just use the layout SPRING.
+  let loopAnimate: Record<string, number[]> | undefined;
+  let loopTransition: object | undefined;
+  if (el.emphasize) {
+    loopAnimate = PULSE_ANIMATE;
+    loopTransition = PULSE_TRANSITION;
+  } else if (el.animate) {
+    const m = presetMotion(el.animate);
+    loopAnimate = m.animate;
+    loopTransition = m.transition;
+    // "flow" requires a stroke-dasharray to be visible; supply a sensible
+    // default if the AI didn't.
+    if (el.animate === "flow" && !el.strokeDasharray) {
+      // mutate a copy via the spread below — no real mutation here
+    }
+  }
+
+  const common = {
+    fill: fillRef.paint ?? "none",
+    stroke: strokeRef.paint,
+    strokeWidth: el.strokeWidth,
+    strokeDasharray:
+      el.strokeDasharray ?? (el.animate === "flow" ? "8 6" : undefined),
+    opacity: el.opacity ?? 1,
+    filter: filterAttr,
+    style: { transformOrigin: origin, transformBox: "fill-box" as const },
+    animate: loopAnimate,
+    transition: loopTransition ?? SPRING,
+  };
+
+  const layoutKey = el.id;
+  const transform = el.rotate
+    ? `rotate(${el.rotate} ${el.cx ?? el.x ?? 400} ${el.cy ?? el.y ?? 240})`
+    : el.transform;
+
+  switch (el.type) {
+    case "circle":
+      return (
+        <motion.circle
+          layoutId={layoutKey}
+          key={frameKey + ":" + layoutKey}
+          cx={el.cx ?? 0}
+          cy={el.cy ?? 0}
+          r={el.r ?? 8}
+          {...common}
+        />
+      );
+    case "rect":
+      return (
+        <motion.rect
+          layoutId={layoutKey}
+          key={frameKey + ":" + layoutKey}
+          x={el.x ?? 0}
+          y={el.y ?? 0}
+          width={el.width ?? 0}
+          height={el.height ?? 0}
+          rx={el.rx}
+          ry={el.ry}
+          {...common}
+        />
+      );
+    case "ellipse":
+      return (
+        <motion.ellipse
+          layoutId={layoutKey}
+          key={frameKey + ":" + layoutKey}
+          cx={el.cx ?? 0}
+          cy={el.cy ?? 0}
+          rx={el.rx ?? 0}
+          ry={el.ry ?? 0}
+          {...common}
+        />
+      );
+    case "line":
+      return (
+        <motion.line
+          layoutId={layoutKey}
+          key={frameKey + ":" + layoutKey}
+          x1={el.x1 ?? 0}
+          y1={el.y1 ?? 0}
+          x2={el.x2 ?? 0}
+          y2={el.y2 ?? 0}
+          {...common}
+        />
+      );
+    case "path":
+      return (
+        <motion.path
+          layoutId={layoutKey}
+          key={frameKey + ":" + layoutKey}
+          d={el.d || ""}
+          {...common}
+        />
+      );
+    case "polygon":
+      return (
+        <motion.polygon
+          layoutId={layoutKey}
+          key={frameKey + ":" + layoutKey}
+          points={el.points || ""}
+          {...common}
+        />
+      );
+    case "text":
+      return (
+        <motion.text
+          layoutId={layoutKey}
+          key={frameKey + ":" + layoutKey}
+          x={el.x ?? 0}
+          y={el.y ?? 0}
+          fontSize={el.fontSize ?? 14}
+          fontWeight={el.fontWeight ?? "600"}
+          fill={fillRef.paint ?? "#0f172a"}
+          opacity={el.opacity ?? 1}
+          filter={filterAttr}
+          style={{ transformOrigin: origin, transformBox: "fill-box" as const, paintOrder: "stroke" }}
+          stroke={strokeRef.paint}
+          strokeWidth={el.strokeWidth ?? (el.stroke ? 3 : 0)}
+          animate={el.emphasize ? PULSE_ANIMATE : undefined}
+          transition={el.emphasize ? PULSE_TRANSITION : SPRING}
+        >
+          {el.text}
+        </motion.text>
+      );
+    case "group":
+      return (
+        <motion.g
+          layoutId={layoutKey}
+          key={frameKey + ":" + layoutKey}
+          transform={transform}
+          opacity={el.opacity ?? 1}
+          transition={SPRING}
+        >
+          {(el.children || []).map((c) => (
+            <ElementNode key={c.id} el={c} frameKey={frameKey + "/" + el.id} registerDef={registerDef} />
+          ))}
+        </motion.g>
+      );
+  }
+}
+
+function FrameRenderer({ frame, idx }: { frame: Frame; idx: number }) {
+  // Legacy SVG-string path — render as before.
+  if (!frame.elements && frame.svg) {
+    return (
+      <div
+        className="absolute inset-0"
+        dangerouslySetInnerHTML={{ __html: stripSizeAttrs(frame.svg) }}
+      />
+    );
+  }
+
+  const els = frame.elements || [];
+
+  // Walk all elements (incl. group children) and collect any auto-gradient
+  // defs they want; render them once at the top of <defs>.
+  const gradDefs = new Map<string, { from: string; to: string }>();
+  function collect(arr: Element[], prefix: string) {
+    for (const el of arr) {
+      const fillR = resolvePaint(el.fill, prefix + "-" + el.id + "-f");
+      const strR  = resolvePaint(el.stroke, prefix + "-" + el.id + "-s");
+      if (fillR.defs) gradDefs.set(fillR.defs.id, { from: fillR.defs.from, to: fillR.defs.to });
+      if (strR.defs) gradDefs.set(strR.defs.id, { from: strR.defs.from, to: strR.defs.to });
+      if (el.type === "group" && el.children) collect(el.children, prefix + "/" + el.id);
+    }
+  }
+  collect(els, String(idx));
+
+  // No-op def collector for ElementNode (defs already collected above and
+  // rendered in <defs>; ElementNode only needs to know how to reference them).
+  const noopRegister = () => {};
+
+  return (
+    <motion.svg
+      key={`frame-${idx}`}
+      viewBox="0 0 800 480"
+      className="absolute inset-0"
+      style={{ width: "100%", height: "100%", display: "block" }}
+      preserveAspectRatio="xMidYMid meet"
+    >
+      <defs>
+        {/* Page background — soft vertical wash plus a faint dot grid for depth. */}
+        <linearGradient id="vz-bg" x1="0" x2="0" y1="0" y2="1">
+          <stop offset="0" stopColor="#fdf4ff" />
+          <stop offset="1" stopColor="#f1f5f9" />
+        </linearGradient>
+        <pattern id="vz-grid" x="0" y="0" width="40" height="40" patternUnits="userSpaceOnUse">
+          <circle cx="1" cy="1" r="1" fill="#cbd5e1" opacity="0.45" />
+        </pattern>
+
+        {/* Drop shadow + outer glow for elements that opt in. */}
+        <filter id="vz-shadow" x="-20%" y="-20%" width="140%" height="140%">
+          <feGaussianBlur in="SourceAlpha" stdDeviation="3" />
+          <feOffset dx="0" dy="2" result="off" />
+          <feComponentTransfer><feFuncA type="linear" slope="0.35" /></feComponentTransfer>
+          <feMerge>
+            <feMergeNode />
+            <feMergeNode in="SourceGraphic" />
+          </feMerge>
+        </filter>
+        <filter id="vz-glow" x="-50%" y="-50%" width="200%" height="200%">
+          <feGaussianBlur stdDeviation="6" result="blur" />
+          <feMerge>
+            <feMergeNode in="blur" />
+            <feMergeNode in="SourceGraphic" />
+          </feMerge>
+        </filter>
+
+        {/* Auto-gradient defs collected from elements. */}
+        {[...gradDefs.entries()].map(([id, g]) => (
+          <linearGradient key={id} id={id} x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0" stopColor={g.from} />
+            <stop offset="1" stopColor={g.to} />
+          </linearGradient>
+        ))}
+      </defs>
+
+      {/* Background layers */}
+      <rect x="0" y="0" width="800" height="480" fill="url(#vz-bg)" />
+      <rect x="0" y="0" width="800" height="480" fill="url(#vz-grid)" />
+
+      <AnimatePresence mode="sync">
+        {els.map((el) => (
+          <ElementNode
+            key={el.id}
+            el={el}
+            frameKey={String(idx)}
+            registerDef={noopRegister}
+          />
+        ))}
+      </AnimatePresence>
+    </motion.svg>
+  );
+}
+
+function stripSizeAttrs(svg: string): string {
+  if (!svg.startsWith("<svg")) return svg;
+  return svg.replace(/^<svg([^>]*)>/, (_m, attrs: string) => {
+    const cleaned = String(attrs)
+      .replace(/\swidth\s*=\s*"[^"]*"/gi, "")
+      .replace(/\sheight\s*=\s*"[^"]*"/gi, "");
+    return `<svg${cleaned} style="width:100%;height:100%;display:block">`;
+  });
+}
+
+// -----------------------------------------------------------------------------
+// Page component
+// -----------------------------------------------------------------------------
 export default function VisualizerPage() {
   const [topic, setTopic] = useState("");
   const [busy, setBusy] = useState(false);
@@ -158,16 +528,10 @@ export default function VisualizerPage() {
     setPlaying(true);
   }
 
-  // Six pre-baked Ken-Burns shots that cycle through the frames so the camera
-  // never moves the same way twice in a row. Each is from->to transform pair.
-  const SHOTS = [
-    { from: "scale(1.00) translate(0%, 0%)",   to: "scale(1.06) translate(-2%, -1%)" },
-    { from: "scale(1.06) translate(-1%, -1%)", to: "scale(1.00) translate(0%, 0%)"   },
-    { from: "scale(1.00) translate(-2%, 0%)",  to: "scale(1.05) translate(2%, 0%)"   },
-    { from: "scale(1.05) translate(0%, -1%)",  to: "scale(1.00) translate(0%, 1%)"   },
-    { from: "scale(1.00) translate(0%, -1%)",  to: "scale(1.04) translate(-1%, 1%)"  },
-    { from: "scale(1.03) translate(1%, 0%)",   to: "scale(1.00) translate(-1%, 0%)"  },
-  ];
+  const frame = animation?.frames[frameIdx];
+  const stepLabel =
+    frame?.step_label ||
+    (animation ? `Step ${frameIdx + 1} of ${animation.frames.length}` : "");
 
   return (
     <div className="max-w-3xl mx-auto fade-in">
@@ -182,7 +546,7 @@ export default function VisualizerPage() {
         <div className="flex-1">
           <h1 className="h1">Concept Visualizer</h1>
           <p className="muted mt-1">
-            Type any concept and watch it animated step by step. Best for the things that don&apos;t click from words alone - biology cycles, mechanics diagrams, electric circuits, chemistry mechanisms.
+            Type any concept and watch it animated step by step. Best for the things that don&apos;t click from words alone — biology cycles, mechanics diagrams, electric circuits, chemistry mechanisms.
           </p>
         </div>
       </div>
@@ -204,84 +568,88 @@ export default function VisualizerPage() {
         </button>
       </div>
 
-      {animation && animation.frames.length > 0 && (() => {
-        const dur = animation.frames[frameIdx]?.duration_ms || 4500;
-        const shot = SHOTS[frameIdx % SHOTS.length];
-        return (
-          <div className="card mt-4">
-            <div className="text-xs uppercase tracking-wide font-semibold text-fuchsia-700">Now playing</div>
-            <h2 className="font-bold text-lg mt-0.5">{animation.title}</h2>
-
-            <style key={`anim-${frameIdx}-${dur}`}>{`
-              .vz-active { animation: vz-burns ${dur}ms cubic-bezier(.4,0,.2,1) both; transform-origin: 50% 50%; }
-              .vz-frame  { animation: vz-frame-in 650ms cubic-bezier(.2,.7,.2,1) both; }
-              @keyframes vz-burns {
-                from { transform: ${shot.from}; }
-                to   { transform: ${shot.to};   }
-              }
-              @keyframes vz-frame-in {
-                from { opacity: 0; filter: blur(4px); }
-                to   { opacity: 1; filter: blur(0);   }
-              }
-            `}</style>
-
-            <div className="relative mt-3 rounded-lg border border-slate-200 bg-white overflow-hidden" style={{ aspectRatio: "5 / 3" }}>
-              {animation.frames.map((f, i) => (
-                <div
-                  key={i}
-                  className={`absolute inset-0 transition-opacity duration-500 ${i === frameIdx ? "vz-active vz-frame" : ""}`}
-                  style={{ opacity: i === frameIdx ? 1 : 0, pointerEvents: i === frameIdx ? "auto" : "none" }}
-                  aria-hidden={i !== frameIdx}
-                  dangerouslySetInnerHTML={{ __html: wrapResponsiveSvg(f.svg) }}
-                />
-              ))}
-
-              <div className="absolute top-0 left-0 right-0 h-1 bg-slate-100">
-                <div
-                  className="h-full bg-fuchsia-500 transition-all"
-                  style={{ width: `${Math.round(progress * 100)}%` }}
-                />
-              </div>
-
-              <div className="absolute top-2 right-2 text-[10px] uppercase tracking-wide font-bold bg-slate-900/70 text-white rounded-full px-2 py-0.5">
-                {frameIdx + 1} / {animation.frames.length}
-              </div>
+      {animation && animation.frames.length > 0 && frame && (
+        <div className="card mt-4">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <div className="text-xs uppercase tracking-wide font-semibold text-fuchsia-700">Now playing</div>
+              <h2 className="font-bold text-lg mt-0.5">{animation.title}</h2>
             </div>
-
-            <div className="mt-3 rounded-lg bg-slate-50 border border-slate-200 px-3 py-2 text-sm text-slate-800 min-h-[3rem]">
-              {animation.frames[frameIdx]?.caption || ""}
-            </div>
-
-            <div className="mt-3 flex items-center gap-2 flex-wrap">
-              <button className="btn btn-secondary" onClick={prev} disabled={frameIdx === 0}>
-                <ChevronLeft size={14} /> Previous
-              </button>
-              <button className="btn btn-primary" onClick={togglePlay}>
-                {playing ? <><Pause size={14} /> Pause</> : <><Play size={14} /> Play</>}
-              </button>
-              <button className="btn btn-secondary" onClick={next} disabled={frameIdx >= animation.frames.length - 1}>
-                Next <ChevronRight size={14} />
-              </button>
-              <button className="btn btn-ghost" onClick={restart}>
-                <RotateCcw size={14} /> Restart
-              </button>
-            </div>
-
-            {animation.summary && (
-              <div className="mt-4">
-                <div className="text-xs uppercase tracking-wide font-semibold text-slate-500 mb-1">Key idea</div>
-                <p className="text-sm text-slate-700">{animation.summary}</p>
-              </div>
-            )}
+            <span className="text-xs font-semibold rounded-full bg-fuchsia-50 text-fuchsia-800 border border-fuchsia-200 px-2.5 py-1">
+              {stepLabel}
+            </span>
           </div>
-        );
-      })()}
+
+          <div
+            className="relative mt-3 rounded-lg border border-slate-200 bg-white overflow-hidden"
+            style={{ aspectRatio: "5 / 3" }}
+          >
+            <FrameRenderer frame={frame} idx={frameIdx} />
+
+            <div className="absolute top-0 left-0 right-0 h-1 bg-slate-100">
+              <div
+                className="h-full bg-fuchsia-500 transition-all"
+                style={{ width: `${Math.round(progress * 100)}%` }}
+              />
+            </div>
+
+            <div className="absolute top-2 right-2 text-[10px] uppercase tracking-wide font-bold bg-slate-900/70 text-white rounded-full px-2 py-0.5">
+              {frameIdx + 1} / {animation.frames.length}
+            </div>
+          </div>
+
+          <div className="mt-3 rounded-lg bg-slate-50 border border-slate-200 px-3 py-2 text-sm text-slate-800 min-h-[3rem]">
+            {frame.caption || ""}
+          </div>
+
+          <div className="mt-3 flex items-center gap-2 flex-wrap">
+            <button className="btn btn-secondary" onClick={prev} disabled={frameIdx === 0}>
+              <ChevronLeft size={14} /> Previous
+            </button>
+            <button className="btn btn-primary" onClick={togglePlay}>
+              {playing ? <><Pause size={14} /> Pause</> : <><Play size={14} /> Play</>}
+            </button>
+            <button className="btn btn-secondary" onClick={next} disabled={frameIdx >= animation.frames.length - 1}>
+              Next <ChevronRight size={14} />
+            </button>
+            <button className="btn btn-ghost" onClick={restart}>
+              <RotateCcw size={14} /> Restart
+            </button>
+          </div>
+
+          {/* Step thumbnails — quick jump */}
+          <div className="mt-3 grid grid-cols-5 gap-1.5">
+            {animation.frames.map((_, i) => (
+              <button
+                key={i}
+                type="button"
+                onClick={() => { setPlaying(false); setFrameIdx(i); }}
+                className="text-[10px] font-semibold rounded-md py-1.5 px-1 transition border"
+                style={{
+                  borderColor: i === frameIdx ? "#a21caf" : "#e2e8f0",
+                  background: i === frameIdx ? "#fdf4ff" : "transparent",
+                  color: i === frameIdx ? "#86198f" : "#475569",
+                }}
+              >
+                {i + 1}
+              </button>
+            ))}
+          </div>
+
+          {animation.summary && (
+            <div className="mt-4">
+              <div className="text-xs uppercase tracking-wide font-semibold text-slate-500 mb-1">Key idea</div>
+              <p className="text-sm text-slate-700">{animation.summary}</p>
+            </div>
+          )}
+        </div>
+      )}
 
       <h2 className="h2 mt-10 mb-3 flex items-center gap-2">
         <History size={18} /> Recent animations
       </h2>
       {history.length === 0 ? (
-        <div className="card text-center py-8 muted text-sm">No animations yet - try one above.</div>
+        <div className="card text-center py-8 muted text-sm">No animations yet — try one above.</div>
       ) : (
         <div className="space-y-2">
           {history.map((h) => (
@@ -303,16 +671,4 @@ export default function VisualizerPage() {
       )}
     </div>
   );
-}
-
-// Strip width/height from the AI-generated <svg> opening tag so the SVG
-// scales to fill the player container via its viewBox.
-function wrapResponsiveSvg(svg: string): string {
-  if (!svg.startsWith("<svg")) return svg;
-  return svg.replace(/^<svg([^>]*)>/, (_m, attrs: string) => {
-    const cleaned = String(attrs)
-      .replace(/\swidth\s*=\s*"[^"]*"/gi, "")
-      .replace(/\sheight\s*=\s*"[^"]*"/gi, "");
-    return `<svg${cleaned} style="width:100%;height:100%;display:block">`;
-  });
 }

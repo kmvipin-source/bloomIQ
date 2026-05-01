@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getBearer, supabaseServer } from "@/lib/supabase/server";
+import { getBearer, supabaseServer, supabaseAdmin } from "@/lib/supabase/server";
 import { BLOOM_LEVELS, type BloomLevel, isBloomLevel } from "@/lib/bloom";
 
 export const runtime = "nodejs";
@@ -165,7 +165,15 @@ async function buildDrill(req: Request) {
         .in("role", ["teacher", "super_teacher"]);
       teacherIds = ((teachers as Array<{ id: string }>) || []).map((t) => t.id);
     }
-    let q = sb
+    // Cross-owner read of approved questions in the student's school. After
+    // tightening RLS on question_bank to require quiz_questions reachability,
+    // the user-token client can no longer see questions that aren't already
+    // linked to one of their assigned quizzes. This drill is allowed to mine
+    // the broader teacher pool (it's the whole point), so use the admin
+    // client. The school filter below still scopes to teachers in the
+    // student's school; cross-school exposure is not introduced here.
+    const adminQ = supabaseAdmin();
+    let q = adminQ
       .from("question_bank")
       .select("id, stem, options, bloom_level, topic, owner_id")
       .eq("status", "approved")

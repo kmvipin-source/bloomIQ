@@ -26,23 +26,30 @@ export default function TakeQuiz() {
   useEffect(() => {
     (async () => {
       const sb = supabaseBrowser();
+      const { data: { session } } = await sb.auth.getSession();
       const { data: { user } } = await sb.auth.getUser();
-      if (!user) { setLoadErr("Not signed in."); return; }
+      if (!user || !session) { setLoadErr("Not signed in."); return; }
 
-      const { data: q, error: qErr } = await sb.from("quizzes").select("*").eq("code", code).maybeSingle();
-      if (qErr) { setLoadErr(`Could not load quiz: ${qErr.message}`); return; }
-      if (!q) { setLoadErr(`No quiz found with code "${code}". It may have been deleted, or the code is wrong.`); return; }
-      setQuiz(q as Quiz);
-
-      const { data: qq, error: qqErr } = await sb
-        .from("quiz_questions")
-        .select("position, question_bank!inner(*)")
-        .eq("quiz_id", q.id)
-        .order("position", { ascending: true });
-      if (qqErr) { setLoadErr(`Could not load questions: ${qqErr.message}`); return; }
-      const qs: Question[] = ((qq as unknown) as Array<{ question_bank: Question }> | null)?.map((r) => r.question_bank) || [];
+      // Quiz + questions come from the server-mediated endpoint (admin
+      // client behind it). Direct table reads here used to require open
+      // RLS on `quizzes` / `quiz_questions` / `question_bank` for every
+      // authenticated user — this closes that exposure.
+      const r = await fetch(`/api/student/quiz-by-code?code=${encodeURIComponent(code)}`, {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      if (r.status === 404) { setLoadErr(`No quiz found with code "${code}". It may have been deleted, or the code is wrong.`); return; }
+      if (r.status === 410) { setLoadErr("This quiz is closed."); return; }
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        setLoadErr(`Could not load quiz: ${j?.error || r.status}`);
+        return;
+      }
+      const j = await r.json();
+      const q = j.quiz as Quiz;
+      const qs: Question[] = (j.questions as Question[]) || [];
+      setQuiz(q);
       if (qs.length === 0) {
-        setLoadErr(`This quiz has no questions attached. (Generation may have failed mid-way.)`);
+        setLoadErr("This quiz has no questions attached. (Generation may have failed mid-way.)");
         return;
       }
       setQuestions(qs);

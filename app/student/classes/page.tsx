@@ -43,18 +43,17 @@ export default function StudentClassesPage() {
       const { data: { user } } = await sb.auth.getUser();
       if (!user) throw new Error("Not signed in");
 
-      const { data: cls } = await sb.from("classes").select("id, name").eq("join_code", c).maybeSingle();
-      if (!cls) throw new Error("No class found with that code.");
-
-      const { error } = await sb.from("class_members").insert({
-        class_id: cls.id,
-        student_id: user.id,
+      const { data: { session } } = await sb.auth.getSession();
+      if (!session) throw new Error("Please sign in again.");
+      const r = await fetch("/api/student/join-class", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ code: c }),
       });
-      // Ignore PK conflict (already a member) — treat as success
-      if (error && !error.message.toLowerCase().includes("duplicate")) {
-        throw error;
-      }
-      setInfo(`Joined ${cls.name}.`);
+      const j = await r.json();
+      if (r.status === 404) throw new Error(j?.error || "No class found with that code.");
+      if (!r.ok) throw new Error(j?.error || "Could not join class");
+      setInfo(j.alreadyMember ? `Already in ${j.class?.name}.` : `Joined ${j.class?.name}.`);
       setCode("");
       await load();
     } catch (e) {

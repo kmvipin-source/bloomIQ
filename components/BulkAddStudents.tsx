@@ -14,6 +14,7 @@ type PreviewRow = {
   index: number;
   raw: string;
   fullName: string;
+  rollNumber: string | null;
   status: "ready" | "duplicate" | "duplicate-in-this-class" | "duplicate-in-paste" | "invalid";
   reason?: string;
   suggestedUsername: string;
@@ -27,6 +28,7 @@ type EditableRow = PreviewRow & {
   password: string;
   action: Action;
   existingId?: string | null;
+  rollEdit: string;
 };
 
 type Outcome = {
@@ -120,6 +122,7 @@ export default function BulkAddStudents({
           : p.status === "duplicate-in-paste" ? "skip"
           : "skip",
         existingId: p.matches[0]?.id || null,
+        rollEdit: p.rollNumber || "",
       }));
       setRows(editable);
       setStage("preview");
@@ -157,6 +160,7 @@ export default function BulkAddStudents({
         password: r.password,
         action: r.action,
         existingId: r.existingId,
+        rollNumber: r.rollEdit.trim() || null,
       }));
       const r = await fetch("/api/admin/students/bulk-create", {
         method: "POST",
@@ -275,12 +279,12 @@ export default function BulkAddStudents({
           {stage === "paste" && (
             <>
               <p className="text-sm muted mb-2">
-                Paste one student name per line. We&rsquo;ll auto-generate a username and password for each, and check for duplicates against your school before creating anything.
+                Paste one student per line. Roll number is optional — separate it from the name with a comma, tab, or pipe (<code className="px-1 text-[11px] bg-slate-100 rounded">Priya Sharma, 12</code>). We&rsquo;ll auto-generate a username + password for each and check for duplicates before creating anything.
               </p>
               <textarea
                 className="input font-mono text-sm"
                 rows={10}
-                placeholder={"Priya Sharma\nAnand Kumar\nJoseph Lee\n..."}
+                placeholder={"Priya Sharma, 12\nAnand Kumar, 13\nJoseph Lee\n..."}
                 value={text}
                 onChange={(e) => setText(e.target.value)}
               />
@@ -308,6 +312,7 @@ export default function BulkAddStudents({
                     <tr>
                       <th className="px-2 py-2 text-left w-8">#</th>
                       <th className="px-2 py-2 text-left">Name</th>
+                      <th className="px-2 py-2 text-left w-20">Roll</th>
                       <th className="px-2 py-2 text-left">Username</th>
                       <th className="px-2 py-2 text-left">Password</th>
                       <th className="px-2 py-2 text-left w-32">Action</th>
@@ -333,6 +338,16 @@ export default function BulkAddStudents({
                           {r.status === "invalid" && (
                             <div className="text-[10px] text-red-700">{r.reason}</div>
                           )}
+                        </td>
+                        <td className="px-2 py-2 align-top">
+                          <input
+                            className="input text-xs font-mono"
+                            style={{ width: 72 }}
+                            value={r.rollEdit}
+                            onChange={(e) => setRow(r.index, { rollEdit: e.target.value.replace(/[^A-Za-z0-9]/g, "") })}
+                            pattern="[A-Za-z0-9]+"
+                            placeholder="—"
+                          />
                         </td>
                         <td className="px-2 py-2 align-top">
                           {r.action === "create" ? (

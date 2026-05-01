@@ -2,11 +2,82 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { supabaseBrowser } from "@/lib/supabase/client";
-import { Eye, EyeOff } from "lucide-react";
+import { Eye, EyeOff, GraduationCap, BookOpen, Building2, ShieldCheck, KeyRound } from "lucide-react";
+import LoginCaptcha, { recordLoginFailure, clearLoginFailures, captchaRequired } from "@/components/LoginCaptcha";
 
 const SCHOOL_DOMAIN = "bloomiq.invalid";
+const TOS_VERSION = "2026-04-30";
+
+type RoleTab = "student" | "teacher" | "school" | "admin";
+type StudentMode = "school" | "independent";
+
+type TabMeta = {
+  label: string;
+  heading: string;
+  identifierLabel: string;
+  identifierPlaceholder: string;
+  hint: string;
+  Icon: React.ComponentType<{ size?: number }>;
+};
+
+// Auth call is identical for every tab + mode — these strings only customise
+// heading, identifier label, and hints so users know which account type they
+// are signing in with.
+const ROLE_TABS: Record<RoleTab, TabMeta> = {
+  student: {
+    label: "Student",
+    heading: "Student sign in",
+    identifierLabel: "Email or username",
+    identifierPlaceholder: "your.email@example.com or your.username",
+    hint: "Pick School student if your teacher gave you a username, or Independent if you signed up yourself with email.",
+    Icon: GraduationCap,
+  },
+  teacher: {
+    label: "Teacher",
+    heading: "Teacher sign in",
+    identifierLabel: "Work email",
+    identifierPlaceholder: "you@school.edu",
+    hint: "Teachers sign in with the email you used at signup.",
+    Icon: BookOpen,
+  },
+  school: {
+    label: "Admin",
+    heading: "Admin Head (Principal) sign in",
+    identifierLabel: "Work email",
+    identifierPlaceholder: "principal@school.edu",
+    hint: "School Admin Heads / Principals — sign in with the email BloomIQ invited.",
+    Icon: Building2,
+  },
+  admin: {
+    label: "Platform",
+    heading: "Platform Admin sign in",
+    identifierLabel: "Email",
+    identifierPlaceholder: "you@bloomiq.example",
+    hint: "BloomIQ staff only.",
+    Icon: ShieldCheck,
+  },
+};
+
+const STUDENT_MODES: Record<StudentMode, TabMeta> = {
+  school: {
+    label: "School student",
+    heading: "School student sign in",
+    identifierLabel: "Username",
+    identifierPlaceholder: "the username your teacher gave you",
+    hint: "Created by your teacher. No email needed — just the username and password they shared.",
+    Icon: GraduationCap,
+  },
+  independent: {
+    label: "Independent student",
+    heading: "Independent student sign in",
+    identifierLabel: "Email",
+    identifierPlaceholder: "you@example.com",
+    hint: "Self-signup learner with a personal subscription. Sign in with the email you used at signup.",
+    Icon: GraduationCap,
+  },
+};
 
 function readNextParam(): string | null {
   if (typeof window === "undefined") return null;
@@ -29,6 +100,27 @@ export default function LoginPage() {
   const [forgotMode, setForgotMode] = useState(false);
   const [forgotBusy, setForgotBusy] = useState(false);
   const [forgotMsg, setForgotMsg] = useState<string | null>(null);
+
+  const [tosOk, setTosOk] = useState(false);
+
+  // Adaptive bot deterrent. Set true the moment we hit FAIL_THRESHOLD on
+  // this identifier; user must solve a one-shot math puzzle to re-enable.
+  const [needCaptcha, setNeedCaptcha] = useState(false);
+  const [captchaPassed, setCaptchaPassed] = useState(false);
+
+  // 2FA state. After password succeeds, if the user has a verified TOTP
+  // factor, we pause and ask for the 6-digit code.
+  const [mfaPhase, setMfaPhase] = useState<"idle" | "needs_code">("idle");
+  const [mfaFactorId, setMfaFactorId] = useState<string | null>(null);
+  const [mfaChallengeId, setMfaChallengeId] = useState<string | null>(null);
+  const [mfaCode, setMfaCode] = useState("");
+  const [mfaBusy, setMfaBusy] = useState(false);
+
+  const [roleTab, setRoleTab] = useState<RoleTab>("student");
+  const [studentMode, setStudentMode] = useState<StudentMode>("school");
+  // When the Student tab is active, the sub-mode (school vs independent)
+  // overrides the generic Student labels with the more specific ones.
+  const tab: TabMeta = roleTab === "student" ? STUDENT_MODES[studentMode] : ROLE_TABS[roleTab];
 
   async function sendReset() {
     setErr(null);
@@ -65,9 +157,56 @@ export default function LoginPage() {
     } catch { /* best-effort */ }
   }
 
+  async function finalizeSignIn(): Promise<void> {
+    const sb = supabaseBrowser();
+    const { data: { user } } = await sb.auth.getUser();
+    if (!user) throw new Error("Signed in but session is empty. Please try again.");
+
+    const meta = (user.user_metadata || {}) as { tos_version?: string };
+    if (meta.tos_version !== TOS_VERSION) {
+      try {
+        await sb.auth.updateUser({
+          data: { tos_accepted_at: new Date().toISOString(), tos_version: TOS_VERSION },
+        });
+      } catch { /* ignore */ }
+    }
+
+    const { data: prof } = await sb
+      .from("profiles")
+      .select("role, is_school_student, platform_admin")
+      .eq("id", user.id)
+      .single();
+
+    const { data: { session } } = await sb.auth.getSession();
+    if (session) audit(session.access_token);
+
+    const isIndependentStudent =
+      prof?.role === "student" && !prof?.is_school_student;
+    if (isIndependentStudent) {
+      try { await sb.auth.signOut({ scope: "others" }); } catch { /* ignore */ }
+    }
+
+    const next = readNextParam();
+    const home =
+      prof?.platform_admin ? "/admin/onboard-school" :
+      prof?.role === "teacher" ? "/teacher" :
+      prof?.role === "super_teacher" ? "/school" :
+      "/student";
+    clearLoginFailures(identifier);
+    router.push(next || home);
+  }
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setErr(null);
+    if (!tosOk) {
+      setErr("Please tick the box to accept the Terms of Service and Privacy Policy.");
+      return;
+    }
+    if (needCaptcha && !captchaPassed) {
+      setErr("Please solve the puzzle to continue.");
+      return;
+    }
     setBusy(true);
 
     try {
@@ -78,56 +217,91 @@ export default function LoginPage() {
       const email = raw.includes("@") ? raw : `${raw.toLowerCase()}@${SCHOOL_DOMAIN}`;
 
       const { error } = await sb.auth.signInWithPassword({ email, password });
-      if (error) throw new Error("Email/username or password is incorrect.");
+      if (error) {
+        const fails = recordLoginFailure(raw);
+        if (captchaRequired(raw)) { setNeedCaptcha(true); setCaptchaPassed(false); }
+        throw new Error(
+          fails >= 3
+            ? "Email/username or password is incorrect. Solve the puzzle below to keep trying."
+            : "Email/username or password is incorrect."
+        );
+      }
 
+      // Determine MFA requirement. School students are skipped — many are
+      // kids without authenticator apps; their teacher manages credentials
+      // already. Everyone else who has a verified TOTP factor must clear
+      // the second challenge before we redirect.
       const { data: { user } } = await sb.auth.getUser();
-      if (!user) throw new Error("Signed in but session is empty. Please try again.");
+      if (!user) throw new Error("Signed in but session is empty.");
 
       const { data: prof } = await sb
         .from("profiles")
-        .select("role, is_school_student, platform_admin")
+        .select("is_school_student")
         .eq("id", user.id)
         .single();
+      const skipMfa = !!prof?.is_school_student;
 
-      const { data: { session } } = await sb.auth.getSession();
-      if (session) audit(session.access_token);
-
-      const isIndependentStudent =
-        prof?.role === "student" && !prof?.is_school_student;
-      if (isIndependentStudent) {
-        try { await sb.auth.signOut({ scope: "others" }); } catch { /* ignore */ }
+      if (!skipMfa) {
+        try {
+          const { data: factors } = await sb.auth.mfa.listFactors();
+          const totp = (factors?.totp || []).find((f) => f.status === "verified");
+          if (totp) {
+            const { data: challenge, error: chErr } = await sb.auth.mfa.challenge({ factorId: totp.id });
+            if (chErr || !challenge) throw new Error(chErr?.message || "Could not start 2FA challenge.");
+            setMfaFactorId(totp.id);
+            setMfaChallengeId(challenge.id);
+            setMfaPhase("needs_code");
+            setBusy(false);
+            return; // wait for verifyMfa()
+          }
+        } catch (mfaProbeErr) {
+          // If MFA isn't enabled at the project level, listFactors errors.
+          // That's OK — proceed without MFA.
+          if (process.env.NODE_ENV !== "production") {
+            // eslint-disable-next-line no-console
+            console.warn("[mfa] probe failed; proceeding without 2FA", mfaProbeErr);
+          }
+        }
       }
 
-      // Resolve the post-login landing page.
-      //
-      // Order matters: platform_admin is a flag (not a role) — internal staff
-      // accounts often have role=null but platform_admin=true, so we MUST
-      // check the flag first. Falling through to "/student" for them sent
-      // them to the student layout, which then bounced role!="student" back
-      // to /login — the source of the login-loop bug for admin accounts.
-      const next = readNextParam();
-      const home =
-        prof?.platform_admin ? "/admin/onboard-school" :
-        prof?.role === "super_teacher" ? "/school" :
-        prof?.role === "teacher" ? "/teacher" :
-        prof?.role === "student" ? "/student" :
-        // No recognised role and no admin flag — surface this as an error
-        // rather than bounce them silently between /login and a protected
-        // dashboard. Most often it means the profile row is missing.
-        "__no_profile__";
-
-      if (home === "__no_profile__") {
-        throw new Error(
-          "Your account is signed in but no profile is set up. Please contact support."
-        );
-      }
-      router.push(next || home);
+      await finalizeSignIn();
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Sign in failed.");
     } finally {
       setBusy(false);
     }
   }
+
+  async function verifyMfa() {
+    setErr(null);
+    if (!mfaFactorId || !mfaChallengeId) return;
+    if (!/^\d{6}$/.test(mfaCode.trim())) {
+      setErr("Enter the 6-digit code from your authenticator app.");
+      return;
+    }
+    setMfaBusy(true);
+    try {
+      const sb = supabaseBrowser();
+      const { error } = await sb.auth.mfa.verify({
+        factorId: mfaFactorId,
+        challengeId: mfaChallengeId,
+        code: mfaCode.trim(),
+      });
+      if (error) throw new Error(error.message || "Invalid code. Try again.");
+      await finalizeSignIn();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "2FA verification failed.");
+    } finally {
+      setMfaBusy(false);
+    }
+  }
+
+  // Re-evaluate captcha gate whenever the identifier changes — a user who
+  // switches accounts after some failures should not be punished.
+  useEffect(() => {
+    setNeedCaptcha(captchaRequired(identifier));
+    setCaptchaPassed(false);
+  }, [identifier]);
 
   return (
     <main className="min-h-screen grid place-items-center px-6 py-10 bg-gradient-to-br from-emerald-50 via-white to-sky-50">
@@ -138,11 +312,83 @@ export default function LoginPage() {
         </Link>
 
         <div className="card">
-          <h1 className="text-2xl font-bold mb-6">Sign in</h1>
+          {/* Role tabs — purely informational. The same Supabase signin call
+              fires regardless of the active tab; tabs only re-label fields
+              and the heading so users know which kind of account they're
+              signing in with. */}
+          {/* Platform Admin is intentionally hidden from /login — staff use
+              the same form (auth is single-endpoint) but the tab is private,
+              so casual visitors don't see a 'Platform' option. */}
+          <div
+            className="grid grid-cols-3 gap-2 mb-5 p-1.5 rounded-xl"
+            style={{ background: "var(--color-bg-soft, #f1f5f9)" }}
+            role="tablist"
+            aria-label="Sign in as"
+          >
+            {(["student", "teacher", "school"] as RoleTab[]).map((k) => {
+              const t = ROLE_TABS[k];
+              const active = k === roleTab;
+              return (
+                <button
+                  key={k}
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  onClick={() => setRoleTab(k)}
+                  className="inline-flex flex-col items-center justify-center gap-1 text-[11px] sm:text-xs font-semibold py-2.5 px-2 rounded-lg transition whitespace-nowrap"
+                  style={{
+                    background: active ? "var(--color-card, #fff)" : "transparent",
+                    color: active ? "var(--brand-700, #047857)" : "var(--color-fg-soft, #475569)",
+                    boxShadow: active ? "0 1px 3px rgba(0,0,0,0.08)" : undefined,
+                  }}
+                >
+                  <t.Icon size={16} />
+                  <span>{t.label}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Student sub-mode pill — only visible when the Student tab is
+              active. Explicit because the school-vs-independent distinction
+              is the most common confusion at /login. */}
+          {roleTab === "student" && (
+            <div
+              className="inline-flex p-1 rounded-full mb-4 text-xs font-semibold"
+              style={{ background: "var(--color-bg-soft, #f1f5f9)" }}
+              role="radiogroup"
+              aria-label="Student type"
+            >
+              {(Object.keys(STUDENT_MODES) as StudentMode[]).map((m) => {
+                const active = m === studentMode;
+                return (
+                  <button
+                    key={m}
+                    type="button"
+                    role="radio"
+                    aria-checked={active}
+                    onClick={() => setStudentMode(m)}
+                    className="px-3 py-1.5 rounded-full transition"
+                    style={{
+                      background: active ? "var(--color-card, #fff)" : "transparent",
+                      color: active ? "var(--brand-700, #047857)" : "var(--color-fg-soft, #475569)",
+                      boxShadow: active ? "0 1px 3px rgba(0,0,0,0.08)" : undefined,
+                    }}
+                  >
+                    {STUDENT_MODES[m].label}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          <h1 className="text-2xl font-bold mb-6 flex items-center gap-2">
+            <tab.Icon size={22} /> {tab.heading}
+          </h1>
 
           <form onSubmit={submit} className="space-y-4">
             <div>
-              <label className="label">Email or username</label>
+              <label className="label">{tab.identifierLabel}</label>
               <input
                 className="input"
                 type="text"
@@ -151,7 +397,7 @@ export default function LoginPage() {
                 autoComplete="username"
                 value={identifier}
                 onChange={(e) => { setIdentifier(e.target.value); setForgotMsg(null); }}
-                placeholder="your.email@example.com"
+                placeholder={tab.identifierPlaceholder}
                 suppressHydrationWarning
               />
             </div>
@@ -206,6 +452,57 @@ export default function LoginPage() {
                 {forgotMsg}
               </div>
             )}
+            {!forgotMode && needCaptcha && !captchaPassed && mfaPhase === "idle" && (
+              <LoginCaptcha
+                onPass={() => { setCaptchaPassed(true); setErr(null); }}
+              />
+            )}
+
+            {/* Explicit click-wrap. Required on every sign-in so consent is
+                refreshed each session and we can re-stamp tos_version onto
+                user_metadata when Terms are updated. */}
+            {!forgotMode && mfaPhase === "idle" && (
+              <label className="flex items-start gap-2 text-xs text-slate-700 leading-relaxed">
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={tosOk}
+                  onChange={(e) => setTosOk(e.target.checked)}
+                  suppressHydrationWarning
+                />
+                <span>
+                  I agree to BloomIQ&rsquo;s{" "}
+                  <Link href="/terms" className="text-emerald-700 hover:underline font-semibold">Terms of Service</Link>{" "}
+                  and{" "}
+                  <Link href="/privacy" className="text-emerald-700 hover:underline font-semibold">Privacy Policy</Link>.
+                </span>
+              </label>
+            )}
+
+            {/* 2FA challenge — only renders after the password step succeeds
+                AND the user has a verified TOTP factor. */}
+            {mfaPhase === "needs_code" && (
+              <div className="rounded-lg border-2 border-emerald-300 bg-emerald-50 px-3 py-3 space-y-2">
+                <div className="flex items-center gap-2 font-semibold text-emerald-900 text-sm">
+                  <KeyRound size={16} /> Enter your 2FA code
+                </div>
+                <p className="text-xs text-emerald-900/80">
+                  Open your authenticator app (Google Authenticator, 1Password, Authy, etc.) and enter the current 6-digit code for BloomIQ.
+                </p>
+                <input
+                  className="input font-mono tracking-widest text-center"
+                  inputMode="numeric"
+                  pattern="[0-9]{6}"
+                  maxLength={6}
+                  value={mfaCode}
+                  onChange={(e) => setMfaCode(e.target.value.replace(/\D/g, ""))}
+                  placeholder="123456"
+                  autoFocus
+                  suppressHydrationWarning
+                />
+              </div>
+            )}
+
             {forgotMode ? (
               <button
                 type="button"
@@ -216,8 +513,22 @@ export default function LoginPage() {
               >
                 {forgotBusy && <span className="spinner" />} Send reset link
               </button>
+            ) : mfaPhase === "needs_code" ? (
+              <button
+                type="button"
+                className="btn btn-primary w-full"
+                disabled={mfaBusy || mfaCode.length !== 6}
+                onClick={verifyMfa}
+                suppressHydrationWarning
+              >
+                {mfaBusy && <span className="spinner" />} Verify code
+              </button>
             ) : (
-              <button className="btn btn-primary w-full" disabled={busy} suppressHydrationWarning>
+              <button
+                className="btn btn-primary w-full"
+                disabled={busy || !tosOk || (needCaptcha && !captchaPassed)}
+                suppressHydrationWarning
+              >
                 {busy && <span className="spinner" />} Sign in
               </button>
             )}
@@ -227,20 +538,10 @@ export default function LoginPage() {
             New here?{" "}
             <Link href="/signup" className="text-emerald-700 font-semibold">Create an account</Link>
           </div>
-
-          {/* Implicit-acceptance legal note. Reinforces continued ToS
-              acceptance for returning users so we can update Terms with
-              notice and rely on continued sign-in as renewed acceptance. */}
-          <p className="mt-4 text-[11px] text-slate-500 text-center leading-relaxed">
-            By signing in, you agree to our{" "}
-            <Link href="/terms" className="text-emerald-700 hover:underline">Terms of Service</Link>{" "}
-            and{" "}
-            <Link href="/privacy" className="text-emerald-700 hover:underline">Privacy Policy</Link>.
-          </p>
         </div>
 
         <p className="text-xs text-slate-500 text-center mt-4">
-          School student? Use the username your teacher gave you.
+          {tab.hint}
         </p>
       </div>
     </main>

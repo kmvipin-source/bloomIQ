@@ -14,8 +14,14 @@ export default function SchoolLayout({ children }: { children: React.ReactNode }
       const { data: { user } } = await sb.auth.getUser();
       if (!user) { router.replace("/login?next=/school"); return; }
 
-      const { data: prof } = await sb.from("profiles").select("role").eq("id", user.id).single();
+      const { data: prof } = await sb
+        .from("profiles")
+        .select("role, platform_admin")
+        .eq("id", user.id)
+        .single();
 
+      // platform_admin is exclusive — no hybrid display. Force them to /admin.
+      if (prof?.platform_admin)           { router.replace("/admin/onboard-school"); return; }
       if (prof?.role === "teacher")       { router.replace("/teacher"); return; }
       if (prof?.role === "student")       { router.replace("/student"); return; }
       if (prof?.role !== "super_teacher") { router.replace("/login");   return; }

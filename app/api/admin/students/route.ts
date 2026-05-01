@@ -9,6 +9,7 @@ import {
 export const runtime = "nodejs";
 
 const USERNAME_RE = /^[a-z0-9][a-z0-9._-]{2,29}$/i;
+const ROLL_RE = /^[A-Za-z0-9]+$/;
 
 function normaliseName(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, " ").trim();
@@ -62,6 +63,12 @@ export async function POST(req: Request) {
     const username: string = String(body.username || "").trim().toLowerCase();
     const password: string = String(body.password || "");
     const force: boolean = !!body.force;
+    // Optional per-class roll number. Trimmed; empty becomes null.
+    const rollNumberRaw = body.roll_number;
+    const rollNumber: string | null =
+      typeof rollNumberRaw === "string" && rollNumberRaw.trim().length > 0
+        ? rollNumberRaw.trim()
+        : (typeof rollNumberRaw === "number" ? String(rollNumberRaw) : null);
 
     if (!classId) return NextResponse.json({ error: "class_id is required" }, { status: 400 });
     if (!fullName) return NextResponse.json({ error: "Student name is required" }, { status: 400 });
@@ -72,6 +79,9 @@ export async function POST(req: Request) {
     }
     if (password.length < 6) {
       return NextResponse.json({ error: "Password must be at least 6 characters." }, { status: 400 });
+    }
+    if (rollNumber !== null && !ROLL_RE.test(rollNumber)) {
+      return NextResponse.json({ error: "Roll number must be alphanumeric (letters and digits only)." }, { status: 400 });
     }
 
     const { data: cls } = await sb.from("classes").select("id, owner_id").eq("id", classId).single();
@@ -204,6 +214,7 @@ export async function POST(req: Request) {
     const { error: memErr } = await admin.from("class_members").insert({
       class_id: classId,
       student_id: newId,
+      roll_number: rollNumber,
     });
     if (memErr && !memErr.message.toLowerCase().includes("duplicate")) {
       await admin.auth.admin.deleteUser(newId).catch(() => {});

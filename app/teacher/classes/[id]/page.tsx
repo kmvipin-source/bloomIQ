@@ -11,6 +11,7 @@ import BulkAddStudents from "@/components/BulkAddStudents";
 type Member = Pick<Profile, "id" | "full_name"> & {
   joined_at: string;
   username?: string | null;
+  roll_number?: string | null;
   last_login_at?: string | null;
   last_login_ip?: string | null;
   recent_distinct_ips?: number;
@@ -48,6 +49,7 @@ export default function ClassDetailPage() {
   const [newName, setNewName] = useState("");
   const [newUsername, setNewUsername] = useState("");
   const [newPassword, setNewPassword] = useState("");
+  const [newRoll, setNewRoll] = useState("");
   const [addBusy, setAddBusy] = useState(false);
   const [addErr, setAddErr] = useState<string | null>(null);
   const [addOk, setAddOk] = useState<{ username: string; password: string } | null>(null);
@@ -111,16 +113,17 @@ export default function ClassDetailPage() {
 
     const { data: mem } = await sb
       .from("class_members")
-      .select("joined_at, profile:profiles!class_members_student_id_fkey(id, full_name, username)")
+      .select("joined_at, roll_number, profile:profiles!class_members_student_id_fkey(id, full_name, username)")
       .eq("class_id", id)
       .order("joined_at", { ascending: true });
 
-    type Row = { joined_at: string; profile: { id: string; full_name: string | null; username: string | null } | null };
+    type Row = { joined_at: string; roll_number: string | null; profile: { id: string; full_name: string | null; username: string | null } | null };
     const rows = ((mem as unknown as Row[]) || []).filter((r) => r.profile);
     const baseMembers: Member[] = rows.map((r) => ({
       id: r.profile!.id,
       full_name: r.profile!.full_name,
       username: r.profile!.username,
+      roll_number: r.roll_number,
       joined_at: r.joined_at,
     }));
 
@@ -346,6 +349,7 @@ export default function ClassDetailPage() {
     if (!newName.trim()) return setAddErr("Enter a student name.");
     if (!newUsername.trim()) return setAddErr("Pick a username.");
     if (newPassword.length < 6) return setAddErr("Password must be at least 6 characters.");
+    if (newRoll.trim() && !/^[A-Za-z0-9]+$/.test(newRoll.trim())) return setAddErr("Roll number must be alphanumeric (letters and digits only).");
 
     setAddBusy(true);
     try {
@@ -361,6 +365,7 @@ export default function ClassDetailPage() {
           full_name: newName.trim(),
           username: newUsername.trim(),
           password: newPassword,
+          roll_number: newRoll.trim() || null,
           force,
         }),
       });
@@ -372,7 +377,7 @@ export default function ClassDetailPage() {
       if (!res.ok) throw new Error(data.error || "Failed to add student");
 
       setAddOk({ username: newUsername.trim(), password: newPassword });
-      setNewName(""); setNewUsername(""); setNewPassword("");
+      setNewName(""); setNewUsername(""); setNewPassword(""); setNewRoll("");
       await load();
     } catch (e) {
       setAddErr(e instanceof Error ? e.message : "Failed to add student");
@@ -392,12 +397,16 @@ export default function ClassDetailPage() {
       const res = await fetch("/api/admin/students/add-existing", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
-        body: JSON.stringify({ class_id: id, student_id: studentId }),
+        body: JSON.stringify({
+          class_id: id,
+          student_id: studentId,
+          roll_number: newRoll.trim() || null,
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to add existing student");
       setDupMatches(null);
-      setNewName(""); setNewUsername(""); setNewPassword("");
+      setNewName(""); setNewUsername(""); setNewPassword(""); setNewRoll("");
       setShowAdd(false);
       await load();
     } catch (e) {
@@ -712,7 +721,7 @@ export default function ClassDetailPage() {
             Create a username + password for a student who doesn&apos;t have email. Share the credentials with them — they sign in
             on the <strong>Student login</strong> tab.
           </p>
-          <div className="grid sm:grid-cols-3 gap-3">
+          <div className="grid sm:grid-cols-4 gap-3">
             <div>
               <label className="label">Full name</label>
               <input
@@ -723,6 +732,16 @@ export default function ClassDetailPage() {
                   if (!newUsername) setNewUsername(suggestUsername(e.target.value));
                 }}
                 placeholder="e.g. Priya Sharma"
+              />
+            </div>
+            <div>
+              <label className="label">Roll no. <span className="muted text-xs">(optional, A–Z / 0–9)</span></label>
+              <input
+                className="input"
+                value={newRoll}
+                onChange={(e) => setNewRoll(e.target.value.replace(/[^A-Za-z0-9]/g, ""))}
+                pattern="[A-Za-z0-9]+"
+                placeholder="e.g. 12 or 10A12"
               />
             </div>
             <div>
@@ -869,6 +888,7 @@ export default function ClassDetailPage() {
           <table className="w-full text-sm">
             <thead className="bg-slate-50 text-xs uppercase muted">
               <tr>
+                <th className="px-4 py-3 text-left w-16">Roll</th>
                 <th className="px-4 py-3 text-left">Name</th>
                 <th className="px-4 py-3 text-left">Username</th>
                 <th className="px-4 py-3 text-left">Last login</th>
@@ -882,6 +902,9 @@ export default function ClassDetailPage() {
                 const suspicious = (m.recent_distinct_ips || 0) >= 3;
                 return (
                   <tr key={m.id} className="hover:bg-slate-50">
+                    <td className="px-4 py-3 muted">
+                      {m.roll_number ? <code className="text-xs px-2 py-0.5 bg-slate-100 rounded">{m.roll_number}</code> : <span className="muted">—</span>}
+                    </td>
                     <td className="px-4 py-3 font-medium">{m.full_name || "Unknown student"}</td>
                     <td className="px-4 py-3">
                       {m.username

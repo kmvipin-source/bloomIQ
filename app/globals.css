@@ -854,6 +854,14 @@ html, body {
 
 a { color: inherit; text-decoration: none; }
 
+/* Default user-agent cursor on <button> is `default` (arrow), which makes
+ * interactive elements feel un-clickable. Force pointer except when the
+ * button is disabled (then keep not-allowed for affordance). */
+button:not(:disabled),
+[role="button"]:not([aria-disabled="true"]) { cursor: pointer; }
+button:disabled,
+[role="button"][aria-disabled="true"] { cursor: not-allowed; }
+
 /* Make sure number-heavy UI uses tabular figures so columns align. */
 table, .tabular-nums { font-variant-numeric: tabular-nums; }
 

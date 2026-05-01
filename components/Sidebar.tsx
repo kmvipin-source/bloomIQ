@@ -8,7 +8,7 @@ import {
   Home, Sparkles, ClipboardCheck, ListChecks,
   BarChart3, FileText, LogOut, User as UserIcon, Users,
   TrendingUp, NotebookPen, Building2, FileEdit,
-  ShieldCheck, UserPlus,
+  ShieldCheck,
 } from "lucide-react";
 import ThemeQuickToggle from "@/components/ThemeQuickToggle";
 
@@ -54,23 +54,11 @@ const SUPER_TEACHER: Item[] = [
   { href: "/school/students", label: "Top Students", icon: TrendingUp },
 ];
 
-// Platform admin — BloomIQ staff. Surfaced as an extra section in the
-// sidebar when profiles.platform_admin = true, regardless of role. Lets
-// the staff user jump straight to /admin/* without typing the URL.
-const PLATFORM_ADMIN: Item[] = [
-  { href: "/admin/onboard-school", label: "Onboard School", icon: Building2 },
-  { href: "/admin/plans",          label: "Plans",          icon: ListChecks },
-  { href: "/admin/team",           label: "Admin Team",     icon: UserPlus },
-];
-
 export default function Sidebar({ role }: { role: "teacher" | "student" | "super_teacher" }) {
   const pathname = usePathname();
   const router = useRouter();
   const [name, setName] = useState<string>("");
   const [isSchoolStudent, setIsSchoolStudent] = useState<boolean | null>(null);
-  // Surfaces the Platform Admin section below the role nav when true.
-  // Defaults to false so the link is hidden until we've actually verified.
-  const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -79,12 +67,11 @@ export default function Sidebar({ role }: { role: "teacher" | "student" | "super
       if (!user) return;
       const { data } = await sb
         .from("profiles")
-        .select("full_name, is_school_student, platform_admin")
+        .select("full_name, is_school_student")
         .eq("id", user.id)
         .single();
       setName(data?.full_name || user.email || "");
       setIsSchoolStudent(!!data?.is_school_student);
-      setIsPlatformAdmin(!!data?.platform_admin);
     })();
   }, []);
 
@@ -144,47 +131,6 @@ export default function Sidebar({ role }: { role: "teacher" | "student" | "super
           );
         })}
 
-        {/* Platform Admin section — only rendered for BloomIQ staff. The flag
-            is fetched once on mount; while it's loading we render nothing so
-            the link doesn't briefly flash for non-admin users. */}
-        {isPlatformAdmin && (
-          <>
-            <div
-              className="mt-4 mb-1 px-3 flex items-center gap-1.5 text-[10px] uppercase tracking-wide font-bold"
-              style={{ color: "var(--color-muted)" }}
-            >
-              <ShieldCheck size={11} /> Platform Admin
-            </div>
-            {PLATFORM_ADMIN.map(({ href, label, icon: Icon }) => {
-              const active = pathname === href || pathname.startsWith(href + "/");
-              return (
-                <Link
-                  key={href}
-                  href={href}
-                  className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition"
-                  style={
-                    active
-                      ? {
-                          background: "var(--brand-900)",
-                          color: "#fff",
-                          fontWeight: 600,
-                        }
-                      : { color: "var(--color-fg-soft)" }
-                  }
-                  onMouseEnter={(e) => {
-                    if (!active) e.currentTarget.style.background = "var(--color-bg-soft)";
-                  }}
-                  onMouseLeave={(e) => {
-                    if (!active) e.currentTarget.style.background = "transparent";
-                  }}
-                >
-                  <Icon size={18} />
-                  {label}
-                </Link>
-              );
-            })}
-          </>
-        )}
       </nav>
       <div className="p-3" style={{ borderTop: "1px solid var(--color-border)" }}>
         {/* Compact theme picker — 5 swatches + light/dark toggle + link
@@ -194,6 +140,19 @@ export default function Sidebar({ role }: { role: "teacher" | "student" | "super
           <UserIcon size={14} />
           <span className="truncate">{name || "..."}</span>
         </div>
+        {/* 2FA management — hidden for school students; their teacher
+            manages credentials, no point asking 8-year-olds to set up TOTP. */}
+        {isSchoolStudent === false && (
+          <Link
+            href="/settings/security"
+            className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition"
+            style={{ color: "var(--color-fg-soft)" }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = "var(--color-bg-soft)"; }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+          >
+            <ShieldCheck size={16} /> Security
+          </Link>
+        )}
         <button
           onClick={logout}
           className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition"
