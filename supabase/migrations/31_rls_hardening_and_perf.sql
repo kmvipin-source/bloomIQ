@@ -135,8 +135,13 @@ as $$
   select school_id from public.profiles where id = auth.uid();
 $$;
 
-revoke execute on function public.current_user_school_id() from public, anon;
+revoke execute on function public.current_user_school_id() from public;
 grant execute on function public.current_user_school_id() to authenticated;
+-- anon also gets EXECUTE — RLS evaluates ALL policies on every query (incl.
+-- the same-school clause that calls this fn), so anon callers must be able
+-- to execute it. Function safely returns NULL when auth.uid() is NULL, so
+-- anon never sees any school_id match.
+grant execute on function public.current_user_school_id() to anon;
 
 drop policy if exists "profiles read all auth"        on public.profiles;
 drop policy if exists "profiles read by platform admin" on public.profiles;
