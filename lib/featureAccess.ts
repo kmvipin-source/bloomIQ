@@ -227,10 +227,11 @@ export async function findUnlockingTier(featureKey: string): Promise<
   { tier: PlanTier; label: string; rank: number } | null
 > {
   const sb = supabaseBrowser();
+  // Post-migration-30 the plans table is a flat catalogue (one row per
+  // SKU, no status workflow). Read all rows.
   const { data: plans } = await sb
     .from("plans")
-    .select("tier, label, features")
-    .eq("status", "active");
+    .select("tier, label, features");
   type Row = { tier: PlanTier; label: string; features: unknown };
   const rows = (plans as Row[] | null) || [];
   let best: { tier: PlanTier; label: string; rank: number } | null = null;

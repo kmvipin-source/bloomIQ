@@ -43,6 +43,22 @@ export const FEATURE_CATEGORY_LABELS: Record<FeatureCategory, string> = {
   support: "Support",
 };
 
+/**
+ * Stable display order for the category sections in the plan editor.
+ * Mirrors the order in the FeatureCategory union above. Keep in sync if
+ * a new category is added.
+ */
+export const FEATURE_CATEGORY_ORDER: FeatureCategory[] = [
+  "core_assessment",
+  "metacognition",
+  "exam_prep",
+  "ai_tutoring",
+  "memory_retention",
+  "school_admin",
+  "limits",
+  "support",
+];
+
 export type FeatureDef = {
   key: string;
   label: string;

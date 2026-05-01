@@ -6,12 +6,17 @@ export const runtime = "nodejs";
 /**
  * /api/admin/plans/[id]
  *
- * GET    — fetch one plan + its audit log.
- * PUT    — update a plan. Only allowed when status='draft'. Active and
- *          pending_review plans are immutable; you create a new draft to
- *          change them, then go through the review workflow.
- * DELETE — delete a draft. Active and archived rows cannot be deleted
- *          (they're history; archive an active by promoting a successor).
+ * Per migration 30, plans are edited IN PLACE. There is no draft/active
+ * status, no review workflow, no version history. Saving immediately
+ * affects:
+ *   - new signups: see the new price + features at /pricing and /checkout
+ *   - existing subscribers: see the new features (pulled live by
+ *     useFeatureAccess); their PRICE stays locked at what they paid
+ *     (subscriptions.price_paid_paise) until their term renews
+ *
+ * GET    — fetch one SKU by id.
+ * PUT    — edit in place.
+ * DELETE — remove an unused SKU. Refused if any subscription points at it.
  */
 
 async function requireAdmin(req: Request) {
@@ -37,6 +42,7 @@ export async function GET(req: Request, ctx: RouteContext) {
   try {
     const auth = await requireAdmin(req);
     if ("err" in auth) return auth.err;
+    void auth;
     const { id } = await ctx.params;
 
     const admin = supabaseAdmin();
@@ -48,14 +54,7 @@ export async function GET(req: Request, ctx: RouteContext) {
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     if (!plan) return NextResponse.json({ error: "Plan not found" }, { status: 404 });
 
-    const { data: audit } = await admin
-      .from("plan_audit")
-      .select("*")
-      .eq("plan_id", id)
-      .order("created_at", { ascending: false })
-      .limit(50);
-
-    return NextResponse.json({ ok: true, plan, audit: audit || [] });
+    return NextResponse.json({ ok: true, plan });
   } catch (e) {
     return NextResponse.json(
       { error: e instanceof Error ? e.message : "Fetch failed" },
@@ -68,26 +67,20 @@ export async function PUT(req: Request, ctx: RouteContext) {
   try {
     const auth = await requireAdmin(req);
     if ("err" in auth) return auth.err;
+    void auth;
     const { id } = await ctx.params;
     const body = await req.json().catch(() => ({}));
 
     const admin = supabaseAdmin();
     const { data: existing } = await admin
       .from("plans")
-      .select("status, created_by")
+      .select("id, slug, label")
       .eq("id", id)
       .maybeSingle();
     if (!existing) return NextResponse.json({ error: "Plan not found" }, { status: 404 });
-    if (existing.status !== "draft") {
-      return NextResponse.json(
-        { error: `Only draft plans can be edited (this one is ${existing.status}). Create a new draft instead.` },
-        { status: 409 }
-      );
-    }
 
-    // Whitelist editable fields. Slug/tier/status changes are NOT editable
-    // through here on purpose — they're set on creation, and status changes
-    // go through the dedicated workflow endpoints (submit/approve/reject).
+    // Whitelist editable fields. slug + tier are immutable — they're the
+    // SKU identity. Everything else is freely editable in place.
     const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
     if (typeof body.label === "string") updates.label = body.label.trim();
     if (typeof body.blurb === "string" || body.blurb === null) updates.blurb = body.blurb;
@@ -96,10 +89,6 @@ export async function PUT(req: Request, ctx: RouteContext) {
     if (typeof body.currency === "string") updates.currency = body.currency.toUpperCase();
     if (typeof body.period_days === "number" && body.period_days >= 0) updates.period_days = body.period_days;
     if (Array.isArray(body.features)) updates.features = body.features;
-    if (typeof body.effective_from === "string" || body.effective_from === null) updates.effective_from = body.effective_from;
-    // Per-student pricing fields (migration 27). The editor only exposes
-    // these when tier starts with school_*, but the server accepts them
-    // for any tier — the DB constraint enforces consistency.
     if (body.pricing_model === "fixed" || body.pricing_model === "per_student") {
       updates.pricing_model = body.pricing_model;
     }
@@ -123,13 +112,6 @@ export async function PUT(req: Request, ctx: RouteContext) {
       .single();
     if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 });
 
-    await admin.from("plan_audit").insert({
-      plan_id: id,
-      actor_id: auth.user.id,
-      action: "edited",
-      payload: { fields: Object.keys(updates) },
-    });
-
     return NextResponse.json({ ok: true, plan: updated });
   } catch (e) {
     return NextResponse.json(
@@ -143,18 +125,32 @@ export async function DELETE(req: Request, ctx: RouteContext) {
   try {
     const auth = await requireAdmin(req);
     if ("err" in auth) return auth.err;
+    void auth;
     const { id } = await ctx.params;
 
     const admin = supabaseAdmin();
     const { data: existing } = await admin
       .from("plans")
-      .select("status")
+      .select("id, slug, label")
       .eq("id", id)
       .maybeSingle();
     if (!existing) return NextResponse.json({ error: "Plan not found" }, { status: 404 });
-    if (existing.status !== "draft") {
+
+    // Refuse to delete a SKU that has live subscribers — would orphan
+    // their plan_id and break feature lookups. Admin should retire the
+    // SKU another way (e.g., raise the price absurdly so no one buys it,
+    // or hide it from /pricing) until existing subs expire.
+    const { count } = await admin
+      .from("subscriptions")
+      .select("id", { count: "exact", head: true })
+      .eq("plan_id", id);
+    if ((count || 0) > 0) {
       return NextResponse.json(
-        { error: `Only draft plans can be deleted (this one is ${existing.status}).` },
+        {
+          error:
+            `Cannot delete "${existing.label}" — ${count} active subscription(s) point at it. ` +
+            `Hide it from /pricing or wait for those subs to expire first.`,
+        },
         { status: 409 }
       );
     }

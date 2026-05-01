@@ -12,7 +12,201 @@ This project uses **Next.js 16** with breaking changes — APIs, conventions, an
 
 ---
 
-## 🆕 Latest session — 2026-05-01 evening (Theme system, admin invite overhaul, world-class aesthetics pass)
+## 🆕 Latest session — 2026-05-01 (Login loop hotfix: platform-admin redirect)
+
+A short, focused hotfix session prompted by a real-user complaint —
+Vipin couldn't log in with `kmvipin@gmail.com` even after resetting
+his password. The screen kept bouncing back to `/login`. He'd seen
+this multiple times, which is a signal we should have caught earlier.
+
+### Symptom
+
+Sign-in form submits successfully, then the user is dumped back on
+`/login`. Password reset doesn't help because the password was never
+the problem.
+
+### Root cause
+
+`app/login/page.tsx` resolved the post-login landing page from
+`profiles.role` only:
+
+```ts
+const home =
+  prof?.role === "teacher"       ? "/teacher" :
+  prof?.role === "super_teacher" ? "/school"  :
+                                   "/student";
+```
+
+`platform_admin` is a **flag**, not a role. Internal-staff accounts
+(including the bootstrap admin) often have `role = null` and
+`platform_admin = true`. The code's catch-all sent them to `/student`,
+where `app/student/layout.tsx` re-fetched the profile, saw
+`role !== "student"`, and redirected back to `/login`. Loop.
+
+The signup page (`app/signup/page.tsx`) and the set-password page
+(`app/auth/set-password/page.tsx`) both check `platform_admin`
+correctly. **Login** was the one place that didn't — easy to miss
+because internal staff are a single-digit population and the bug
+doesn't surface until exactly that user tries to log in.
+
+### Fix
+
+`app/login/page.tsx`:
+
+  - Added `platform_admin` to the `profiles` select.
+  - Reordered the home resolution so `platform_admin` is checked
+    first → `/admin/onboard-school`, then `super_teacher` → `/school`,
+    then `teacher` → `/teacher`, then `student` → `/student`.
+  - Added an explicit error path for "signed in but no recognised
+    role and no admin flag" — surfaces a clear message instead of
+    silently bouncing forever. Most likely cause: a missing `profiles`
+    row.
+
+### Conversation note — separate hidden admin login?
+
+Vipin asked whether platform admins should have a non-public login
+page. Short answer parked in this README so it doesn't get lost:
+
+  - **Today:** one shared `/login`, role-based redirect. Standard for
+    GitHub / Stripe / Linear / Vercel — security through obscurity
+    isn't security.
+  - **What a hidden admin URL actually buys:** keeps admin auth
+    attempts out of the same form bots are scanning, and gives a
+    clean place to layer in extra friction (longer 2FA window, IP
+    allowlist warning, captcha). Defense-in-depth, not security.
+  - **What actually protects the platform admin:** strong password,
+    2FA/MFA, IP allowlisting, audit logs. Park "hidden admin URL"
+    behind those — it's cosmetic until 2FA is wired up.
+
+### Backlog from this session
+
+  - Wire up 2FA / TOTP enrollment for `platform_admin = true`
+    accounts (Supabase has MFA primitives; we just don't surface
+    them yet).
+  - Once 2FA is in, optionally add a `/staff` (or similar
+    non-obvious path) admin login and have public `/login` refuse
+    platform-admin accounts with a generic "incorrect credentials"
+    so existence isn't leaked.
+  - Audit other "redirect after auth" surfaces (`signup`,
+    `set-password`, sidebar logout flows) for any other role
+    branch that forgets `platform_admin`. The current set is
+    consistent post-fix, but adding a new role tier in the
+    future is a regression risk — consider a single
+    `lib/auth/landingFor.ts` helper used everywhere.
+
+---
+
+## 🆕 Earlier session — 2026-05-01 late night (Plans simplification: drop versioning, edit-in-place catalogue)
+
+A focused architectural refactor. The Plan-Admin module shipped earlier
+in the day was over-engineered for BloomIQ's actual business model —
+versioned rows with grandfathering snapshots, draft → submit → approve
+workflow, plan_audit log. Realistic operational consequence: every
+price tweak created a new plan row, the table grew without bound, and
+the admin would soon be staring at 20+ rows trying to figure out which
+was current vs legacy.
+
+Caught at design review by Vipin: *"will create utter confusion."*
+Yes. Better to fix now than after 30 plan rows.
+
+### What changed conceptually
+
+The plans table is now a **flat, stable catalogue of SKUs**. One row
+per product (Free + Premium Monthly/Annual + Premium Plus Monthly/Annual
++ 3 school tiers = 8 rows, ever). You **edit in place** — no drafts,
+no submit, no approve, no versions.
+
+What gets locked vs live for existing subscribers:
+
+  - **Price** — locked at purchase. The new
+    `subscriptions.price_paid_paise` column captures what the customer
+    paid for THIS term. Their price stays put till `expires_at`. On
+    renewal, a new subscription gets the then-current price.
+  - **Features** — always live. If you add a feature to Premium today,
+    every Premium subscriber sees it on next page load. This matches
+    Spotify / Netflix / Notion behavior — every consumer SaaS works
+    this way and customers expect it.
+
+Removing a feature is the dangerous direction (existing subs lose access
+the moment you save). The edit page warns when there are active
+subscribers; the right way to "remove" something is to add it to a new
+SKU and let users migrate, not yank it from under their feet.
+
+### Migration 30 — what it actually does
+
+  1. Repoints any subscription on a non-active plan version to the
+     surviving 'active' version with the same slug.
+  2. Deletes archived/draft/pending plan rows — they're no longer needed.
+  3. Drops the `plan_audit` table and all the workflow infrastructure
+     columns from `plans`: `status`, `effective_from`, `effective_to`,
+     `created_by`, `approved_by`, `approved_at`. Drops `plans_two_eyes`
+     check + the `plans_one_active_per_slug` partial index.
+  4. Adds plain `UNIQUE(slug)` — exactly one row per SKU.
+  5. Adds `subscriptions.price_paid_paise integer NOT NULL DEFAULT 0`
+     and backfills from each subscriber's current plan price.
+  6. Replaces the public-read RLS policy with one that exposes every
+     row (no more `status='active'` filter).
+
+### Code refactored
+
+  - `app/api/admin/plans/route.ts` — GET returns flat catalogue with
+    subscriber counts; POST creates a brand-new SKU (rare). No status,
+    no clone_from, no audit writes.
+  - `app/api/admin/plans/[id]/route.ts` — PUT edits in place (no
+    "draft only" guard); DELETE refuses if any subscription points at
+    the SKU.
+  - `app/api/admin/plans/[id]/transition/route.ts` — stubbed to return
+    410 Gone so any caller surfaces loudly.
+  - `app/api/checkout/route.ts` + `app/api/checkout/verify/route.ts` —
+    no more `.eq("status", "active")` lookup; verify route locks
+    `subscriptions.price_paid_paise = order.amount` at purchase.
+  - `app/api/pricing/active-plans/route.ts` and
+    `app/api/admin/onboard-school/route.ts` and
+    `app/api/admin/schools/[id]/set-plan/route.ts` — drop status filter.
+  - `app/admin/plans/page.tsx` — clean catalogue: tier-grouped cards,
+    edit-on-click, subscriber count badge, "edit-in-place" guidance.
+  - `app/admin/plans/[id]/edit/page.tsx` — single-form editor with one
+    Save button + one Delete button. No submit/approve/reject. Clear
+    "X active subscribers will see your change" warning.
+  - `app/admin/plans/new/page.tsx` — minimal form for the rare case of
+    adding a brand-new SKU. Framed as the exception, not the default.
+  - `lib/types.ts` — drops `Plan.status`, `effective_from`, `effective_to`,
+    `created_by`, `approved_by`, `approved_at`. Drops `PlanStatus` and
+    `PlanAuditEvent` types entirely.
+
+### Migration to run
+
+```sql
+-- supabase/migrations/30_simplify_plans_drop_versioning.sql
+-- (full file in repo; don't paste this snippet alone — the full
+--  migration handles the repoint-then-delete sequence safely)
+```
+
+After running it: `NOTIFY pgrst, 'reload schema';` to refresh PostgREST.
+
+### What was deliberately preserved
+
+  - Plan slugs + tier values stay the same — no client code knows the
+    table changed.
+  - `subscriptions.plan_id` still exists and is still set on new
+    subscriptions; we just don't pin to specific snapshots anymore.
+    `useFeatureAccess` reads features from the live plan via that FK.
+  - Razorpay checkout flow unchanged from the customer's perspective.
+  - All 8 seeded SKUs from migrations 26 + 28 stay (price + features
+    intact).
+
+### Backlog notes
+
+The deleted `plan_audit` table did one valuable thing — give a
+"who changed Premium's price last Tuesday?" trail. If you ever want
+that back, the cleanest way is a `plan_change_log` table written by
+the PUT handler with `before` / `after` JSON snapshots — but it's a
+separate concern from grandfathering, and I haven't built it. Park
+until needed.
+
+---
+
+## 🆕 Earlier session — 2026-05-01 evening (Theme system, admin invite overhaul, world-class aesthetics pass)
 
 After the morning's plan-admin push, this session was about everything *around* the product — how it looks, how new admins get in, and how interactions feel — taking BloomIQ from "competent indie app" to something that visually competes with Linear, Notion, and Stripe. Three big tracks plus a few critical fixes.
 

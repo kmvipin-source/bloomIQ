@@ -1,35 +1,34 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { supabaseBrowser } from "@/lib/supabase/client";
-import { Layers, Users, AlertCircle, CheckCircle2, Clock, Archive, Tag } from "lucide-react";
-import type { Plan, PlanStatus } from "@/lib/types";
+import { Layers, Users, AlertCircle, CheckCircle2, Pencil } from "lucide-react";
+import type { Plan } from "@/lib/types";
 import { FEATURES_BY_KEY } from "@/lib/features";
 
 /**
  * /admin/plans
  *
- * Read-only catalogue of every subscription plan. This is the foundation
- * slice — the next session will add /admin/plans/new (create draft),
- * /admin/plans/[id]/edit, and the submit/approve workflow.
+ * Flat catalogue of every SKU. Post-migration-30 there are exactly as
+ * many rows as there are products you sell — no versions, no drafts,
+ * no archived snapshots. The seeded set is 8: Free + Premium Monthly /
+ * Annual + Premium Plus Monthly / Annual + 3 school tiers.
  *
- * Plans are grouped by tier, then within each tier shown in status order
- * (active → pending_review → draft → archived). Each card surfaces:
- *   - tier badge + status pill
- *   - label, slug, price, period
- *   - active subscriber count (only for status='active')
- *   - feature list (resolved against the registry in lib/features.ts)
- *   - audit metadata (created/approved at, by)
+ * Click any card → /admin/plans/[id]/edit, where you change price /
+ * features / blurb in place. Saving immediately:
+ *   - shows the new price + features at /pricing for new signups
+ *   - gives existing subscribers the new features (live, no migration)
+ *   - keeps existing subscribers' price locked at what they paid for
+ *     this term (subscriptions.price_paid_paise stays put till renewal)
+ *
+ * If you ever genuinely need a brand-new SKU (e.g., adding a Quarterly
+ * billing period), use the "+ New SKU" button — but the bar is high.
+ * Most "I want to change something" cases are EDITS to the 8 stable
+ * rows, not new ones.
  */
 
 type PlanRow = Plan & { active_subscriber_count: number };
-
-const STATUS_BADGES: Record<PlanStatus, { label: string; class: string; Icon: typeof CheckCircle2 }> = {
-  active: { label: "Active", class: "text-emerald-700 bg-emerald-50 border-emerald-200", Icon: CheckCircle2 },
-  pending_review: { label: "Pending review", class: "text-amber-700 bg-amber-50 border-amber-200", Icon: Clock },
-  draft: { label: "Draft", class: "text-slate-700 bg-slate-100 border-slate-200", Icon: Tag },
-  archived: { label: "Archived", class: "text-slate-500 bg-slate-50 border-slate-200", Icon: Archive },
-};
 
 function rupees(paise: number): string {
   if (paise === 0) return "₹0";
@@ -43,6 +42,17 @@ function periodLabel(days: number): string {
   if (days >= 360 && days <= 366) return "/year";
   return ` /${days}d`;
 }
+
+const TIER_META: Record<string, { label: string; tagline: string }> = {
+  free:             { label: "Free",          tagline: "Anonymous + lightly-engaged users" },
+  premium:          { label: "Premium",       tagline: "Individual paying subscribers" },
+  premium_plus:     { label: "Premium Plus",  tagline: "Premium + competitive-exam toolkit" },
+  school_pilot:     { label: "School Pilot",  tagline: "Small schools, ₹49/student/yr" },
+  school_standard:  { label: "School Standard", tagline: "Mid-size schools, ₹39/student/yr" },
+  school_plus:      { label: "School Plus",   tagline: "Large schools, ₹29/student/yr" },
+};
+
+const TIER_ORDER = ["free", "premium", "premium_plus", "school_pilot", "school_standard", "school_plus"];
 
 export default function PlansPage() {
   const [plans, setPlans] = useState<PlanRow[]>([]);
@@ -69,23 +79,24 @@ export default function PlansPage() {
     })();
   }, []);
 
-  // Group plans by tier so the page renders Free / Premium / Premium Plus
-  // sections in a stable order.
-  const tierOrder = ["free", "premium", "premium_plus", "school_pilot", "school_standard", "school_plus"];
-  const grouped = tierOrder
+  // Group by tier in a stable order, so the page shows
+  // Free / Premium / Premium Plus / school tiers from top to bottom
+  // regardless of insert order in the DB.
+  const grouped = TIER_ORDER
     .map((t) => ({ tier: t, plans: plans.filter((p) => p.tier === t) }))
     .filter((g) => g.plans.length > 0);
 
   return (
     <div className="fade-in">
       <div className="flex items-start justify-between gap-3 flex-wrap mb-1">
-        <h1 className="h1 flex items-center gap-2"><Layers size={28} /> Plans</h1>
-        <a href="/admin/plans/new" className="btn btn-primary text-sm">+ New plan</a>
+        <h1 className="h1 flex items-center gap-2"><Layers size={28} /> Plan catalogue</h1>
+        <Link href="/admin/plans/new" className="btn btn-secondary text-sm">+ New SKU</Link>
       </div>
-      <p className="muted text-sm mb-6">
-        Versioned plan catalogue. Existing subscribers stay on their grandfathered version;
-        new subscribers from each plan&apos;s effective date forward bind to the latest active
-        version of that slug. Click any plan to view, clone, or (if draft) edit.
+      <p className="muted text-sm mb-6 max-w-2xl">
+        These are the SKUs you sell. <strong>Edit in place</strong> — saving updates
+        the price + features immediately. Existing subscribers keep their{" "}
+        <em>price</em> locked till their term renews, but they get any new{" "}
+        <em>features</em> live.
       </p>
 
       {loading ? (
@@ -96,61 +107,69 @@ export default function PlansPage() {
         </div>
       ) : plans.length === 0 ? (
         <div className="card text-center py-8 muted text-sm">
-          No plans yet. Did you run migration 26? Check{" "}
+          No plans yet. Did you run migrations 26 and 28? Check{" "}
           <code>supabase/migrations/26_seed_initial_plans.sql</code>.
         </div>
       ) : (
         <div className="space-y-8">
-          {grouped.map((g) => (
-            <section key={g.tier}>
-              <h2 className="text-sm font-bold uppercase tracking-wide text-slate-500 mb-3">
-                {g.tier.replace(/_/g, " ")}
-              </h2>
-              <div className="grid lg:grid-cols-2 gap-3">
-                {g.plans.map((p) => {
-                  const badge = STATUS_BADGES[p.status];
-                  const BadgeIcon = badge.Icon;
-                  return (
-                    <a
+          {grouped.map((g) => {
+            const meta = TIER_META[g.tier] || { label: g.tier, tagline: "" };
+            return (
+              <section key={g.tier}>
+                <header className="mb-3">
+                  <h2 className="text-sm font-bold uppercase tracking-wide" style={{ color: "var(--color-fg-soft)" }}>
+                    {meta.label}
+                  </h2>
+                  {meta.tagline && <p className="text-xs muted">{meta.tagline}</p>}
+                </header>
+                <div className="grid lg:grid-cols-2 gap-3">
+                  {g.plans.map((p) => (
+                    <Link
                       key={p.id}
                       href={`/admin/plans/${p.id}/edit`}
                       className="card card-hover block"
                     >
                       <header className="flex items-start justify-between gap-3 flex-wrap">
                         <div>
-                          <div className="text-xs muted font-mono">{p.slug}</div>
+                          <div className="text-[11px] muted font-mono">{p.slug}</div>
                           <div className="text-lg font-bold">{p.label}</div>
                           {p.blurb && <div className="text-xs muted mt-0.5">{p.blurb}</div>}
                         </div>
-                        <span className={`inline-flex items-center gap-1 text-[10px] uppercase font-bold rounded-full border px-2 py-0.5 ${badge.class}`}>
-                          <BadgeIcon size={10} /> {badge.label}
-                        </span>
+                        <Pencil size={14} className="muted shrink-0 mt-1" />
                       </header>
 
                       <div className="flex items-baseline gap-2 mt-3">
-                        <span className="text-2xl font-bold">{rupees(p.price_paise)}</span>
-                        <span className="text-xs muted">{periodLabel(p.period_days)}</span>
+                        {p.pricing_model === "per_student" ? (
+                          <>
+                            <span className="text-2xl font-bold tabular-nums">{rupees(p.per_student_price_paise || 0)}</span>
+                            <span className="text-xs muted">/ student / year</span>
+                          </>
+                        ) : (
+                          <>
+                            <span className="text-2xl font-bold tabular-nums">{rupees(p.price_paise)}</span>
+                            <span className="text-xs muted">{periodLabel(p.period_days)}</span>
+                          </>
+                        )}
                       </div>
 
-                      {p.status === "active" && (
-                        <div className="mt-2 inline-flex items-center gap-1.5 text-xs text-slate-700 bg-slate-50 border border-slate-200 rounded-full px-2 py-0.5">
-                          <Users size={12} /> {p.active_subscriber_count} active subscriber{p.active_subscriber_count === 1 ? "" : "s"}
-                        </div>
-                      )}
+                      <div className="mt-2 inline-flex items-center gap-1.5 text-xs rounded-full px-2 py-0.5"
+                           style={{ background: "var(--color-bg-soft)", color: "var(--color-fg-soft)", border: "1px solid var(--color-border)" }}>
+                        <Users size={12} /> {p.active_subscriber_count} active subscriber{p.active_subscriber_count === 1 ? "" : "s"}
+                      </div>
 
                       <details
                         className="mt-4 group"
                         onClick={(e) => e.stopPropagation()}
                       >
-                        <summary className="cursor-pointer text-xs font-semibold text-slate-700">
-                          {p.features.length} feature{p.features.length === 1 ? "" : "s"} included — click to expand
+                        <summary className="cursor-pointer text-xs font-semibold" style={{ color: "var(--color-fg-soft)" }}>
+                          {p.features.length} feature{p.features.length === 1 ? "" : "s"} — click to expand
                         </summary>
                         <ul className="mt-2 space-y-1 text-xs">
                           {p.features.map((k) => {
                             const meta = FEATURES_BY_KEY[k];
                             return (
                               <li key={k} className="flex items-start gap-1.5">
-                                <CheckCircle2 size={12} className="text-emerald-600 mt-0.5 shrink-0" />
+                                <CheckCircle2 size={12} style={{ color: "var(--brand-600)" }} className="mt-0.5 shrink-0" />
                                 <span>
                                   {meta ? (
                                     <>
@@ -167,30 +186,22 @@ export default function PlansPage() {
                           {p.features.length === 0 && <li className="muted">No features.</li>}
                         </ul>
                       </details>
-
-                      <div className="mt-4 grid grid-cols-2 gap-2 text-[11px] muted">
-                        <div>
-                          Effective from:{" "}
-                          {p.effective_from ? new Date(p.effective_from).toLocaleDateString() : "—"}
-                        </div>
-                        <div>
-                          Effective to:{" "}
-                          {p.effective_to ? new Date(p.effective_to).toLocaleDateString() : "—"}
-                        </div>
-                      </div>
-                    </a>
-                  );
-                })}
-              </div>
-            </section>
-          ))}
+                    </Link>
+                  ))}
+                </div>
+              </section>
+            );
+          })}
         </div>
       )}
 
-      <div className="card mt-8 bg-slate-50 border-slate-200 text-xs muted leading-relaxed">
-        <strong className="text-slate-800">Coming next session:</strong> create / edit / submit /
-        approve workflow, /pricing page reading from this catalogue, and feature-access
-        gating throughout the app. This view is read-only for now.
+      <div className="card mt-8 text-xs muted leading-relaxed" style={{ background: "var(--color-bg-soft)" }}>
+        <strong style={{ color: "var(--color-fg)" }}>How edits flow:</strong> price changes only affect
+        new signups + renewals — existing subscribers keep their locked price till{" "}
+        <code>expires_at</code>. Feature changes apply to <em>everyone</em> immediately, so adding a
+        new feature is a free upgrade for current subscribers (loved by users; you can&apos;t take it
+        back without complaints). Removing a feature is the dangerous direction — never do it without
+        a clear migration plan.
       </div>
     </div>
   );

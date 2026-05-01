@@ -61,22 +61,17 @@ export async function POST(req: Request, ctx: RouteContext) {
     if (!school) return NextResponse.json({ error: "School not found" }, { status: 404 });
 
     // If a plan was supplied, look it up to derive expires_at and the
-    // legacy `tier` text the rest of the app understands.
+    // legacy `tier` text the rest of the app understands. Post-migration-30
+    // there's no status column — every plan in the table is sellable.
     let plan: { id: string; tier: string; period_days: number } | null = null;
     if (planId) {
       const { data: p, error: pErr } = await admin
         .from("plans")
-        .select("id, tier, period_days, status")
+        .select("id, tier, period_days")
         .eq("id", planId)
         .maybeSingle();
       if (pErr) return NextResponse.json({ error: pErr.message }, { status: 500 });
       if (!p) return NextResponse.json({ error: "Plan not found" }, { status: 404 });
-      if (p.status !== "active") {
-        return NextResponse.json(
-          { error: `Plan is ${p.status}; only active plans can be assigned to schools.` },
-          { status: 409 }
-        );
-      }
       plan = p;
     }
 

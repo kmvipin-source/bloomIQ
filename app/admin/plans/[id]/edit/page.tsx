@@ -4,23 +4,31 @@ import { useEffect, useState, use as usePromise } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabaseBrowser } from "@/lib/supabase/client";
-import { ArrowLeft, Save, Send, CheckCircle2, XCircle, AlertCircle, Lock, Trash2 } from "lucide-react";
-import { FEATURES, FEATURE_CATEGORY_LABELS, type FeatureCategory } from "@/lib/features";
+import { ArrowLeft, Save, Trash2, AlertCircle, CheckCircle2, Users } from "lucide-react";
+import {
+  FEATURES_BY_CATEGORY,
+  FEATURE_CATEGORY_ORDER,
+  FEATURE_CATEGORY_LABELS,
+} from "@/lib/features";
 import type { Plan } from "@/lib/types";
 
 /**
  * /admin/plans/[id]/edit
  *
- * Two views in one page driven by plan.status:
+ * Edit a SKU in place. Post-migration-30 there's no draft/submit/approve
+ * workflow — the catalogue is flat and edits are immediate. The page is
+ * deliberately simple:
+ *   - one form
+ *   - one Save button (writes the change live)
+ *   - one Delete button (only allowed if no subs point at this SKU)
  *
- *   draft           — full editor (price + features + submit-for-review)
- *   pending_review  — read-only with Approve / Reject buttons (only
- *                     visible to a different admin from the creator)
- *   active / archived — read-only summary + "Edit (creates new draft)"
- *                     button that clones into a new draft
+ * Saving applies right away:
+ *   - new signups + renewals see the new price
+ *   - existing subscribers keep their locked price till expires_at
+ *   - existing subscribers see the new features immediately (live)
  *
- * Feature picker uses the FEATURES_BY_CATEGORY grid from lib/features.ts
- * so adding a future feature to the registry auto-renders it here.
+ * The "active subscriber count" is shown so the admin sees blast-radius
+ * before saving.
  */
 
 type PageProps = { params: Promise<{ id: string }> };
@@ -30,18 +38,17 @@ export default function EditPlanPage(props: PageProps) {
   const router = useRouter();
 
   const [plan, setPlan] = useState<Plan | null>(null);
+  const [subscriberCount, setSubscriberCount] = useState<number>(0);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
-  const [meId, setMeId] = useState<string | null>(null);
 
-  // Local edit state — mirrors plan fields when status === 'draft'.
+  // Editable fields
   const [label, setLabel] = useState("");
   const [blurb, setBlurb] = useState("");
   const [pricePaise, setPricePaise] = useState(0);
   const [periodDays, setPeriodDays] = useState(30);
   const [features, setFeatures] = useState<Set<string>>(new Set());
-  // Per-student pricing fields. Only shown for school_* tiers; the
-  // server still stores defaults of 'fixed'/0/0 for individual plans.
+
   const [pricingModel, setPricingModel] = useState<"fixed" | "per_student">("fixed");
   const [perStudentRupees, setPerStudentRupees] = useState(0);
   const [minStudents, setMinStudents] = useState(0);
@@ -49,15 +56,13 @@ export default function EditPlanPage(props: PageProps) {
 
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<string | null>(null);
-  const [actionBusy, setActionBusy] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   async function load() {
     setLoading(true);
     setErr(null);
     try {
       const sb = supabaseBrowser();
-      const { data: { user } } = await sb.auth.getUser();
-      setMeId(user?.id || null);
       const { data: { session } } = await sb.auth.getSession();
       if (!session) throw new Error("Not signed in.");
       const r = await fetch(`/api/admin/plans/${id}`, {
@@ -72,10 +77,20 @@ export default function EditPlanPage(props: PageProps) {
       setPricePaise(p.price_paise);
       setPeriodDays(p.period_days);
       setFeatures(new Set(p.features || []));
-      setPricingModel(p.pricing_model || "fixed");
+      setPricingModel((p.pricing_model as "fixed" | "per_student") || "fixed");
       setPerStudentRupees((p.per_student_price_paise || 0) / 100);
       setMinStudents(p.min_students || 0);
       setMaxStudents(p.max_students ?? null);
+
+      // Get subscriber count from the list endpoint (cheap; cached).
+      const r2 = await fetch("/api/admin/plans", {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      const j2 = await r2.json();
+      if (r2.ok) {
+        const me = (j2.plans || []).find((x: { id: string; active_subscriber_count?: number }) => x.id === id);
+        if (me) setSubscriberCount(me.active_subscriber_count || 0);
+      }
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Could not load plan.");
     } finally {
@@ -83,24 +98,21 @@ export default function EditPlanPage(props: PageProps) {
     }
   }
 
-  useEffect(() => { load(); }, [id]);
+  useEffect(() => { load(); }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function toggleFeature(key: string) {
     setFeatures((prev) => {
       const next = new Set(prev);
-      if (next.has(key)) next.delete(key); else next.add(key);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
       return next;
     });
   }
 
   async function save() {
-    if (!plan || plan.status !== "draft") return;
-    // Client-side guard mirroring the DB check constraint
-    // plans_per_student_price_required. Per-student plans must have a
-    // positive per-student rate. Show a friendly inline error rather
-    // than letting the raw constraint error bubble up.
+    if (!plan) return;
     if (pricingModel === "per_student" && perStudentRupees <= 0) {
-      setErr("Set a per-student rate above ₹0 before saving a per-student plan.");
+      setErr("Per-student rate must be greater than ₹0.");
       return;
     }
     setSaving(true);
@@ -109,28 +121,31 @@ export default function EditPlanPage(props: PageProps) {
       const sb = supabaseBrowser();
       const { data: { session } } = await sb.auth.getSession();
       if (!session) throw new Error("Not signed in.");
+      const body: Record<string, unknown> = {
+        label,
+        blurb,
+        price_paise: pricePaise,
+        period_days: periodDays,
+        features: Array.from(features),
+        pricing_model: pricingModel,
+      };
+      if (pricingModel === "per_student") {
+        body.per_student_price_paise = Math.round(perStudentRupees * 100);
+        body.min_students = minStudents;
+        body.max_students = maxStudents;
+      }
       const r = await fetch(`/api/admin/plans/${id}`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${session.access_token}`,
         },
-        body: JSON.stringify({
-          label,
-          blurb: blurb || null,
-          price_paise: pricePaise,
-          period_days: periodDays,
-          features: Array.from(features),
-          pricing_model: pricingModel,
-          per_student_price_paise: Math.round(perStudentRupees * 100),
-          min_students: minStudents,
-          max_students: maxStudents,
-        }),
+        body: JSON.stringify(body),
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j?.error || "Save failed.");
       setSavedAt(new Date().toLocaleTimeString());
-      setPlan(j.plan);
+      setTimeout(() => setSavedAt(null), 3000);
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Save failed.");
     } finally {
@@ -138,36 +153,14 @@ export default function EditPlanPage(props: PageProps) {
     }
   }
 
-  async function transition(action: "submit" | "approve" | "reject") {
-    setActionBusy(action);
+  async function del() {
+    if (!plan) return;
+    if (!confirm(
+      `Delete "${plan.label}"? ` +
+      `This is permanent. ${subscriberCount > 0 ? `\n\nThis SKU has ${subscriberCount} active subscriber(s) — the API will refuse the delete.` : ""}`
+    )) return;
+    setDeleting(true);
     setErr(null);
-    try {
-      const sb = supabaseBrowser();
-      const { data: { session } } = await sb.auth.getSession();
-      if (!session) throw new Error("Not signed in.");
-      const r = await fetch(`/api/admin/plans/${id}/transition`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${session.access_token}`,
-        },
-        body: JSON.stringify({ action }),
-      });
-      const j = await r.json();
-      if (!r.ok) throw new Error(j?.error || `${action} failed.`);
-      // Reload to reflect the new status.
-      await load();
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : `${action} failed.`);
-    } finally {
-      setActionBusy(null);
-    }
-  }
-
-  async function deleteDraft() {
-    if (!plan || plan.status !== "draft") return;
-    if (!confirm("Delete this draft? This cannot be undone.")) return;
-    setActionBusy("delete");
     try {
       const sb = supabaseBrowser();
       const { data: { session } } = await sb.auth.getSession();
@@ -181,321 +174,266 @@ export default function EditPlanPage(props: PageProps) {
       router.push("/admin/plans");
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Delete failed.");
-      setActionBusy(null);
+      setDeleting(false);
     }
   }
 
-  if (loading) return <div className="grid place-items-center py-20"><div className="spinner" /></div>;
-  if (err && !plan) return <div className="card text-red-700 bg-red-50">{err}</div>;
+  if (loading) return <div className="card text-center py-8"><span className="spinner" /></div>;
+  if (err && !plan) return (
+    <div className="card text-sm text-red-700 bg-red-50 border-red-200 flex items-start gap-2">
+      <AlertCircle size={16} className="mt-0.5 shrink-0" /> {err}
+    </div>
+  );
   if (!plan) return null;
 
-  const isDraft = plan.status === "draft";
-  const isPending = plan.status === "pending_review";
-  const isActive = plan.status === "active";
-  const canApprove = isPending && plan.created_by !== meId;
-  const isSelfPending = isPending && plan.created_by === meId;
+  const isSchool = plan.tier.startsWith("school_");
 
   return (
-    <div className="max-w-3xl fade-in">
-      <Link href="/admin/plans" className="text-sm text-emerald-700 hover:underline inline-flex items-center gap-1 mb-4">
-        <ArrowLeft size={14} /> Back to plans
-      </Link>
-
-      <div className="flex items-baseline gap-3 flex-wrap">
-        <h1 className="h1">{plan.label}</h1>
-        <span className="text-xs muted font-mono">{plan.slug}</span>
-        <span className={`text-[10px] uppercase font-bold rounded-full border px-2 py-0.5 ${
-          isActive ? "text-emerald-700 bg-emerald-50 border-emerald-200"
-          : isPending ? "text-amber-700 bg-amber-50 border-amber-200"
-          : isDraft ? "text-slate-700 bg-slate-100 border-slate-200"
-          : "text-slate-500 bg-slate-50 border-slate-200"
-        }`}>
-          {plan.status.replace("_", " ")}
-        </span>
+    <div className="fade-in space-y-6 max-w-3xl">
+      <div>
+        <Link
+          href="/admin/plans"
+          className="inline-flex items-center gap-1.5 text-sm font-medium muted hover:underline"
+        >
+          <ArrowLeft size={14} /> Back to catalogue
+        </Link>
       </div>
 
-      {/* ---------- read-only banner for non-draft plans ---------- */}
-      {!isDraft && (
-        <div className="card mt-4 bg-slate-50 border-slate-200 text-sm">
-          {isPending && (
-            <div className="flex items-start gap-2">
-              <Lock size={16} className="mt-0.5 shrink-0 text-amber-700" />
-              <div>
-                {isSelfPending ? (
-                  <>You submitted this for review. Wait for a different platform admin to approve or reject. (Two-eyes principle.)</>
-                ) : (
-                  <>This plan is awaiting your review. Approve to make it the active version of <code>{plan.slug}</code> (the previous active version will be archived).</>
-                )}
-              </div>
-            </div>
-          )}
-          {isActive && (
-            <div className="flex items-start gap-2">
-              <Lock size={16} className="mt-0.5 shrink-0 text-emerald-700" />
-              <div>
-                Active plans cannot be edited directly — that would break grandfathering for existing subscribers.
-                Use <strong>Edit (creates new draft)</strong> below to start a new version.
-              </div>
-            </div>
-          )}
-          {plan.status === "archived" && (
-            <div className="flex items-start gap-2">
-              <Lock size={16} className="mt-0.5 shrink-0 text-slate-500" />
-              <div>This plan version is archived. Subscribers who joined while it was active stay on it; clone it into a new draft to base a future version off it.</div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ---------- editable form (draft only) ---------- */}
-      <section className="card mt-6 space-y-4">
-        <h2 className="font-semibold">Plan details</h2>
-        <div>
-          <label className="label">Display label</label>
-          <input className="input" value={label} disabled={!isDraft} onChange={(e) => setLabel(e.target.value)} />
-        </div>
-        <div>
-          <label className="label">Tagline / blurb <span className="muted text-xs">(optional)</span></label>
-          <input className="input" value={blurb} disabled={!isDraft} onChange={(e) => setBlurb(e.target.value)} />
-        </div>
-        {/* Pricing model toggle — only relevant for school_* tiers. The
-            individual tiers (free / premium / premium_plus) always stay
-            on 'fixed'. */}
-        {plan.tier.startsWith("school_") && (
+      <header className="card">
+        <div className="flex items-start justify-between gap-3 flex-wrap">
           <div>
-            <label className="label">Pricing model</label>
-            <div className="flex gap-2">
-              <button
-                type="button"
-                disabled={!isDraft}
-                onClick={() => setPricingModel("per_student")}
-                className={`flex-1 rounded-lg border px-3 py-2 text-sm text-left transition ${
-                  pricingModel === "per_student"
-                    ? "border-emerald-500 bg-emerald-50 text-emerald-900"
-                    : "border-slate-200 hover:border-slate-300"
-                } ${!isDraft ? "opacity-70 cursor-default" : ""}`}
-              >
-                <div className="font-semibold">Per-student</div>
-                <div className="text-xs muted">School pays ₹X × student count.</div>
-              </button>
-              <button
-                type="button"
-                disabled={!isDraft}
-                onClick={() => setPricingModel("fixed")}
-                className={`flex-1 rounded-lg border px-3 py-2 text-sm text-left transition ${
-                  pricingModel === "fixed"
-                    ? "border-emerald-500 bg-emerald-50 text-emerald-900"
-                    : "border-slate-200 hover:border-slate-300"
-                } ${!isDraft ? "opacity-70 cursor-default" : ""}`}
-              >
-                <div className="font-semibold">Fixed</div>
-                <div className="text-xs muted">Flat price regardless of headcount.</div>
-              </button>
+            <div className="text-[11px] muted font-mono">{plan.slug}</div>
+            <h1 className="h1 mt-1">{plan.label}</h1>
+            <div className="text-xs muted mt-1 capitalize">tier: {plan.tier.replace(/_/g, " ")}</div>
+          </div>
+          <div
+            className="inline-flex items-center gap-1.5 text-xs rounded-full px-3 py-1"
+            style={{
+              background: "var(--color-bg-soft)",
+              color: "var(--color-fg-soft)",
+              border: "1px solid var(--color-border)",
+            }}
+          >
+            <Users size={12} /> {subscriberCount} active subscriber{subscriberCount === 1 ? "" : "s"}
+          </div>
+        </div>
+
+        {subscriberCount > 0 && (
+          <div
+            className="mt-3 px-3 py-2 rounded-lg text-xs flex items-start gap-2"
+            style={{
+              background: "var(--color-warn-soft)",
+              color: "var(--color-warn)",
+              border: "1px solid var(--color-border)",
+            }}
+          >
+            <AlertCircle size={14} className="mt-0.5 shrink-0" />
+            <div>
+              <strong>Heads up:</strong> {subscriberCount} subscriber{subscriberCount === 1 ? "" : "s"} are live on this SKU.
+              Adding features = free upgrade for them. Removing features = they lose access immediately.
+              Price changes only affect new signups + renewals.
             </div>
           </div>
         )}
+      </header>
 
-        {pricingModel === "per_student" ? (
-          <div className="grid sm:grid-cols-3 gap-3">
-            <div>
-              <label className="label">Per student / period (₹)</label>
-              <input
-                className="input"
-                type="number"
-                min={0}
-                step={1}
-                disabled={!isDraft}
-                value={perStudentRupees}
-                onChange={(e) => setPerStudentRupees(Math.max(0, Number(e.target.value || 0)))}
-              />
-              <p className="text-xs muted mt-1">Per student per billing period.</p>
-            </div>
-            <div>
-              <label className="label">Min students</label>
-              <input
-                className="input"
-                type="number"
-                min={0}
-                step={1}
-                disabled={!isDraft}
-                value={minStudents}
-                onChange={(e) => setMinStudents(Math.max(0, Number(e.target.value || 0)))}
-              />
-              <p className="text-xs muted mt-1">Floor headcount for this tier.</p>
-            </div>
-            <div>
-              <label className="label">Max students <span className="muted text-xs">(blank = no cap)</span></label>
-              <input
-                className="input"
-                type="number"
-                min={1}
-                step={1}
-                disabled={!isDraft}
-                value={maxStudents ?? ""}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  setMaxStudents(v === "" ? null : Math.max(1, Number(v)));
-                }}
-              />
-              <p className="text-xs muted mt-1">Schools above this need the next tier.</p>
-            </div>
+      {/* PRICING ----------------------------------------------------------- */}
+      <section className="card space-y-4">
+        <h2 className="h3">Pricing</h2>
+
+        {isSchool && (
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => setPricingModel("fixed")}
+              className={`flex-1 px-3 py-2 rounded-lg text-sm font-semibold border transition`}
+              style={
+                pricingModel === "fixed"
+                  ? { background: "var(--color-accent-soft)", color: "var(--color-on-accent-soft)", borderColor: "var(--brand-300)" }
+                  : { background: "var(--color-surface-1)", color: "var(--color-fg-soft)", borderColor: "var(--color-border)" }
+              }
+            >
+              Fixed price
+            </button>
+            <button
+              type="button"
+              onClick={() => setPricingModel("per_student")}
+              className={`flex-1 px-3 py-2 rounded-lg text-sm font-semibold border transition`}
+              style={
+                pricingModel === "per_student"
+                  ? { background: "var(--color-accent-soft)", color: "var(--color-on-accent-soft)", borderColor: "var(--brand-300)" }
+                  : { background: "var(--color-surface-1)", color: "var(--color-fg-soft)", borderColor: "var(--color-border)" }
+              }
+            >
+              Per student
+            </button>
           </div>
-        ) : (
+        )}
+
+        {pricingModel === "fixed" ? (
           <div className="grid sm:grid-cols-2 gap-3">
             <div>
               <label className="label">Price (₹)</label>
               <input
-                className="input"
+                className="input tabular-nums"
                 type="number"
                 min={0}
-                step={1}
-                disabled={!isDraft}
                 value={pricePaise / 100}
                 onChange={(e) => setPricePaise(Math.round(Number(e.target.value || 0) * 100))}
               />
-              <p className="text-xs muted mt-1">Stored as paise. ₹{(pricePaise / 100).toLocaleString("en-IN")}.</p>
+              <div className="text-[11px] muted mt-1">Stored as {pricePaise} paise.</div>
             </div>
             <div>
-              <label className="label">Billing period (days)</label>
+              <label className="label">Period (days)</label>
               <input
-                className="input"
+                className="input tabular-nums"
                 type="number"
                 min={0}
-                step={1}
-                disabled={!isDraft}
                 value={periodDays}
-                onChange={(e) => setPeriodDays(Math.max(0, Number(e.target.value || 0)))}
+                onChange={(e) => setPeriodDays(Number(e.target.value || 0))}
               />
-              <p className="text-xs muted mt-1">30 = monthly · 365 = annual · 0 = free.</p>
+              <div className="text-[11px] muted mt-1">30 = monthly · 365 = annual · 0 = free</div>
             </div>
           </div>
-        )}
-
-        {/* Billing period stays editable for per-student plans too — it
-            controls renewal cadence (annual is the typical school cycle). */}
-        {pricingModel === "per_student" && (
-          <div className="max-w-xs">
-            <label className="label">Billing period (days)</label>
-            <input
-              className="input"
-              type="number"
-              min={0}
-              step={1}
-              disabled={!isDraft}
-              value={periodDays}
-              onChange={(e) => setPeriodDays(Math.max(0, Number(e.target.value || 0)))}
-            />
-            <p className="text-xs muted mt-1">365 = annual (most common for schools).</p>
+        ) : (
+          <div className="grid sm:grid-cols-3 gap-3">
+            <div>
+              <label className="label">Per student / year (₹)</label>
+              <input
+                className="input tabular-nums"
+                type="number"
+                min={1}
+                value={perStudentRupees}
+                onChange={(e) => setPerStudentRupees(Number(e.target.value || 0))}
+              />
+            </div>
+            <div>
+              <label className="label">Min students</label>
+              <input
+                className="input tabular-nums"
+                type="number"
+                min={0}
+                value={minStudents}
+                onChange={(e) => setMinStudents(Number(e.target.value || 0))}
+              />
+            </div>
+            <div>
+              <label className="label">Max students <span className="text-xs muted font-normal">(blank = ∞)</span></label>
+              <input
+                className="input tabular-nums"
+                type="number"
+                min={0}
+                value={maxStudents ?? ""}
+                onChange={(e) => setMaxStudents(e.target.value === "" ? null : Number(e.target.value))}
+              />
+            </div>
           </div>
         )}
       </section>
 
-      {/* ---------- feature picker grid ---------- */}
-      <section className="card mt-6">
-        <h2 className="font-semibold mb-1">Features included in this plan</h2>
-        <p className="text-xs muted mb-4">
-          Tick what subscribers on this plan can use. Anything unticked renders as a locked tile on the student dashboard with an upgrade CTA.
-        </p>
+      {/* COPY ------------------------------------------------------------- */}
+      <section className="card space-y-3">
+        <h2 className="h3">Display copy</h2>
+        <div>
+          <label className="label">Label</label>
+          <input
+            className="input"
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+            placeholder="e.g. Premium Annual"
+          />
+        </div>
+        <div>
+          <label className="label">Blurb <span className="text-xs muted font-normal">(short tagline shown on /pricing)</span></label>
+          <input
+            className="input"
+            value={blurb}
+            onChange={(e) => setBlurb(e.target.value)}
+            placeholder="e.g. Save 20% vs monthly"
+          />
+        </div>
+      </section>
 
-        <div className="space-y-5">
-          {(Object.entries(FEATURE_CATEGORY_LABELS) as [FeatureCategory, string][]).map(([cat, catLabel]) => {
-            const inCat = FEATURES.filter((f) => f.category === cat);
-            if (inCat.length === 0) return null;
+      {/* FEATURES --------------------------------------------------------- */}
+      <section className="card space-y-3">
+        <div className="flex items-baseline justify-between">
+          <h2 className="h3">Features</h2>
+          <div className="text-xs muted">{features.size} selected</div>
+        </div>
+
+        <div className="space-y-4">
+          {FEATURE_CATEGORY_ORDER.map((cat) => {
+            const list = FEATURES_BY_CATEGORY[cat] || [];
             return (
-              <div key={cat}>
-                <div className="text-[10px] uppercase tracking-wide font-bold text-slate-500 mb-2">{catLabel}</div>
-                <div className="grid sm:grid-cols-2 gap-2">
-                  {inCat.map((f) => (
-                    <label
-                      key={f.key}
-                      className={`flex items-start gap-2 p-2.5 rounded-lg border cursor-pointer transition ${
-                        features.has(f.key)
-                          ? "border-emerald-300 bg-emerald-50/50"
-                          : "border-slate-200 hover:border-slate-300"
-                      } ${!isDraft ? "cursor-default opacity-80" : ""}`}
-                    >
-                      <input
-                        type="checkbox"
-                        className="mt-1 h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
-                        checked={features.has(f.key)}
-                        disabled={!isDraft}
-                        onChange={() => toggleFeature(f.key)}
-                      />
-                      <span className="flex-1 text-xs">
-                        <span className="font-semibold block">{f.label}</span>
-                        <span className="muted">{f.description}</span>
-                      </span>
-                    </label>
-                  ))}
+              <fieldset key={cat}>
+                <legend className="text-xs font-bold uppercase tracking-wide" style={{ color: "var(--color-fg-soft)" }}>
+                  {FEATURE_CATEGORY_LABELS[cat]}
+                </legend>
+                <div className="grid sm:grid-cols-2 gap-2 mt-2">
+                  {list.map((f) => {
+                    const on = features.has(f.key);
+                    return (
+                      <label
+                        key={f.key}
+                        className="flex items-start gap-2 p-2 rounded-lg cursor-pointer transition"
+                        style={
+                          on
+                            ? { background: "var(--color-accent-soft)", border: "1px solid var(--brand-300)" }
+                            : { background: "var(--color-surface-1)", border: "1px solid var(--color-border)" }
+                        }
+                      >
+                        <input
+                          type="checkbox"
+                          checked={on}
+                          onChange={() => toggleFeature(f.key)}
+                          className="mt-0.5 shrink-0"
+                        />
+                        <div className="text-xs">
+                          <div className="font-semibold" style={{ color: on ? "var(--color-on-accent-soft)" : "var(--color-fg)" }}>
+                            {f.label}
+                          </div>
+                          <div className="muted">{f.description}</div>
+                        </div>
+                      </label>
+                    );
+                  })}
                 </div>
-              </div>
+              </fieldset>
             );
           })}
         </div>
       </section>
 
       {err && (
-        <div className="mt-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg flex items-start gap-2">
+        <div className="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg flex items-start gap-2">
           <AlertCircle size={14} className="mt-0.5 shrink-0" /> {err}
         </div>
       )}
 
-      {/* ---------- action bar ---------- */}
-      <div className="mt-6 flex flex-wrap gap-2 items-center">
-        {isDraft && (
-          <>
-            <button type="button" onClick={save} disabled={saving} className="btn btn-secondary">
-              {saving ? <><span className="spinner" /> Saving…</> : <><Save size={14} /> Save draft</>}
-            </button>
-            <button
-              type="button"
-              onClick={() => transition("submit")}
-              disabled={actionBusy !== null}
-              className="btn btn-primary"
-            >
-              {actionBusy === "submit" ? <span className="spinner" /> : <><Send size={14} /> Submit for review</>}
-            </button>
-            <button
-              type="button"
-              onClick={deleteDraft}
-              disabled={actionBusy !== null}
-              className="btn btn-ghost text-red-700 hover:bg-red-50"
-            >
-              <Trash2 size={14} /> Delete draft
-            </button>
-            {savedAt && <span className="text-xs muted ml-2">Saved {savedAt}</span>}
-          </>
+      <div className="flex items-center gap-2 flex-wrap sticky bottom-4 z-10">
+        <button
+          type="button"
+          onClick={save}
+          disabled={saving}
+          className="btn btn-primary"
+        >
+          {saving ? <><span className="spinner" /> Saving…</> : <><Save size={14} /> Save changes</>}
+        </button>
+        {savedAt && (
+          <span className="inline-flex items-center gap-1 text-xs" style={{ color: "var(--color-success)" }}>
+            <CheckCircle2 size={14} /> Saved at {savedAt}
+          </span>
         )}
-
-        {canApprove && (
-          <>
-            <button
-              type="button"
-              onClick={() => transition("approve")}
-              disabled={actionBusy !== null}
-              className="btn btn-primary"
-            >
-              {actionBusy === "approve" ? <span className="spinner" /> : <><CheckCircle2 size={14} /> Approve & make active</>}
-            </button>
-            <button
-              type="button"
-              onClick={() => transition("reject")}
-              disabled={actionBusy !== null}
-              className="btn btn-ghost text-red-700 hover:bg-red-50"
-            >
-              {actionBusy === "reject" ? <span className="spinner" /> : <><XCircle size={14} /> Reject</>}
-            </button>
-          </>
-        )}
-
-        {!isDraft && plan.status !== "pending_review" && (
-          <Link
-            href={`/admin/plans/new?clone_from=${plan.id}`}
-            className="btn btn-primary"
-          >
-            Edit (creates new draft) <ArrowLeft size={14} className="rotate-180" />
-          </Link>
-        )}
+        <div className="flex-1" />
+        <button
+          type="button"
+          onClick={del}
+          disabled={deleting || subscriberCount > 0}
+          className="btn btn-ghost text-red-700 hover:bg-red-50 disabled:opacity-40"
+          title={subscriberCount > 0 ? "Cannot delete — active subscribers point at this SKU" : "Delete this SKU"}
+        >
+          {deleting ? <span className="spinner" /> : <><Trash2 size={14} /> Delete SKU</>}
+        </button>
       </div>
     </div>
   );

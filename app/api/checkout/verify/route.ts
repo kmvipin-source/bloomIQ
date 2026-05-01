@@ -75,6 +75,12 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: `Could not fetch order: ${t.slice(0, 200)}` }, { status: 500 });
     }
     const order = (await ord.json()) as {
+      // The actual amount Razorpay charged the customer, in paise. We
+      // lock this onto the subscription so the customer's price is fixed
+      // for the current term — the only piece of "grandfathering" we keep
+      // post-migration-30. On renewal, a new subscription gets the live
+      // plan price.
+      amount?: number;
       notes?: {
         user_id?: string;
         plan_id?: string;
@@ -112,11 +118,12 @@ export async function POST(req: Request) {
       const slug = order.notes?.plan_slug
         || (order.notes?.plan ? (LEGACY_SLUG_MAP[order.notes.plan] ?? order.notes.plan) : "");
       if (slug) {
+        // Note: post-migration-30 the plans table has no 'status' column.
+        // Slug is unique, so a plain lookup by slug returns the one row.
         const { data } = await admin
           .from("plans")
           .select("id, slug, tier, period_days")
           .eq("slug", slug)
-          .eq("status", "active")
           .maybeSingle();
         if (data) planRow = data;
       }
@@ -140,8 +147,15 @@ export async function POST(req: Request) {
 
     const expiresAt = new Date(Date.now() + planRow.period_days * 24 * 60 * 60 * 1000).toISOString();
 
-    // 4) Update-or-insert the subscription row, binding plan_id for
-    //    grandfathering.
+    // The amount the customer actually paid for THIS term. Locked onto
+    // the subscription so a future plan price-change doesn't retroactively
+    // re-price them mid-term. On renewal a fresh row is created with the
+    // then-current price.
+    const pricePaidPaise = typeof order.amount === "number" && order.amount > 0
+      ? order.amount
+      : 0;
+
+    // 4) Update-or-insert the subscription row.
     const { data: existing, error: selErr } = await admin
       .from("subscriptions")
       .select("id")
@@ -155,6 +169,7 @@ export async function POST(req: Request) {
         .update({
           tier: legacyTier,
           plan_id: planRow.id,
+          price_paid_paise: pricePaidPaise,
           status: "active",
           started_at: new Date().toISOString(),
           expires_at: expiresAt,
@@ -170,6 +185,7 @@ export async function POST(req: Request) {
           school_id: null,
           tier: legacyTier,
           plan_id: planRow.id,
+          price_paid_paise: pricePaidPaise,
           status: "active",
           started_at: new Date().toISOString(),
           expires_at: expiresAt,

@@ -1,59 +1,32 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense } from "react";
+import { useRouter } from "next/navigation";
 import { supabaseBrowser } from "@/lib/supabase/client";
-import { ArrowLeft, ArrowRight, AlertCircle } from "lucide-react";
+import { ArrowLeft, ArrowRight, AlertCircle, Info } from "lucide-react";
 
 /**
- * /admin/plans/new
+ * /admin/plans/new — create a brand-new SKU.
  *
- * Create a new draft plan. Two paths:
- *   1. From scratch (slug + tier + label, then redirect into the editor).
- *   2. ?clone_from=<plan_id> — copy an existing plan's fields into a new
- *      draft. Used by the "Edit (creates new draft)" button on the plan
- *      detail page since active plans are immutable.
+ * Post-migration-30 the catalogue is meant to stay stable. The seeded 8
+ * SKUs (Free + Premium Monthly/Annual + Premium Plus Monthly/Annual +
+ * 3 school tiers) cover most cases. You should only land here when you
+ * genuinely need a new SKU — e.g., adding a Quarterly billing period or
+ * a new School tier. Day-to-day price/feature tweaks happen on the
+ * Edit page, in place.
  *
- * After creation, we redirect to /admin/plans/[id]/edit so the platform
- * admin can tweak features + price before submitting for review.
+ * Form is minimal: slug + tier + label. After save we redirect to the
+ * full editor where you set price + features.
  */
-
-function NewPlanInner() {
+export default function NewPlanPage() {
   const router = useRouter();
-  const search = useSearchParams();
-  const cloneFrom = search.get("clone_from");
 
   const [slug, setSlug] = useState("");
   const [tier, setTier] = useState<string>("premium");
   const [label, setLabel] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [cloningLabel, setCloningLabel] = useState<string | null>(null);
-
-  // If we're cloning, fetch the source plan's slug + tier + label as
-  // sensible defaults so the form pre-fills.
-  useEffect(() => {
-    if (!cloneFrom) return;
-    (async () => {
-      try {
-        const sb = supabaseBrowser();
-        const { data: { session } } = await sb.auth.getSession();
-        if (!session) return;
-        const r = await fetch(`/api/admin/plans/${cloneFrom}`, {
-          headers: { Authorization: `Bearer ${session.access_token}` },
-        });
-        const j = await r.json();
-        if (r.ok && j.plan) {
-          setSlug(j.plan.slug);
-          setTier(j.plan.tier);
-          setLabel(j.plan.label);
-          setCloningLabel(j.plan.label);
-        }
-      } catch { /* ignore */ }
-    })();
-  }, [cloneFrom]);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -73,51 +46,68 @@ function NewPlanInner() {
           slug: slug.trim(),
           tier,
           label: label.trim(),
-          clone_from: cloneFrom || undefined,
         }),
       });
       const j = await r.json();
-      if (!r.ok) throw new Error(j?.error || "Could not create draft.");
+      if (!r.ok) throw new Error(j?.error || "Could not create SKU.");
       router.push(`/admin/plans/${j.plan.id}/edit`);
     } catch (e) {
-      setErr(e instanceof Error ? e.message : "Could not create draft.");
+      setErr(e instanceof Error ? e.message : "Could not create SKU.");
       setBusy(false);
     }
   }
 
   return (
     <div className="max-w-xl fade-in">
-      <Link href="/admin/plans" className="text-sm text-emerald-700 hover:underline inline-flex items-center gap-1 mb-4">
-        <ArrowLeft size={14} /> Back to plans
+      <Link
+        href="/admin/plans"
+        className="inline-flex items-center gap-1.5 text-sm font-medium muted hover:underline mb-4"
+      >
+        <ArrowLeft size={14} /> Back to catalogue
       </Link>
-      <h1 className="h1 mb-1">New plan draft</h1>
+
+      <h1 className="h1 mb-1">New SKU</h1>
       <p className="muted text-sm mb-6">
-        {cloningLabel ? (
-          <>Cloning <strong>{cloningLabel}</strong> into a new draft. Editing this draft does not affect the active plan; existing subscribers stay grandfathered until you approve this version.</>
-        ) : (
-          <>Create a new draft plan. After save you&apos;ll land on the editor where you can pick features, set price, and submit for review.</>
-        )}
+        Add a brand-new product tier or billing period. For routine price
+        or feature tweaks, edit one of the 8 existing SKUs in place instead.
       </p>
+
+      <div
+        className="px-3 py-2 rounded-lg text-xs flex items-start gap-2 mb-4"
+        style={{
+          background: "var(--color-info-soft)",
+          color: "var(--color-info)",
+          border: "1px solid var(--color-border)",
+        }}
+      >
+        <Info size={13} className="mt-0.5 shrink-0" />
+        <div>
+          <strong>Slug must be unique.</strong> Use the existing convention:
+          {" "}
+          <code>premium_quarterly</code>, <code>school_enterprise</code>, etc.
+          Once created, slug is permanent.
+        </div>
+      </div>
 
       <form onSubmit={submit} className="card space-y-4">
         <div>
-          <label className="label">Slug <span className="muted text-xs">(stable identifier, e.g. <code>premium_plus_monthly</code>)</span></label>
+          <label className="label">Slug</label>
           <input
-            className="input"
+            className="input font-mono"
             required
             value={slug}
             onChange={(e) => setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, "_"))}
-            placeholder="premium_plus_monthly"
+            placeholder="premium_quarterly"
           />
           <p className="text-xs muted mt-1">
-            New active versions of an existing slug will replace the prior active version (which gets archived) — that&apos;s how grandfathering works.
+            Lowercase, underscores, no spaces. Used in API calls + checkout.
           </p>
         </div>
 
         <div>
           <label className="label">Tier</label>
           <select
-            className="input"
+            className="select"
             value={tier}
             onChange={(e) => setTier(e.target.value)}
           >
@@ -137,7 +127,7 @@ function NewPlanInner() {
             required
             value={label}
             onChange={(e) => setLabel(e.target.value)}
-            placeholder="Premium Plus Monthly"
+            placeholder="Premium Quarterly"
           />
         </div>
 
@@ -148,17 +138,9 @@ function NewPlanInner() {
         )}
 
         <button type="submit" className="btn btn-primary w-full" disabled={busy}>
-          {busy ? <><span className="spinner" /> Creating draft…</> : <>Create draft <ArrowRight size={14} /></>}
+          {busy ? <><span className="spinner" /> Creating…</> : <>Create SKU <ArrowRight size={14} /></>}
         </button>
       </form>
     </div>
-  );
-}
-
-export default function NewPlanPage() {
-  return (
-    <Suspense fallback={<div className="grid place-items-center py-20"><div className="spinner" /></div>}>
-      <NewPlanInner />
-    </Suspense>
   );
 }

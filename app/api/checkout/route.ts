@@ -41,20 +41,19 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "plan_slug is required." }, { status: 400 });
     }
 
-    // Read the live active plan via the service role so we don't depend on
-    // RLS visibility from the browser session (this also future-proofs the
-    // case where we restrict pricing reads later).
+    // Read the live plan via the service role so we don't depend on RLS
+    // visibility from the browser session. Post-migration-30, slug is
+    // unique, so this is a single-row lookup with no status filter.
     const admin = supabaseAdmin();
     const { data: plan, error: planErr } = await admin
       .from("plans")
       .select("id, slug, tier, label, price_paise, currency, period_days")
       .eq("slug", slug)
-      .eq("status", "active")
       .maybeSingle();
     if (planErr) return NextResponse.json({ error: planErr.message }, { status: 500 });
     if (!plan) {
       return NextResponse.json(
-        { error: `No active plan found for slug "${slug}". The plan may have been archived; refresh /pricing.` },
+        { error: `No plan found for slug "${slug}". Refresh /pricing.` },
         { status: 404 }
       );
     }

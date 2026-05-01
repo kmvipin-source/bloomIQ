@@ -85,7 +85,7 @@ export default function LoginPage() {
 
       const { data: prof } = await sb
         .from("profiles")
-        .select("role, is_school_student")
+        .select("role, is_school_student, platform_admin")
         .eq("id", user.id)
         .single();
 
@@ -98,11 +98,29 @@ export default function LoginPage() {
         try { await sb.auth.signOut({ scope: "others" }); } catch { /* ignore */ }
       }
 
+      // Resolve the post-login landing page.
+      //
+      // Order matters: platform_admin is a flag (not a role) — internal staff
+      // accounts often have role=null but platform_admin=true, so we MUST
+      // check the flag first. Falling through to "/student" for them sent
+      // them to the student layout, which then bounced role!="student" back
+      // to /login — the source of the login-loop bug for admin accounts.
       const next = readNextParam();
       const home =
-        prof?.role === "teacher" ? "/teacher" :
+        prof?.platform_admin ? "/admin/onboard-school" :
         prof?.role === "super_teacher" ? "/school" :
-        "/student";
+        prof?.role === "teacher" ? "/teacher" :
+        prof?.role === "student" ? "/student" :
+        // No recognised role and no admin flag — surface this as an error
+        // rather than bounce them silently between /login and a protected
+        // dashboard. Most often it means the profile row is missing.
+        "__no_profile__";
+
+      if (home === "__no_profile__") {
+        throw new Error(
+          "Your account is signed in but no profile is set up. Please contact support."
+        );
+      }
       router.push(next || home);
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Sign in failed.");

@@ -153,10 +153,10 @@ export async function POST(req: Request) {
     if (requestedPlanId) {
       const { data: plan } = await admin
         .from("plans")
-        .select("id, label, tier, period_days, status")
+        .select("id, label, tier, period_days")
         .eq("id", requestedPlanId)
         .maybeSingle();
-      if (plan && plan.status === "active") {
+      if (plan) {
         const legacyTier =
           plan.tier === "school_plus" ? "premium_plus"
           : plan.tier.startsWith("school_") ? "premium"
@@ -257,13 +257,12 @@ export async function GET(req: Request) {
       }
     }
 
-    // Available school plans for the inline dropdown — every active row
-    // whose tier starts with school_*. Returned alongside the schools so
-    // the UI can render the selector without a second fetch.
+    // Available school plans for the inline dropdown — every catalogue
+    // row whose tier starts with school_*. Returned alongside the schools
+    // so the UI can render the selector without a second fetch.
     const { data: schoolPlans } = await admin
       .from("plans")
       .select("id, slug, tier, label")
-      .eq("status", "active")
       .like("tier", "school_%")
       .order("tier", { ascending: true });
 
