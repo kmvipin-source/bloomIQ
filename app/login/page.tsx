@@ -4,9 +4,78 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { supabaseBrowser } from "@/lib/supabase/client";
-import { Eye, EyeOff } from "lucide-react";
+import { Eye, EyeOff, GraduationCap, BookOpen, Building2, ShieldCheck } from "lucide-react";
 
 const SCHOOL_DOMAIN = "bloomiq.invalid";
+
+type RoleTab = "student" | "teacher" | "school" | "admin";
+type StudentMode = "school" | "independent";
+
+type TabMeta = {
+  label: string;
+  heading: string;
+  identifierLabel: string;
+  identifierPlaceholder: string;
+  hint: string;
+  Icon: React.ComponentType<{ size?: number }>;
+};
+
+// Auth call is identical for every tab + mode — these strings only customise
+// heading, identifier label, and hints so users know which account type they
+// are signing in with.
+const ROLE_TABS: Record<RoleTab, TabMeta> = {
+  student: {
+    label: "Student",
+    heading: "Student sign in",
+    identifierLabel: "Email or username",
+    identifierPlaceholder: "your.email@example.com or your.username",
+    hint: "Pick School student if your teacher gave you a username, or Independent if you signed up yourself with email.",
+    Icon: GraduationCap,
+  },
+  teacher: {
+    label: "Teacher",
+    heading: "Teacher sign in",
+    identifierLabel: "Work email",
+    identifierPlaceholder: "you@school.edu",
+    hint: "Teachers sign in with the email you used at signup.",
+    Icon: BookOpen,
+  },
+  school: {
+    label: "Admin",
+    heading: "Admin Head (Principal) sign in",
+    identifierLabel: "Work email",
+    identifierPlaceholder: "principal@school.edu",
+    hint: "School Admin Heads / Principals — sign in with the email BloomIQ invited.",
+    Icon: Building2,
+  },
+  admin: {
+    label: "Platform",
+    heading: "Platform Admin sign in",
+    identifierLabel: "Email",
+    identifierPlaceholder: "you@bloomiq.example",
+    hint: "BloomIQ staff only.",
+    Icon: ShieldCheck,
+  },
+};
+
+const STUDENT_MODES: Record<StudentMode, TabMeta> = {
+  school: {
+    label: "School student",
+    heading: "School student sign in",
+    identifierLabel: "Username",
+    identifierPlaceholder: "the username your teacher gave you",
+    hint: "Created by your teacher. No email needed — just the username and password they shared.",
+    Icon: GraduationCap,
+  },
+  independent: {
+    label: "Independent student",
+    heading: "Independent student sign in",
+    identifierLabel: "Email",
+    identifierPlaceholder: "you@example.com",
+    hint: "Self-signup learner with a personal subscription. Sign in with the email you used at signup.",
+    Icon: GraduationCap,
+  },
+};
 
 function readNextParam(): string | null {
   if (typeof window === "undefined") return null;
@@ -29,6 +98,12 @@ export default function LoginPage() {
   const [forgotMode, setForgotMode] = useState(false);
   const [forgotBusy, setForgotBusy] = useState(false);
   const [forgotMsg, setForgotMsg] = useState<string | null>(null);
+
+  const [roleTab, setRoleTab] = useState<RoleTab>("student");
+  const [studentMode, setStudentMode] = useState<StudentMode>("school");
+  // When the Student tab is active, the sub-mode (school vs independent)
+  // overrides the generic Student labels with the more specific ones.
+  const tab: TabMeta = roleTab === "student" ? STUDENT_MODES[studentMode] : ROLE_TABS[roleTab];
 
   async function sendReset() {
     setErr(null);
@@ -85,7 +160,7 @@ export default function LoginPage() {
 
       const { data: prof } = await sb
         .from("profiles")
-        .select("role, is_school_student")
+        .select("role, is_school_student, platform_admin")
         .eq("id", user.id)
         .single();
 
@@ -99,7 +174,10 @@ export default function LoginPage() {
       }
 
       const next = readNextParam();
+      // platform_admin is exclusive: regardless of profiles.role, send the
+      // user to the admin dashboard. No hybrid student/teacher/school home.
       const home =
+        prof?.platform_admin ? "/admin/onboard-school" :
         prof?.role === "teacher" ? "/teacher" :
         prof?.role === "super_teacher" ? "/school" :
         "/student";
@@ -120,11 +198,80 @@ export default function LoginPage() {
         </Link>
 
         <div className="card">
-          <h1 className="text-2xl font-bold mb-6">Sign in</h1>
+          {/* Role tabs — purely informational. The same Supabase signin call
+              fires regardless of the active tab; tabs only re-label fields
+              and the heading so users know which kind of account they're
+              signing in with. */}
+          <div
+            className="grid grid-cols-4 gap-2 mb-5 p-1.5 rounded-xl"
+            style={{ background: "var(--color-bg-soft, #f1f5f9)" }}
+            role="tablist"
+            aria-label="Sign in as"
+          >
+            {(Object.keys(ROLE_TABS) as RoleTab[]).map((k) => {
+              const t = ROLE_TABS[k];
+              const active = k === roleTab;
+              return (
+                <button
+                  key={k}
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  onClick={() => setRoleTab(k)}
+                  className="inline-flex flex-col items-center justify-center gap-1 text-[11px] sm:text-xs font-semibold py-2.5 px-2 rounded-lg transition whitespace-nowrap"
+                  style={{
+                    background: active ? "var(--color-card, #fff)" : "transparent",
+                    color: active ? "var(--brand-700, #047857)" : "var(--color-fg-soft, #475569)",
+                    boxShadow: active ? "0 1px 3px rgba(0,0,0,0.08)" : undefined,
+                  }}
+                >
+                  <t.Icon size={16} />
+                  <span>{t.label}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Student sub-mode pill — only visible when the Student tab is
+              active. Explicit because the school-vs-independent distinction
+              is the most common confusion at /login. */}
+          {roleTab === "student" && (
+            <div
+              className="inline-flex p-1 rounded-full mb-4 text-xs font-semibold"
+              style={{ background: "var(--color-bg-soft, #f1f5f9)" }}
+              role="radiogroup"
+              aria-label="Student type"
+            >
+              {(Object.keys(STUDENT_MODES) as StudentMode[]).map((m) => {
+                const active = m === studentMode;
+                return (
+                  <button
+                    key={m}
+                    type="button"
+                    role="radio"
+                    aria-checked={active}
+                    onClick={() => setStudentMode(m)}
+                    className="px-3 py-1.5 rounded-full transition"
+                    style={{
+                      background: active ? "var(--color-card, #fff)" : "transparent",
+                      color: active ? "var(--brand-700, #047857)" : "var(--color-fg-soft, #475569)",
+                      boxShadow: active ? "0 1px 3px rgba(0,0,0,0.08)" : undefined,
+                    }}
+                  >
+                    {STUDENT_MODES[m].label}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          <h1 className="text-2xl font-bold mb-6 flex items-center gap-2">
+            <tab.Icon size={22} /> {tab.heading}
+          </h1>
 
           <form onSubmit={submit} className="space-y-4">
             <div>
-              <label className="label">Email or username</label>
+              <label className="label">{tab.identifierLabel}</label>
               <input
                 className="input"
                 type="text"
@@ -133,7 +280,7 @@ export default function LoginPage() {
                 autoComplete="username"
                 value={identifier}
                 onChange={(e) => { setIdentifier(e.target.value); setForgotMsg(null); }}
-                placeholder="your.email@example.com"
+                placeholder={tab.identifierPlaceholder}
                 suppressHydrationWarning
               />
             </div>
@@ -222,7 +369,7 @@ export default function LoginPage() {
         </div>
 
         <p className="text-xs text-slate-500 text-center mt-4">
-          School student? Use the username your teacher gave you.
+          {tab.hint}
         </p>
       </div>
     </main>
