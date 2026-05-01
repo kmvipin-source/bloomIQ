@@ -6,17 +6,7 @@
     "dev": "next dev --webpack",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint",
-    "test:e2e": "playwright test",
-    "test:e2e:ui": "playwright test --ui",
-    "test:e2e:headed": "playwright test --headed",
-    "test:e2e:list": "playwright test --list",
-    "test:e2e:report": "playwright show-report",
-    "test:e2e:seed": "tsx tests/e2e/helpers/run-seed.ts",
-    "test:e2e:seed:full": "tsx tests/e2e/helpers/run-seed-full.ts",
-    "test:e2e:verify": "tsx tests/e2e/helpers/run-verify-login.ts",
-    "test:e2e:cleanup": "tsx tests/e2e/helpers/run-cleanup.ts",
-    "cron:smoke": "tsx tests/e2e/helpers/cron-smoke.ts"
+    "lint": "eslint"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
@@ -39,7 +29,6 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
-    "@playwright/test": "^1.48.0",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/nodemailer": "^6.4.16",
