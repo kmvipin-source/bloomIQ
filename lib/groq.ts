@@ -1,7 +1,16 @@
 import Groq from "groq-sdk";
 
+// Server-side only. Do NOT use the NEXT_PUBLIC_* prefix — Next.js inlines
+// any NEXT_PUBLIC_* var as a build-time constant into the client bundle,
+// which would leak this Groq API key to anyone with browser DevTools.
+// The fallback to NEXT_PUBLIC_GROQ_API_KEY exists only to ease migration
+// for older deployments; remove the fallback once every .env has the
+// non-public name in place.
 const groqClient = new Groq({
-  apiKey: process.env.NEXT_PUBLIC_GROQ_API_KEY!,
+  apiKey:
+    process.env.GROQ_API_KEY ||
+    process.env.NEXT_PUBLIC_GROQ_API_KEY ||
+    "",
 });
 
 export const GROQ_MODEL = "llama-3.3-70b-versatile";
