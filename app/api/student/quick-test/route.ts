@@ -7,7 +7,7 @@ import {
   isBloomLevel,
   blankBloomCounts,
 } from "@/lib/bloom";
-import { getBearer, supabaseServer } from "@/lib/supabase/server";
+import { getBearer, supabaseServer, supabaseAdmin } from "@/lib/supabase/server";
 import { generateQuizCode } from "@/lib/utils";
 import { classifyQuiz } from "@/lib/classifier";
 import {
@@ -397,10 +397,14 @@ export async function POST(req: Request) {
       console.warn(`[quick-test] classify failed (non-fatal):`, e instanceof Error ? e.message : e);
     }
 
-    // 3) Create a quiz with a fresh code
+    // 3) Create a quiz with a fresh code. The collision check needs to see
+    // OTHER users' codes too (the unique index spans the whole table), so
+    // we use the service-role admin client — RLS would otherwise hide rows
+    // that don't belong to the caller.
+    const adminCheck = supabaseAdmin();
     let code = generateQuizCode();
     for (let i = 0; i < 4; i++) {
-      const { data: existing } = await sb.from("quizzes").select("id").eq("code", code).maybeSingle();
+      const { data: existing } = await adminCheck.from("quizzes").select("id").eq("code", code).maybeSingle();
       if (!existing) break;
       code = generateQuizCode();
     }

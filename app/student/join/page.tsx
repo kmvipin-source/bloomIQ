@@ -15,19 +15,21 @@ export default function JoinPage() {
     const c = code.trim().toUpperCase();
     if (c.length < 4) return setErr("Please enter a valid quiz code.");
     setBusy(true);
-    const sb = supabaseBrowser();
-    const { data: quiz } = await sb.from("quizzes").select("id, active").eq("code", c).maybeSingle();
-    if (!quiz) {
-      setErr("No quiz found with that code. Double-check with your teacher.");
+    try {
+      const sb = supabaseBrowser();
+      const { data: { session } } = await sb.auth.getSession();
+      if (!session) { setErr("Please sign in first."); setBusy(false); return; }
+      const r = await fetch(`/api/student/quiz-by-code?code=${encodeURIComponent(c)}`, {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      if (r.status === 404) { setErr("No quiz found with that code. Double-check with your teacher."); setBusy(false); return; }
+      if (r.status === 410) { setErr("This quiz is closed."); setBusy(false); return; }
+      if (!r.ok) { const j = await r.json().catch(() => ({})); setErr(j?.error || "Lookup failed."); setBusy(false); return; }
+      router.push(`/student/quiz/${c}`);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Lookup failed");
       setBusy(false);
-      return;
     }
-    if (!quiz.active) {
-      setErr("This quiz is closed.");
-      setBusy(false);
-      return;
-    }
-    router.push(`/student/quiz/${c}`);
   }
 
   return (

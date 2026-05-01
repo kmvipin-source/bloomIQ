@@ -27,7 +27,7 @@ import {
   type BloomLevel,
   isBloomLevel,
 } from "@/lib/bloom";
-import { getBearer, supabaseServer } from "@/lib/supabase/server";
+import { getBearer, supabaseServer, supabaseAdmin } from "@/lib/supabase/server";
 import { generateQuizCode, pct as pctFn } from "@/lib/utils";
 import { buildStudentContext } from "@/lib/studentContext";
 import {
@@ -273,9 +273,12 @@ export async function POST(req: Request) {
 
     // 6) Create the quiz with a fresh code. Try the rich insert first
     //    (subject column may exist post-migration 04); fall back gracefully.
+    // Code-collision check uses admin client so it sees codes from OTHER
+    // users (RLS otherwise hides them after the read-by-code policy drop).
+    const adminCheck = supabaseAdmin();
     let code = generateQuizCode();
     for (let i = 0; i < 4; i++) {
-      const { data: existing } = await sb
+      const { data: existing } = await adminCheck
         .from("quizzes")
         .select("id")
         .eq("code", code)
