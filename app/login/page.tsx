@@ -85,7 +85,7 @@ export default function LoginPage() {
 
       const { data: prof } = await sb
         .from("profiles")
-        .select("role, is_school_student")
+        .select("role, is_school_student, platform_admin")
         .eq("id", user.id)
         .single();
 
@@ -99,7 +99,10 @@ export default function LoginPage() {
       }
 
       const next = readNextParam();
+      // platform_admin is exclusive: regardless of profiles.role, send the
+      // user to the admin dashboard. No hybrid student/teacher/school home.
       const home =
+        prof?.platform_admin ? "/admin/onboard-school" :
         prof?.role === "teacher" ? "/teacher" :
         prof?.role === "super_teacher" ? "/school" :
         "/student";
