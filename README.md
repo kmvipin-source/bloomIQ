@@ -202,6 +202,68 @@ Apply via Supabase Dashboard → SQL Editor (paste each file, run) or
     "need N more samples" — fine messaging, but the feature gets
     meaningfully better as the cohort fills out.
 
+### Resume tomorrow — pick-up checklist
+
+When you sit back down, work through these in order:
+
+**Verify last session landed correctly**
+
+  - [ ] `git pull origin main` (in case any collaborator commits arrived overnight).
+  - [ ] `git log --oneline -3` should show `51ac8d9` or its successor at the
+        top (the cohort-benchmarks + rank-disclaimers + RLS-recursion-fix
+        commit pushed at end of last session).
+
+**Apply pending migrations to Supabase** *(this is the gating step — none of the new features will work until this runs)*
+
+  - [ ] Open Supabase Dashboard → SQL Editor → run, in order:
+        - `supabase/migrations/38_fix_quizzes_rls_recursion.sql`
+        - `supabase/migrations/39_attempt_answers_time_taken_ms.sql`
+        - `supabase/migrations/40_profiles_track_question_time.sql`
+        - `supabase/migrations/41_grant_cohort_benchmarks_to_premium_plus.sql`
+  - [ ] *Or* run `supabase db push` if the CLI is linked to the project.
+  - [ ] After applying 38, the "Could not save questions: infinite
+        recursion" error on `/student/adaptive-practice` should be gone —
+        smoke-test by trying to generate one practice set.
+
+**Test the new features end-to-end**
+
+  - [ ] `node scripts/seed-test-users.js --reset` (regenerates the org tree
+        with all 8 personas).
+  - [ ] Sign in as `premium.student@example.com` → take a short quiz →
+        consent modal appears → answer "Yes, track" → submit → results
+        page shows your per-question times + locked cohort column with
+        Premium Plus CTA.
+  - [ ] Sign in as `premiumplus.student@example.com` → same flow → results
+        page shows full cohort columns. Median will say
+        "need N more samples" until 5+ different students attempt the
+        same questions; that's expected.
+  - [ ] Click "Not now" on the modal as a fresh user → verify the
+        results page shows the opt-in CTA card instead of the table.
+  - [ ] Take a quiz, then alt-tab for ~30s → return → submit. Verify
+        the alt-tab time didn't get counted on the question that was
+        visible (visibility pause).
+
+**Optional fast-follows (any of these is a good ~30-min standalone task)**
+
+  - [ ] Build the `/settings` toggle for `track_question_time` so
+        students can flip without re-prompting via a quiz.
+  - [ ] Have `seed-test-users.js` optionally bind the seeded school to
+        `school_plus` (one extra subscription update + flag) so the
+        school-tier cohort path can be tested without manual SQL.
+  - [ ] Confirm Premium Plus pricing with whoever's on the business
+        side; replace the ₹199/₹1999 placeholders in the active plan
+        rows via the platform-admin UI.
+
+**Big-rock items still parked**
+
+  - 2FA / TOTP enrollment for `platform_admin` accounts (from the
+    earlier 2026-05-01 login-loop session — not started).
+  - Server-side periodic timing persistence to survive mid-quiz page
+    refreshes (this session, deferred).
+  - `lib/auth/landingFor.ts` central helper to prevent future "we
+    forgot platform_admin in this redirect" bugs (from the login-loop
+    session).
+
 ---
 
 ## 🆕 Earlier session — 2026-05-01 (Login loop hotfix: platform-admin redirect)
