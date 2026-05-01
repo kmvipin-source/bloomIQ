@@ -27,12 +27,18 @@ test.describe("super_teacher dashboard", () => {
     await expect(page.locator("body")).toContainText(FIXTURES.superTeacherA.schoolName);
   });
 
-  test("/school shows nav links to subpages", async ({ page }) => {
+  test("/school sidebar exposes management links", async ({ page }) => {
     await page.goto("/school");
     await page.waitForLoadState("networkidle");
-    const links = await page.locator("a").allTextContents();
-    const joined = links.join(" ").toLowerCase();
-    expect(joined).toMatch(/classes|teachers|students|reports/);
+    // Look for sidebar links by href, not text — robust to label rewording
+    // ("All Classes", "Top Students", "School Home", etc.).
+    const hrefs = await page.locator("a[href]").evaluateAll((els) =>
+      (els as HTMLAnchorElement[]).map((a) => a.getAttribute("href") || "")
+    );
+    const want = ["/school/classes", "/school/students", "/school/teachers", "/school/reports"];
+    const matched = want.filter((h) => hrefs.includes(h));
+    // Sidebar shows at least three of the four management links.
+    expect(matched.length).toBeGreaterThanOrEqual(3);
   });
 });
 

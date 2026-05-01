@@ -23,6 +23,16 @@ function passwordInput(page: Page) {
 function signInButton(page: Page) {
   return page.getByRole("button", { name: /sign in/i });
 }
+/**
+ * The /login form gates Sign in on a "I agree to ToS + Privacy" click-wrap
+ * checkbox. Tick it before clicking Sign in or the button stays disabled.
+ */
+async function acceptToS(page: Page) {
+  const cb = page.getByRole("checkbox").first();
+  if (await cb.count() > 0 && !(await cb.isChecked())) {
+    await cb.check();
+  }
+}
 
 export async function loginAs(page: Page, key: FixtureKey, opts: { expectRedirect?: boolean } = {}) {
   const f = FIXTURES[key];
@@ -39,6 +49,7 @@ export async function loginAs(page: Page, key: FixtureKey, opts: { expectRedirec
 
   await identifierInput(page).fill(identifier);
   await passwordInput(page).fill(f.password);
+  await acceptToS(page);
   await signInButton(page).click();
 
   if (opts.expectRedirect !== false) {
@@ -56,6 +67,7 @@ export async function loginExpectError(page: Page, identifier: string, password:
   await page.goto("/login");
   await identifierInput(page).fill(identifier);
   await passwordInput(page).fill(password);
+  await acceptToS(page);
   await signInButton(page).click();
   await expect(page.getByText(/incorrect|failed|please try again/i)).toBeVisible({ timeout: 10_000 });
 }

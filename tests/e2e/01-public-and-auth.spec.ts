@@ -54,9 +54,14 @@ test.describe("public pages render", () => {
     await expect(page.getByText(/creating account as/i)).toBeVisible();
   });
 
-  test("signup with ?role=super_teacher shows admin head form", async ({ page }) => {
+  test("signup with ?role=super_teacher is rejected (invite-only)", async ({ page }) => {
+    // super_teacher is now an invite-only role. The /signup form rejects
+    // ?role=super_teacher and should NOT render the form. Allow either of:
+    //   - redirect to a role-picker / login / home page
+    //   - render an explicit "invite-only" message
     await page.goto("/signup?role=super_teacher");
-    await expect(page.getByText(/creating account as/i)).toBeVisible();
+    const formMissing = await page.getByText(/creating account as/i).count() === 0;
+    expect(formMissing).toBe(true);
   });
 });
 
@@ -73,10 +78,19 @@ test.describe("login form validation", () => {
     await loginExpectError(page, "test_no_such_student", "anything");
   });
 
-  test("login form requires identifier", async ({ page }) => {
+  test("login form requires identifier + ToS check before signin enables", async ({ page }) => {
     await page.goto("/login");
     await page.locator('input[type="password"]').first().fill("anything");
-    await page.getByRole("button", { name: /sign in/i }).click();
+    // Without ticking the ToS checkbox the Sign in button stays disabled
+    // and the URL never leaves /login.
+    const signIn = page.getByRole("button", { name: /sign in/i });
+    await expect(signIn).toBeDisabled();
+    await expect(page).toHaveURL(/\/login/);
+    // Tick the ToS box but leave the identifier empty: HTML5 'required'
+    // blocks form submit, so URL still /login.
+    const cb = page.getByRole("checkbox").first();
+    if ((await cb.count()) > 0) await cb.check();
+    await signIn.click().catch(() => { /* may still be no-op until identifier */ });
     await expect(page).toHaveURL(/\/login/);
   });
 });
