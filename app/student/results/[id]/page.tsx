@@ -8,7 +8,7 @@ import { BLOOM_LEVELS, BLOOM_META, blankBloomCounts, type BloomLevel } from "@/l
 import { BloomRadar } from "@/components/BloomChart";
 import type { QuizAttempt } from "@/lib/types";
 import { pct, formatSeconds } from "@/lib/utils";
-import { Sparkles, Search, AlertOctagon, Crosshair, Trophy, Brain } from "lucide-react";
+import { Sparkles, Search, AlertOctagon, Crosshair, Trophy, Brain, Clock, Lock, Settings as SettingsIcon } from "lucide-react";
 
 type Detail = QuizAttempt & { quiz: { name: string; code: string } | null };
 
@@ -46,6 +46,30 @@ export default function ResultsPage() {
   const [srsResult, setSrsResult] = useState<{ enqueued: number; skipped: number } | null>(null);
   const [srsErr, setSrsErr] = useState<string | null>(null);
 
+  // ----- Per-question pacing state -----
+  // benchData.questions[] is sorted by quiz position. Each row is the
+  // student's own answer + (optionally) cohort median if entitled.
+  type BenchRow = {
+    question_id: string;
+    position: number;
+    is_correct: boolean | null;
+    bloom_level: string | null;
+    your_ms: number | null;
+    median_ms: number | null;
+    n_samples: number;
+    speed_label: "fast" | "on_pace" | "slow" | "no_benchmark" | "no_data";
+  };
+  type BenchPayload = {
+    questions: BenchRow[];
+    overall: { your_total_ms: number; median_total_ms: number; delta_pct: number | null; questions_with_benchmark: number } | null;
+    benchmark_allowed: boolean;
+    required_tier?: string | null;
+  };
+  const [benchData, setBenchData] = useState<BenchPayload | null>(null);
+  // The student's own consent value — drives whether we even attempt
+  // to fetch benchmarks. NULL/false → show the consent CTA instead.
+  const [trackTime, setTrackTime] = useState<boolean | null | undefined>(undefined);
+
   useEffect(() => {
     (async () => {
       const sb = supabaseBrowser();
@@ -64,6 +88,32 @@ export default function ResultsPage() {
       const next = {} as Record<BloomLevel, { c: number; t: number }>;
       BLOOM_LEVELS.forEach((l) => next[l] = { c: counts[l], t: tot[l] });
       setByLevel(next);
+
+      // Resolve consent + load per-question pacing. Skip the API call
+      // entirely when the student opted out — we'll render the opt-in
+      // CTA instead.
+      const { data: { user } } = await sb.auth.getUser();
+      if (!user) return;
+      const { data: prof } = await sb
+        .from("profiles")
+        .select("track_question_time")
+        .eq("id", user.id)
+        .maybeSingle();
+      const consent = (prof as { track_question_time: boolean | null } | null)?.track_question_time ?? null;
+      setTrackTime(consent);
+      if (consent === true) {
+        const { data: { session } } = await sb.auth.getSession();
+        if (!session) return;
+        try {
+          const r = await fetch(`/api/student/question-benchmarks?attempt_id=${id}`, {
+            headers: { Authorization: `Bearer ${session.access_token}` },
+          });
+          if (r.ok) {
+            const j = await r.json();
+            setBenchData(j as BenchPayload);
+          }
+        } catch { /* non-fatal — section just won't render */ }
+      }
     })();
   }, [id]);
 
@@ -232,6 +282,136 @@ export default function ResultsPage() {
         <h3 className="h2 mb-2">Your thinking-level profile</h3>
         <BloomRadar data={radarData} />
       </div>
+
+      {/* ============ PER-QUESTION PACING ============
+          Three render modes:
+            1. consent === false (or null & not yet asked anywhere) →
+               opt-in CTA pointing to /settings.
+            2. consent === true + benchmark_allowed → full per-question
+               table with own time + cohort median + speed indicator.
+            3. consent === true + benchmark_allowed=false → own-time only,
+               with a 🔒 chip teasing the cohort feature on Premium Plus.
+          We never render this section until trackTime resolves (avoids
+          flash of "enable tracking" for paying students). */}
+      {trackTime === false && (
+        <div className="card mt-4 bg-slate-50">
+          <div className="flex items-start gap-3">
+            <Clock size={20} className="text-slate-500 mt-0.5 shrink-0" />
+            <div className="flex-1">
+              <h3 className="h2">See your pacing per question</h3>
+              <p className="text-sm muted mt-1 max-w-xl">
+                You currently have time-tracking turned off. Turn it on in{" "}
+                <Link href="/settings" className="text-emerald-700 underline">Settings</Link>{" "}
+                to see how long you spent on each question after future tests — and on Premium
+                Plus, how your pace compares to other students.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {trackTime === true && benchData && benchData.questions.length > 0 && (
+        <div className="card mt-4">
+          <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
+            <h3 className="h2 inline-flex items-center gap-2">
+              <Clock size={18} /> Per-question pacing
+            </h3>
+            {benchData.overall && benchData.overall.delta_pct !== null && (
+              <div className="text-xs muted">
+                Overall: you took{" "}
+                <strong className={benchData.overall.delta_pct > 15 ? "text-rose-700" : benchData.overall.delta_pct < -15 ? "text-emerald-700" : "text-slate-700"}>
+                  {benchData.overall.delta_pct > 0 ? "+" : ""}{benchData.overall.delta_pct}%
+                </strong>{" "}
+                vs. cohort median across {benchData.overall.questions_with_benchmark} questions
+              </div>
+            )}
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="text-xs uppercase muted border-b border-slate-200">
+                <tr>
+                  <th className="text-left py-2 pr-3">#</th>
+                  <th className="text-left py-2 pr-3">Result</th>
+                  <th className="text-left py-2 pr-3">Bloom</th>
+                  <th className="text-right py-2 pr-3">Your time</th>
+                  <th className="text-right py-2 pr-3">
+                    {benchData.benchmark_allowed ? "Cohort median" : (
+                      <span className="inline-flex items-center gap-1">
+                        Cohort median <Lock size={11} />
+                      </span>
+                    )}
+                  </th>
+                  <th className="text-left py-2">Pace</th>
+                </tr>
+              </thead>
+              <tbody>
+                {benchData.questions.map((row) => {
+                  const yourS = row.your_ms !== null ? Math.round(row.your_ms / 1000) : null;
+                  const medS = row.median_ms !== null ? Math.round(row.median_ms / 1000) : null;
+                  const paceTone =
+                    row.speed_label === "fast"   ? "bg-emerald-50 text-emerald-800 border-emerald-200" :
+                    row.speed_label === "slow"   ? "bg-rose-50 text-rose-800 border-rose-200"          :
+                    row.speed_label === "on_pace"? "bg-slate-50 text-slate-700 border-slate-200"        :
+                                                   "bg-slate-50 text-slate-500 border-slate-200";
+                  const paceLabel =
+                    row.speed_label === "fast"          ? "Fast"          :
+                    row.speed_label === "slow"          ? "Slow"          :
+                    row.speed_label === "on_pace"       ? "On pace"       :
+                    row.speed_label === "no_benchmark"  ? `Need ${5 - row.n_samples > 0 ? 5 - row.n_samples : 0} more samples` :
+                                                          "—";
+                  return (
+                    <tr key={row.question_id} className="border-b border-slate-100 last:border-0">
+                      <td className="py-2 pr-3 font-medium">Q{row.position || "—"}</td>
+                      <td className="py-2 pr-3">
+                        {row.is_correct === true  ? <span className="text-emerald-700">✓ Correct</span> :
+                         row.is_correct === false ? <span className="text-rose-700">✗ Wrong</span>     :
+                                                    <span className="muted">— Skipped</span>}
+                      </td>
+                      <td className="py-2 pr-3 capitalize text-slate-600">{row.bloom_level || "—"}</td>
+                      <td className="py-2 pr-3 text-right tabular-nums">{yourS !== null ? `${yourS}s` : "—"}</td>
+                      <td className="py-2 pr-3 text-right tabular-nums">
+                        {benchData.benchmark_allowed
+                          ? (medS !== null ? `${medS}s` : <span className="muted text-xs">—</span>)
+                          : <span className="muted text-xs">Premium Plus</span>}
+                      </td>
+                      <td className="py-2">
+                        {benchData.benchmark_allowed ? (
+                          <span className={`inline-block text-xs px-2 py-0.5 rounded-full border ${paceTone}`}>
+                            {paceLabel}
+                          </span>
+                        ) : (
+                          <Link href="/pricing" className="inline-flex items-center gap-1 text-xs text-amber-800 hover:text-amber-700">
+                            <Lock size={11} /> Unlock
+                          </Link>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          {!benchData.benchmark_allowed && (
+            <div className="mt-3 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-[13px] text-amber-900 flex items-start gap-2">
+              <Lock size={14} className="mt-0.5 shrink-0" />
+              <div>
+                <strong>Cohort comparison is a Premium Plus feature.</strong> Upgrade to see how your
+                pace stacks up against other students on each question, with fast / on-pace / slow
+                indicators. Your own per-question times are always visible.{" "}
+                <Link href="/pricing" className="underline">See plans →</Link>
+              </div>
+            </div>
+          )}
+          <div className="mt-3 text-xs muted flex items-start gap-1.5">
+            <SettingsIcon size={12} className="mt-0.5 shrink-0" />
+            <span>
+              Times are total ms across all visits to each question (back-button revisits accumulate).
+              Tab-switches don&apos;t count. Cohort medians need at least 5 other students to be shown.
+              You can turn time tracking off any time in <Link href="/settings" className="underline">Settings</Link>.
+            </span>
+          </div>
+        </div>
+      )}
 
       <div className="card mt-4">
         <div className="flex items-center justify-between mb-3">

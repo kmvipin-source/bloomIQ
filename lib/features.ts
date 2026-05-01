@@ -106,6 +106,13 @@ export const FEATURES: FeatureDef[] = [
     category: "metacognition",
     description: "Train metacognitive accuracy — defeats negative marking.",
   },
+  {
+    key: "cohort_benchmarks",
+    label: "Cohort pacing benchmarks",
+    category: "metacognition",
+    description:
+      "Per-question median time across other students who attempted the same question, with fast / on-pace / slow indicators.",
+  },
 
   // ---------- exam_prep ----------
   {

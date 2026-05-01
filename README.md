@@ -12,7 +12,199 @@ This project uses **Next.js 16** with breaking changes — APIs, conventions, an
 
 ---
 
-## 🆕 Latest session — 2026-05-01 (Login loop hotfix: platform-admin redirect)
+## 🆕 Latest session — 2026-05-01 evening (Cohort pacing benchmarks + rank-prediction disclaimers + RLS recursion fix + test-user seed)
+
+A wide-ranging session covering one student-facing feature (Premium Plus only),
+one product-honesty pass, one production bug fix, and one developer tool.
+
+### What shipped
+
+**1. Per-question pacing + cohort benchmarks (new feature, gated to Premium Plus + School Plus).**
+
+After a quiz, the results page now shows a per-question table: your time
+per question, plus — for entitled students — the **cohort median** for
+that exact question and a **fast / on-pace / slow** chip. Free/Premium
+students see their own times; the cohort column is locked with a clear
+upgrade CTA. This is the third "metacognition" feature alongside
+Misconception Detective and Confidence Calibration.
+
+Three render modes on the results page:
+
+  - **Opted out of tracking** → friendly opt-in CTA pointing at Settings.
+  - **Tracking + entitled** → full table with cohort median + speed chips.
+  - **Tracking + not entitled** → own-time table, cohort column shows a
+    🔒 chip that links to /pricing.
+
+Outlier guards baked into the cohort baseline:
+
+  - Per-question time capped at 10 minutes on submit (single-question
+    "left tab open" sessions can't poison the cohort).
+  - Aggregation query filters to `1s ≤ time ≤ 10min` — drops misclicks
+    and tab-switches.
+  - Median (not mean) so a few inflated outliers can't move the baseline.
+  - Minimum 5 cohort samples before the median is shown (below that the
+    UI says "need N more samples"). Avoids early-stage noise on questions
+    only one student has answered.
+
+**2. Consent-based tracking.**
+
+A one-time modal at the start of a quiz asks "Track your time per question?"
+with **Yes / Not now**. Both buttons persist to a new `profiles.track_question_time`
+column so we never ask twice. Students who decline get NULL written to
+`time_taken_ms` on every row — they don't see their own pacing data, AND
+they don't pollute the cohort baseline. The CTA in the results page links
+to `/settings` for later flip (the actual toggle UI on /settings is a
+follow-up — see backlog).
+
+**3. Tab-visibility pause + back-button revisit accumulation.**
+
+The quiz page now uses the Page Visibility API. Alt-tab / minimize /
+device-sleep flushes the running question's elapsed time and stops counting;
+returning starts the timer fresh on whatever question is now visible.
+Back-button navigation within the quiz is also handled — revisits ACCUMULATE
+onto a question's total (cognitive time across all visits, not just the
+first reading). Forward navigation, in-app Previous, submit, and time-out
+auto-submit all flush correctly. The one residual gap is a full page
+refresh mid-quiz losing the in-memory tracker — deferred to a v2 with
+server-side periodic persistence.
+
+**4. Rank predictor — honest disclaimers + confidence band.**
+
+The `/student/rank` page used to present the Predicted AIR as a precise
+number (e.g. "~242,000"). It now shows a **confidence band** (e.g.
+"180,000 – 290,000") computed by combining binomial sampling error of the
+test score with a small ±2pp baseline-drift allowance — about a 95% band.
+Three new disclosure layers:
+
+  - **Test-length confidence chip** (red/amber/yellow/green) that adapts
+    to the number of questions: <20 questions = "Low confidence — midpoint
+    should not be taken seriously"; 120+ = "Higher confidence — band is
+    tight."
+  - **Symmetric warnings** so neither direction inflates the student:
+    "If the number looks great" (don't celebrate yet) and "If it looks
+    rough" (a single mock isn't your ceiling).
+  - **Collapsible "How this is calculated"** with three sub-sections:
+    The model, What we assume, and **What this number does NOT account for**
+    (paper difficulty, section normalization, negative marking, tie-breaking,
+    cohort variance, mock question quality, test-day form).
+
+The API also returns the model name + assumptions + score margin so the
+UI can render them honestly. Cohort baselines are still rough order-of-
+magnitude figures — explicitly called out in the UI now.
+
+**5. RLS infinite-recursion fix on quizzes / quiz_assignments.**
+
+Migration 35 had introduced a `quizzes read for assigned` policy whose
+EXISTS clause queried `quiz_assignments`. Migration 31's `assign select`
+policy on `quiz_assignments` queried `quizzes` right back. Postgres
+detected the cycle and threw `infinite recursion detected in policy for
+relation "quizzes"` on any flow that touched quizzes — including
+`/student/adaptive-practice` ("Could not save questions: infinite
+recursion..."). Fixed by encapsulating the cross-table membership check
+in a `SECURITY DEFINER` helper (`is_quiz_assigned_to_me(qid)`) — same
+pattern migration 04 already uses for `is_class_teacher`,
+`is_class_primary`, `is_super_for_school`. Standard RLS-cycle break.
+
+**6. Lock-stealing noise on the Supabase auth client.**
+
+Replaced `@supabase/auth-js`'s navigator-lock with a tiny in-process
+promise-chain mutex in `lib/supabase/client.ts`. React Strict Mode in
+dev double-fires effects; two `getUser()` calls would race for the lock
+and one would log `"Lock '...' was released because another request stole
+it"`. Harmless in behaviour (the inner promise still resolves) but it
+surfaces in Next.js's dev overlay as a "Runtime Error". The new
+`processLock` serializes auth calls within the tab — same effective
+behaviour as the navigator lock for this app, no cross-tab fanciness,
+no noisy logs. Production isn't affected (Strict Mode doesn't double-fire
+there), but dev is now quiet.
+
+**7. Test-user seed script — `scripts/seed-test-users.js`.**
+
+Creates a complete, ready-to-test org tree in one command:
+
+  - 1 school (`Test Academy`) + 1 admin (`super_teacher`)
+  - 1 primary teacher + 1 co-teacher, both attached to a class
+  - 1 class with a `class_teachers` row each for primary + co
+  - 3 school students (`ananya`, `kabir`, `diya`) enrolled in the class
+  - 2 free independent students
+  - 1 Premium independent student (subscription bound to `premium_monthly`)
+  - 1 Premium Plus independent student (subscription bound to `premium_plus_monthly`)
+
+All accounts use password `TestPass123!`, all skip Supabase email
+confirmation. Idempotent — `--reset` wipes prior runs. Prints a
+credentials table at the end. The paid-tier subscriptions get a 1-year
+`expires_at` so they don't expire mid-test. Override that with
+`SEED_PAID_DAYS=30` if you want to actually test renewal flows.
+
+The script intentionally uses `upsert` for `class_teachers` (a DB trigger
+auto-inserts the primary row from `classes.owner_id`, so a plain insert
+would hit a duplicate-key error) and a fall-back UPDATE-then-INSERT for
+`subscriptions` (PostgREST can't always see the inline UNIQUE on
+`subscriptions.user_id` for ON CONFLICT to work). Both quirks are
+documented inline in the script.
+
+### Migrations to apply (in order)
+
+  - `38_fix_quizzes_rls_recursion.sql` — `is_quiz_assigned_to_me()` helper, replace recursive policy
+  - `39_attempt_answers_time_taken_ms.sql` — per-question timing column + partial index
+  - `40_profiles_track_question_time.sql` — student consent flag (NULL/TRUE/FALSE)
+  - `41_grant_cohort_benchmarks_to_premium_plus.sql` — append `cohort_benchmarks` to `premium_plus_monthly`, `premium_plus_annual`, `school_plus`
+
+Apply via Supabase Dashboard → SQL Editor (paste each file, run) or
+`supabase db push` if you have the CLI linked.
+
+### Files added / changed
+
+**New:**
+
+  - `app/api/student/question-benchmarks/route.ts` — cohort-median API,
+    server-side feature gate, only computes aggregation when entitled
+  - `lib/featureAccess.server.ts` — server-side `requireFeature(userId, key)`
+    (the docstring in `lib/featureAccess.ts` had referenced this for
+    months but it had never been written — now it exists)
+  - `scripts/seed-test-users.js` — see §7
+  - 4 migration files listed above
+
+**Changed:**
+
+  - `app/api/rank/predict/route.ts` — `airBand()` helper + model metadata in the response
+  - `app/student/rank/page.tsx` — confidence chip, symmetric warnings, "what we don't account for" disclosure
+  - `app/student/quiz/[code]/page.tsx` — per-question timing refs, consent modal, tab-visibility pause, idx-change flush effect
+  - `app/student/results/[id]/page.tsx` — new "Per-question pacing" section, three render modes
+  - `lib/features.ts` — added `cohort_benchmarks` (category: metacognition)
+  - `lib/supabase/client.ts` — `processLock` replaces navigator lock
+
+### Gating recap
+
+| Tier | Sees own time | Sees cohort median |
+| --- | --- | --- |
+| Free / anon | If consented | 🔒 (Premium Plus CTA) |
+| Premium | If consented | 🔒 (Premium Plus CTA) |
+| **Premium Plus** | If consented | ✅ |
+| School Pilot / Standard | If consented | 🔒 (Premium Plus CTA) |
+| **School Plus** | If consented | ✅ |
+| Declined consent | — | — (Settings opt-in CTA) |
+
+### Open follow-ups
+
+  - **Settings toggle for `track_question_time`.** The CTA on results
+    page links to `/settings`, but the toggle UI itself isn't there
+    yet. ~30 lines.
+  - **Server-side periodic timing persistence.** Page-refresh mid-quiz
+    loses the in-memory tracker. Acceptable for v1 (95th-percentile case),
+    but worth a v2 that pre-creates `attempt_answers` rows at quiz start
+    and upserts `time_taken_ms` every 30 seconds.
+  - **Premium Plus prices are still placeholders** (₹199 / ₹1999 from
+    migration 26). Platform admin should confirm before shipping the
+    cohort-benchmarks feature publicly.
+  - **Cohort baseline seeding.** Until 5+ Premium Plus students attempt
+    the same question, the cohort median doesn't render. The UI shows
+    "need N more samples" — fine messaging, but the feature gets
+    meaningfully better as the cohort fills out.
+
+---
+
+## 🆕 Earlier session — 2026-05-01 (Login loop hotfix: platform-admin redirect)
 
 A short, focused hotfix session prompted by a real-user complaint —
 Vipin couldn't log in with `kmvipin@gmail.com` even after resetting

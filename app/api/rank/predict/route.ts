@@ -57,6 +57,39 @@ function pctToAir(scorePct: number, exam: ExamType): { percentile: number; air: 
   return { percentile, air, total: b.totalCandidates };
 }
 
+// Confidence band on the AIR. Two sources of uncertainty are baked in:
+//
+//   1. Score-sampling error. A 10-question mock has much wider noise on the
+//      true ability estimate than a 200-question paper. We use the binomial
+//      standard error of the score percentage:
+//         se = sqrt(p(1-p) / n)  where p = scorePct/100, n = max_score
+//      Multiplied by 2 ≈ ~95% band on the percentage.
+//
+//   2. Cohort-distribution model error. Our normal-distribution baselines
+//      are rough — even with infinite test length, the predicted percentile
+//      could be off by a few points. We add a flat ±2 pp margin in score
+//      space to absorb that.
+//
+// The two are combined in quadrature, then projected back to AIR by running
+// pctToAir at scorePct ± margin. Wider band = more honest with the student.
+function airBand(
+  scorePct: number,
+  maxScore: number,
+  exam: ExamType
+): { airLow: number; airHigh: number; marginPct: number } {
+  const p = Math.max(0, Math.min(100, scorePct)) / 100;
+  const n = Math.max(1, maxScore);
+  const samplingSE_pct = 100 * Math.sqrt((p * (1 - p)) / n); // pp on score
+  const modelMargin_pct = 2;                                  // pp baseline drift
+  const margin_pct = 2 * Math.sqrt(samplingSE_pct ** 2 + modelMargin_pct ** 2); // ~95% band
+  const lowScore  = Math.max(0,   scorePct - margin_pct);
+  const highScore = Math.min(100, scorePct + margin_pct);
+  // Higher score → BETTER (lower) AIR. So airLow comes from highScore.
+  const airLow  = pctToAir(highScore, exam).air;
+  const airHigh = pctToAir(lowScore,  exam).air;
+  return { airLow, airHigh, marginPct: margin_pct };
+}
+
 const SYSTEM = `You are a competitive-exam coach producing 3 short, high-leverage study actions for a student based on their mock-test breakdown.
 
 You will be given:
@@ -131,6 +164,7 @@ export async function POST(req: Request) {
     }
     const scorePct = Math.max(0, Math.min(100, (raw_score / max_score) * 100));
     const { percentile, air, total } = pctToAir(scorePct, exam_type);
+    const { airLow, airHigh, marginPct } = airBand(scorePct, max_score, exam_type);
 
     // Best-effort: ask AI for 3 directives. If it fails we still return the rank.
     let recommendations: string[] = [];
@@ -182,6 +216,9 @@ Return the 3-recommendation JSON.`;
         max_score,
         percentile,
         predicted_air: air,
+        air_low: airLow,
+        air_high: airHigh,
+        score_margin_pp: Number(marginPct.toFixed(2)),
         total_candidates: total,
         recommendations,
         warning: insErr.message,
@@ -197,9 +234,25 @@ Return the 3-recommendation JSON.`;
       max_score,
       percentile,
       predicted_air: air,
+      air_low: airLow,
+      air_high: airHigh,
+      score_margin_pp: Number(marginPct.toFixed(2)),
       total_candidates: total,
       recommendations,
       weakest_areas,
+      // Surface the model name + assumptions so the UI can display them
+      // honestly rather than presenting AIR as if it were precise.
+      model: {
+        name: "Normal-CDF cohort approximation",
+        version: "1",
+        assumptions: [
+          `Cohort score distribution approximated as Normal(mean=${EXAM_BASELINES[exam_type].meanPct}%, stddev=${EXAM_BASELINES[exam_type].stdDevPct}%).`,
+          `Cohort size used: ${EXAM_BASELINES[exam_type].totalCandidates.toLocaleString()} candidates.`,
+          "AIR derived as (1 − percentile) × cohort size; floor of 1.",
+          "95% band combines binomial sampling error of the test score with a ±2pp baseline-drift allowance.",
+          "Real outcomes also depend on paper difficulty calibration, section-wise normalization, and tie-breaking — none modelled here.",
+        ],
+      },
     });
   } catch (e) {
     return NextResponse.json(

@@ -22,6 +22,41 @@ export default function TakeQuiz() {
   const startedAtRef = useRef<number>(Date.now());
   const submittingRef = useRef(false);
 
+  // Per-question timing — gated by student consent. trackTime is the
+  // resolved opt-in state; null while we're still loading the profile,
+  // false until the student says yes (default-deny). showConsent flips
+  // true exactly once for students who haven't been asked yet.
+  const [trackTime, setTrackTime] = useState<boolean | null>(null);
+  const [showConsent, setShowConsent] = useState(false);
+  const [savingConsent, setSavingConsent] = useState(false);
+
+  // Per-question timing accumulators. We sum ms across ALL visits to a
+  // question (back-button revisits count) so the final number reflects
+  // total cognitive time, not just the first viewing.
+  const questionMsRef = useRef<Record<string, number>>({});
+  // Timestamp at which the currently-visible question became current.
+  // Null when the timer is paused (tab hidden, student hasn't consented,
+  // or questions still loading).
+  const currentQStartRef = useRef<number | null>(null);
+  // Id of the question whose timer is currently running. Tracked alongside
+  // currentQStartRef so we know which bucket to flush into when idx changes.
+  const currentQIdRef = useRef<string | null>(null);
+
+  // Flush accumulated time for the currently-tracked question into the map.
+  // Idempotent — clears the current marker so it can't double-count.
+  const flushCurrentQuestionTime = useCallback(() => {
+    const qid = currentQIdRef.current;
+    const startedAt = currentQStartRef.current;
+    if (qid && startedAt !== null) {
+      const elapsed = Date.now() - startedAt;
+      if (elapsed > 0) {
+        questionMsRef.current[qid] = (questionMsRef.current[qid] || 0) + elapsed;
+      }
+    }
+    currentQIdRef.current = null;
+    currentQStartRef.current = null;
+  }, []);
+
   // Load quiz + questions + create attempt (runs ONCE per code)
   useEffect(() => {
     (async () => {
@@ -53,6 +88,26 @@ export default function TakeQuiz() {
         return;
       }
       setQuestions(qs);
+
+      // Resolve the student's consent for per-question time tracking.
+      // null  → never asked → show one-time modal, default to NOT tracking
+      //         until they answer.
+      // true  → opted in.
+      // false → opted out (and we respect that — no nag, no modal).
+      const { data: prof } = await sb
+        .from("profiles")
+        .select("track_question_time")
+        .eq("id", user.id)
+        .maybeSingle();
+      const consent = (prof as { track_question_time: boolean | null } | null)?.track_question_time;
+      if (consent === true) {
+        setTrackTime(true);
+      } else if (consent === false) {
+        setTrackTime(false);
+      } else {
+        setTrackTime(false);    // default-deny until answered
+        setShowConsent(true);   // ask once
+      }
 
       // Reuse most recent unsubmitted attempt or create new
       const { data: existing } = await sb
@@ -92,18 +147,30 @@ export default function TakeQuiz() {
     if (submittingRef.current || !attemptId || !quiz) return;
     submittingRef.current = true;
     setSubmitting(true);
+    // Capture the time still running on the current question before we
+    // freeze the timing snapshot — otherwise the last-viewed question
+    // would be undercounted by however long the student stared at it.
+    if (trackTime) flushCurrentQuestionTime();
     const sb = supabaseBrowser();
     let score = 0;
     const rows = questions.map((q) => {
       const sel = answers[q.id];
       const correct = typeof sel === "number" && sel === q.correct_index;
       if (correct) score += 1;
+      // Only record per-question timing when the student consented.
+      // Otherwise leave the column NULL — the cohort benchmark routes
+      // already filter NULL rows out, so non-consenting students don't
+      // pollute the cohort baseline AND don't see their own timing later.
+      const time_taken_ms = trackTime
+        ? Math.min(questionMsRef.current[q.id] ?? 0, 10 * 60 * 1000)
+        : null;
       return {
         attempt_id: attemptId,
         question_id: q.id,
         selected_index: typeof sel === "number" ? sel : null,
         is_correct: typeof sel === "number" ? correct : null,
         bloom_level: q.bloom_level,
+        time_taken_ms,
       };
     });
     if (rows.length) await sb.from("attempt_answers").insert(rows);
@@ -115,7 +182,64 @@ export default function TakeQuiz() {
       time_taken_seconds: seconds,
     }).eq("id", attemptId);
     router.replace(`/student/results/${attemptId}`);
-  }, [answers, attemptId, questions, quiz, router]);
+  }, [answers, attemptId, questions, quiz, router, flushCurrentQuestionTime, trackTime]);
+
+  // Persist the student's consent answer + apply it locally. Used by both
+  // buttons of the one-time modal. Failure to persist is non-fatal — we
+  // still apply the choice in this session; we'll just ask again next
+  // quiz, which is preferable to blocking them on a network blip.
+  const recordConsent = useCallback(async (allow: boolean) => {
+    setSavingConsent(true);
+    try {
+      const sb = supabaseBrowser();
+      const { data: { user } } = await sb.auth.getUser();
+      if (user) {
+        await sb.from("profiles").update({ track_question_time: allow }).eq("id", user.id);
+      }
+    } catch { /* ignore */ }
+    setTrackTime(allow);
+    setShowConsent(false);
+    setSavingConsent(false);
+  }, []);
+
+  // Helper: start the timer for whichever question is currently visible.
+  // Wrapped so the visibility-change handler and the idx-change effect
+  // can both call it without duplicating logic.
+  const startTimerForCurrent = useCallback(() => {
+    const qid = questions[idx]?.id;
+    if (qid) {
+      currentQIdRef.current = qid;
+      currentQStartRef.current = Date.now();
+    }
+  }, [idx, questions]);
+
+  // Track per-question time on idx changes (and once questions load).
+  // Gated on trackTime — students who declined consent get no timing
+  // recording at all.
+  useEffect(() => {
+    if (!questions.length || !trackTime) return;
+    flushCurrentQuestionTime();
+    startTimerForCurrent();
+    return () => { flushCurrentQuestionTime(); };
+  }, [idx, questions, trackTime, flushCurrentQuestionTime, startTimerForCurrent]);
+
+  // Tab-visibility pause. When the student switches tabs / minimizes /
+  // their device sleeps, document.hidden flips to true — we flush the
+  // running question's time and stop counting. On return, we restart the
+  // timer fresh on whatever question is now visible. Without this, a
+  // 5-minute coffee break would silently get logged as "thinking time".
+  useEffect(() => {
+    if (!trackTime) return;
+    const onVisibility = () => {
+      if (document.hidden) {
+        flushCurrentQuestionTime();
+      } else {
+        startTimerForCurrent();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, [trackTime, flushCurrentQuestionTime, startTimerForCurrent]);
 
   // Tick timer
   useEffect(() => {
@@ -151,6 +275,43 @@ export default function TakeQuiz() {
 
   return (
     <div className="min-h-screen bg-slate-50">
+      {/* One-time consent modal: shown only when the student has never
+          been asked. Both buttons persist their answer to profiles so we
+          don't ask again. Uses position: fixed so it overlays the quiz
+          and prevents accidental clicks on the questions behind. */}
+      {showConsent && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-slate-900/60 backdrop-blur-sm px-4">
+          <div className="card max-w-md w-full">
+            <h2 className="text-lg font-semibold mb-2">Track your time per question?</h2>
+            <p className="text-sm text-slate-700 leading-relaxed">
+              We can record how many seconds you spend on each question. After the test, you&apos;ll see your
+              own pacing — which questions you flew through and which slowed you down. On{" "}
+              <strong>Premium Plus</strong>, you can also see how your pace compares to other students.
+            </p>
+            <p className="text-xs text-slate-500 mt-2">
+              You can change this any time in Settings. We never share your data with other students —
+              comparisons are anonymized aggregates.
+            </p>
+            <div className="mt-4 flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
+              <button
+                className="btn btn-secondary"
+                onClick={() => recordConsent(false)}
+                disabled={savingConsent}
+              >
+                Not now
+              </button>
+              <button
+                className="btn btn-primary"
+                onClick={() => recordConsent(true)}
+                disabled={savingConsent}
+              >
+                Yes, track my time
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Top bar */}
       <header className="sticky top-0 bg-white border-b border-slate-200 z-10">
         <div className="max-w-3xl mx-auto px-6 py-4 flex items-center justify-between">

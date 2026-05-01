@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { supabaseBrowser } from "@/lib/supabase/client";
-import { Trophy, ArrowLeft, History, Lightbulb, Loader2, Sparkles, Lock } from "lucide-react";
+import { Trophy, ArrowLeft, History, Lightbulb, Loader2, Sparkles, Lock, Info } from "lucide-react";
 
 // =============================================================================
 // MOCK RANK PREDICTOR — convert any score → AIR estimate. Independent students
@@ -27,8 +27,15 @@ type Pred = {
   max_score: number;
   percentile: number;
   predicted_air: number;
+  // air_low / air_high define the 95% confidence band returned by the API.
+  // Optional because past predictions persisted before this field was added
+  // won't have it; treat absent as "not modeled".
+  air_low?: number;
+  air_high?: number;
+  score_margin_pp?: number;
   total_candidates: number;
   recommendations: string[] | null;
+  model?: { name: string; version: string; assumptions: string[] };
   created_at: string;
 };
 
@@ -180,14 +187,91 @@ export default function RankPage() {
             </div>
             <div>
               <div className="text-xs muted uppercase font-semibold">Percentile</div>
-              <div className="text-2xl font-bold">{result.percentile.toFixed(1)}</div>
+              <div className="text-2xl font-bold">~{result.percentile.toFixed(1)}</div>
+              <div className="text-xs muted">approximate</div>
             </div>
             <div>
-              <div className="text-xs muted uppercase font-semibold">Predicted AIR ({EXAM_LABEL[result.exam_type]})</div>
-              <div className="text-2xl font-bold">~{result.predicted_air.toLocaleString()}</div>
-              <div className="text-xs muted">in {result.total_candidates.toLocaleString()} candidates</div>
+              <div className="text-xs muted uppercase font-semibold">
+                Estimated AIR range ({EXAM_LABEL[result.exam_type]})
+              </div>
+              {/* Show a band, not a point. If the API didn't return a band
+                  (older response or partial failure), fall back to ~point. */}
+              {result.air_low && result.air_high ? (
+                <>
+                  <div className="text-2xl font-bold leading-tight">
+                    {result.air_low.toLocaleString()}
+                    <span className="mx-1.5 text-amber-700">–</span>
+                    {result.air_high.toLocaleString()}
+                  </div>
+                  <div className="text-xs muted">
+                    midpoint ~{result.predicted_air.toLocaleString()} · cohort {result.total_candidates.toLocaleString()}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="text-2xl font-bold">~{result.predicted_air.toLocaleString()}</div>
+                  <div className="text-xs muted">in {result.total_candidates.toLocaleString()} candidates</div>
+                </>
+              )}
             </div>
           </div>
+
+          {/* ── Test-length confidence chip. A 10-question quiz can't pin
+                down ability the way a 200-Q paper does — surface that
+                directly so the student weighs the prediction accordingly. */}
+          {(() => {
+            const n = result.max_score;
+            // Bands chosen against typical test lengths for the supported
+            // exams (JEE/NEET ≈ 90–200 Q, mock papers 30–60 Q, quick
+            // revision tests <20). These are rules of thumb; tune later.
+            let label: string, tone: string, blurb: string;
+            if (n < 20) {
+              label = "Low confidence";
+              tone  = "bg-rose-100 border-rose-300 text-rose-900";
+              blurb = `Only ${n} question${n === 1 ? "" : "s"} — that's very little to estimate ability from. The rank range is wide and the midpoint should not be taken seriously. Run a longer mock for a meaningful prediction.`;
+            } else if (n < 60) {
+              label = "Limited confidence";
+              tone  = "bg-amber-100 border-amber-300 text-amber-900";
+              blurb = `${n} questions is enough for a directional read but the true rank could comfortably sit anywhere in the band shown. Don't make decisions off this alone.`;
+            } else if (n < 120) {
+              label = "Moderate confidence";
+              tone  = "bg-yellow-50 border-yellow-300 text-yellow-900";
+              blurb = `${n} questions gives a reasonable estimate. Still treat the band — not the midpoint — as the answer.`;
+            } else {
+              label = "Higher confidence";
+              tone  = "bg-emerald-50 border-emerald-300 text-emerald-900";
+              blurb = `${n} questions is a substantive sample. The band is tight, but the model's cohort assumptions still apply.`;
+            }
+            return (
+              <div className={`mt-4 rounded-lg border px-3 py-2.5 text-[13px] leading-relaxed flex items-start gap-2 ${tone}`}>
+                <Info size={14} className="mt-0.5 shrink-0" />
+                <div>
+                  <strong>{label}</strong> — {blurb}
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* ── Honest-uncertainty banner. Always shown so students don't
+                take the AIR as a precise prediction. Wording deliberately
+                addresses BOTH directions (overconfidence + underconfidence). */}
+          <div className="mt-3 rounded-lg bg-amber-100/70 border border-amber-300 px-3 py-2.5 text-[13px] text-amber-950 leading-relaxed">
+            <div className="flex items-start gap-2">
+              <Info size={14} className="mt-0.5 shrink-0" />
+              <div className="space-y-1.5">
+                <p>
+                  <strong>This is an estimate of where a score like this typically lands — not your actual rank.</strong> Use the range as a benchmark, not a verdict.
+                </p>
+                <p>
+                  <strong>If the number looks great:</strong> a strong mock doesn&apos;t guarantee a strong real rank. The actual paper&apos;s difficulty, section-wise normalization, and how this year&apos;s cohort performs can shift outcomes meaningfully in either direction. Stay sharp.
+                </p>
+                <p>
+                  <strong>If it looks rough:</strong> a single mock is one data point. Ranks move quickly with focused, targeted practice — see the recommendations below for the highest-yield areas.
+                </p>
+              </div>
+            </div>
+          </div>
+
           {result.recommendations && result.recommendations.length > 0 && (
             <div className="mt-4">
               <div className="text-xs muted uppercase font-semibold mb-2 inline-flex items-center gap-1">
@@ -203,6 +287,86 @@ export default function RankPage() {
               </ul>
             </div>
           )}
+
+          {/* ── Collapsible "How this is calculated" so curious students
+                (and their parents) can see the actual model, what it
+                assumes, and — equally important — what it does NOT model. */}
+          <details className="mt-4 group">
+            <summary className="cursor-pointer text-xs font-semibold text-amber-900 hover:text-amber-700 inline-flex items-center gap-1 list-none [&::-webkit-details-marker]:hidden">
+              <Info size={12} /> How this number is calculated (and what it doesn&apos;t account for)
+              <span className="ml-1 transition-transform group-open:rotate-90">›</span>
+            </summary>
+            <div className="mt-2 text-[13px] text-slate-700 leading-relaxed space-y-3">
+              <div>
+                <p className="font-semibold text-slate-900">The model</p>
+                <p>
+                  {result.model?.name || "Normal-CDF cohort approximation"}
+                  {result.model?.version ? ` (v${result.model.version})` : ""}. We approximate the
+                  cohort&apos;s score distribution as a bell curve, convert your score to a percentile,
+                  then map that percentile against an assumed cohort size to get an AIR.
+                </p>
+                {result.score_margin_pp && (
+                  <p className="mt-1">
+                    For your test ({result.max_score} questions), the 95% band is roughly
+                    ±{result.score_margin_pp.toFixed(1)} percentage points around your score
+                    — combining sampling error from a finite test with a small allowance for
+                    model drift.
+                  </p>
+                )}
+              </div>
+
+              <div>
+                <p className="font-semibold text-slate-900">What we assume</p>
+                {result.model?.assumptions ? (
+                  <ul className="list-disc pl-5 space-y-0.5">
+                    {result.model.assumptions.map((a, i) => <li key={i}>{a}</li>)}
+                  </ul>
+                ) : (
+                  <p className="muted">Default cohort baselines for this exam type.</p>
+                )}
+              </div>
+
+              <div>
+                <p className="font-semibold text-slate-900">What this number does NOT account for</p>
+                <ul className="list-disc pl-5 space-y-0.5">
+                  <li>
+                    <strong>Paper difficulty.</strong> A specific year&apos;s actual paper can be
+                    materially harder or easier than average; cutoffs shift accordingly.
+                  </li>
+                  <li>
+                    <strong>Section-wise normalization.</strong> Real exams (JEE Main, etc.) normalize
+                    scores per section/shift before computing ranks — we treat the score as one number.
+                  </li>
+                  <li>
+                    <strong>Negative marking & question weighting.</strong> Different exams penalise
+                    wrong answers differently. We assume your raw score has already accounted for that.
+                  </li>
+                  <li>
+                    <strong>Tie-breaking.</strong> When many candidates score the same, real exams use
+                    secondary criteria (subject scores, age, application order) we can&apos;t see.
+                  </li>
+                  <li>
+                    <strong>Cohort variance year-on-year.</strong> The total candidate pool and
+                    average preparation level shift each year. We use a rough multi-year baseline.
+                  </li>
+                  <li>
+                    <strong>Question quality of this specific test.</strong> If the mock&apos;s
+                    questions are easier or harder than the real paper, the percentile is biased.
+                  </li>
+                  <li>
+                    <strong>Your test-day form.</strong> One mock captures a sample — not your
+                    ability ceiling, not your floor.
+                  </li>
+                </ul>
+              </div>
+
+              <p className="muted text-xs italic">
+                Cohort baselines are rough order-of-magnitude figures, not official statistics.
+                Predictions get more reliable as test length grows — a 200-question paper has a
+                much narrower band than a 10-question quiz.
+              </p>
+            </div>
+          </details>
         </div>
       )}
 
