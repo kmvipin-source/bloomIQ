@@ -38,7 +38,7 @@ const ROLE_TABS: Record<RoleTab, {
     Icon: BookOpen,
   },
   school: {
-    label: "Admin Head",
+    label: "Admin",
     heading: "Admin Head (Principal) sign in",
     identifierLabel: "Work email",
     identifierPlaceholder: "principal@school.edu",
@@ -178,7 +178,7 @@ export default function LoginPage() {
               and the heading so users know which kind of account they're
               signing in with. */}
           <div
-            className="flex gap-1 mb-5 p-1 rounded-lg"
+            className="grid grid-cols-4 gap-2 mb-5 p-1.5 rounded-xl"
             style={{ background: "var(--color-bg-soft, #f1f5f9)" }}
             role="tablist"
             aria-label="Sign in as"
@@ -193,14 +193,15 @@ export default function LoginPage() {
                   role="tab"
                   aria-selected={active}
                   onClick={() => setRoleTab(k)}
-                  className="flex-1 inline-flex items-center justify-center gap-1.5 text-xs sm:text-sm font-semibold py-2 rounded-md transition"
+                  className="inline-flex flex-col items-center justify-center gap-1 text-[11px] sm:text-xs font-semibold py-2.5 px-2 rounded-lg transition whitespace-nowrap"
                   style={{
                     background: active ? "var(--color-card, #fff)" : "transparent",
                     color: active ? "var(--brand-700, #047857)" : "var(--color-fg-soft, #475569)",
-                    boxShadow: active ? "0 1px 3px rgba(0,0,0,0.06)" : undefined,
+                    boxShadow: active ? "0 1px 3px rgba(0,0,0,0.08)" : undefined,
                   }}
                 >
-                  <t.Icon size={14} /> {t.label}
+                  <t.Icon size={16} />
+                  <span>{t.label}</span>
                 </button>
               );
             })}
