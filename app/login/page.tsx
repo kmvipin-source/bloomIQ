@@ -9,24 +9,27 @@ import { Eye, EyeOff, GraduationCap, BookOpen, Building2, ShieldCheck } from "lu
 const SCHOOL_DOMAIN = "bloomiq.invalid";
 
 type RoleTab = "student" | "teacher" | "school" | "admin";
+type StudentMode = "school" | "independent";
 
-// Tab metadata. Auth itself is the same single Supabase call regardless of
-// tab — these strings only customise heading, identifier label, and hints
-// so the user knows which kind of account they're signing in with.
-const ROLE_TABS: Record<RoleTab, {
+type TabMeta = {
   label: string;
   heading: string;
   identifierLabel: string;
   identifierPlaceholder: string;
   hint: string;
   Icon: React.ComponentType<{ size?: number }>;
-}> = {
+};
+
+// Auth call is identical for every tab + mode — these strings only customise
+// heading, identifier label, and hints so users know which account type they
+// are signing in with.
+const ROLE_TABS: Record<RoleTab, TabMeta> = {
   student: {
     label: "Student",
     heading: "Student sign in",
     identifierLabel: "Email or username",
     identifierPlaceholder: "your.email@example.com or your.username",
-    hint: "School student? Use the username your teacher gave you. Independent learner? Sign in with your email.",
+    hint: "Pick School student if your teacher gave you a username, or Independent if you signed up yourself with email.",
     Icon: GraduationCap,
   },
   teacher: {
@@ -55,6 +58,25 @@ const ROLE_TABS: Record<RoleTab, {
   },
 };
 
+const STUDENT_MODES: Record<StudentMode, TabMeta> = {
+  school: {
+    label: "School student",
+    heading: "School student sign in",
+    identifierLabel: "Username",
+    identifierPlaceholder: "the username your teacher gave you",
+    hint: "Created by your teacher. No email needed — just the username and password they shared.",
+    Icon: GraduationCap,
+  },
+  independent: {
+    label: "Independent student",
+    heading: "Independent student sign in",
+    identifierLabel: "Email",
+    identifierPlaceholder: "you@example.com",
+    hint: "Self-signup learner with a personal subscription. Sign in with the email you used at signup.",
+    Icon: GraduationCap,
+  },
+};
+
 function readNextParam(): string | null {
   if (typeof window === "undefined") return null;
   try {
@@ -78,7 +100,10 @@ export default function LoginPage() {
   const [forgotMsg, setForgotMsg] = useState<string | null>(null);
 
   const [roleTab, setRoleTab] = useState<RoleTab>("student");
-  const tab = ROLE_TABS[roleTab];
+  const [studentMode, setStudentMode] = useState<StudentMode>("school");
+  // When the Student tab is active, the sub-mode (school vs independent)
+  // overrides the generic Student labels with the more specific ones.
+  const tab: TabMeta = roleTab === "student" ? STUDENT_MODES[studentMode] : ROLE_TABS[roleTab];
 
   async function sendReset() {
     setErr(null);
@@ -206,6 +231,39 @@ export default function LoginPage() {
               );
             })}
           </div>
+
+          {/* Student sub-mode pill — only visible when the Student tab is
+              active. Explicit because the school-vs-independent distinction
+              is the most common confusion at /login. */}
+          {roleTab === "student" && (
+            <div
+              className="inline-flex p-1 rounded-full mb-4 text-xs font-semibold"
+              style={{ background: "var(--color-bg-soft, #f1f5f9)" }}
+              role="radiogroup"
+              aria-label="Student type"
+            >
+              {(Object.keys(STUDENT_MODES) as StudentMode[]).map((m) => {
+                const active = m === studentMode;
+                return (
+                  <button
+                    key={m}
+                    type="button"
+                    role="radio"
+                    aria-checked={active}
+                    onClick={() => setStudentMode(m)}
+                    className="px-3 py-1.5 rounded-full transition"
+                    style={{
+                      background: active ? "var(--color-card, #fff)" : "transparent",
+                      color: active ? "var(--brand-700, #047857)" : "var(--color-fg-soft, #475569)",
+                      boxShadow: active ? "0 1px 3px rgba(0,0,0,0.08)" : undefined,
+                    }}
+                  >
+                    {STUDENT_MODES[m].label}
+                  </button>
+                );
+              })}
+            </div>
+          )}
 
           <h1 className="text-2xl font-bold mb-6 flex items-center gap-2">
             <tab.Icon size={22} /> {tab.heading}
