@@ -58,7 +58,7 @@ export default function TeacherHome() {
   }
 
   async function leaveSchool() {
-    if (!confirm("Leave this school? Your classes and quizzes stay with you, but they'll stop rolling up to the school dashboard.")) return;
+    if (!confirm("Leave this school? You'll be removed from any classes you're assigned to. Your own quizzes stay with you.")) return;
     const sb = supabaseBrowser();
     const { data: { session } } = await sb.auth.getSession();
     if (!session) return;
@@ -71,6 +71,8 @@ export default function TeacherHome() {
       alert(`Could not leave: ${data.error}`);
       return;
     }
+    setJoinInfo(null);
+    setJoinErr(null);
     await loadProfile();
   }
 
