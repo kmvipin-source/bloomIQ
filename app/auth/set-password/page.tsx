@@ -89,17 +89,19 @@ function SetPasswordInner() {
     setBusy(true);
     try {
       const sb = supabaseBrowser();
-      const { error } = await sb.auth.updateUser({
-        password,
-        // Stamp ToS acceptance into user_metadata at this moment of binding
-        // commitment — for invitees who never went through /signup, this is
-        // their first explicit "I agree" interaction.
-        data: {
-          tos_accepted_at: new Date().toISOString(),
-          tos_version: "2026-04-30",
-        },
+      const { data: { session } } = await sb.auth.getSession();
+      if (!session) throw new Error("Session expired. Reopen the link from your email.");
+      // Always go through the server endpoint — it uses the service role
+      // to update the password, sidestepping the "AAL2 session is required"
+      // wall that Supabase puts up when any MFA factor is enrolled (even
+      // an unverified leftover one).
+      const r = await fetch("/api/auth/set-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ password, tos_version: "2026-04-30" }),
       });
-      if (error) throw error;
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error || "Could not set password.");
       setDone(true);
       const target = await landingFor();
       setTimeout(() => router.push(target), 1200);

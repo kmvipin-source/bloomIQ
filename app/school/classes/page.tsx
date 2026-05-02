@@ -485,10 +485,50 @@ export default function SchoolClassesPage() {
                   <tr className="bg-slate-50">
                     <td colSpan={6} className="px-4 py-3">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <label className="text-xs muted">Primary teacher email:</label>
+                        {teachersInSchool.length > 0 && (
+                          <>
+                            <label className="text-xs muted">Pick teacher:</label>
+                            <select
+                              className="input max-w-[260px]"
+                              defaultValue=""
+                              disabled={assignBusy}
+                              onChange={async (e) => {
+                                const tid = e.target.value;
+                                if (!tid) return;
+                                const sb = supabaseBrowser();
+                                const { data: { session } } = await sb.auth.getSession();
+                                if (!session) return;
+                                // Use teacher_id directly so we don't need to look up email client-side.
+                                setAssignBusy(true);
+                                try {
+                                  const r = await fetch(`/api/admin/classes/${c.id}/primary`, {
+                                    method: "POST",
+                                    headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+                                    body: JSON.stringify({ teacher_id: tid }),
+                                  });
+                                  const j = await r.json();
+                                  if (!r.ok) throw new Error(j?.error || "Failed");
+                                  setAssignFor(null);
+                                  setAssignEmail("");
+                                  await load();
+                                } catch (err) {
+                                  setAssignErr(err instanceof Error ? err.message : "Failed");
+                                } finally {
+                                  setAssignBusy(false);
+                                }
+                              }}
+                            >
+                              <option value="">— Select a teacher in this school —</option>
+                              {teachersInSchool.map((t) => (
+                                <option key={t.id} value={t.id}>{t.full_name || t.id.slice(0, 8)}</option>
+                              ))}
+                            </select>
+                            <span className="text-xs muted">or by email:</span>
+                          </>
+                        )}
                         <input
                           type="email"
-                          className="input max-w-[280px]"
+                          className="input max-w-[260px]"
                           value={assignEmail}
                           onChange={(e) => setAssignEmail(e.target.value)}
                           placeholder="teacher@example.com"

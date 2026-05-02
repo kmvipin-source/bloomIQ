@@ -65,6 +65,45 @@ export async function DELETE(req: Request) {
       return NextResponse.json({ error: "Not in a school." }, { status: 400 });
     }
     const admin = supabaseAdmin();
+
+    // Detach this teacher from any class in the school they're leaving:
+    //   - drop their class_teachers rows for those classes
+    //   - clear classes.owner_id where it pointed to them
+    // The CLASSES themselves stay so the super_teacher can reassign a new
+    // primary later.
+    const { data: classesInSchool } = await admin
+      .from("classes")
+      .select("id, owner_id")
+      .eq("school_id", prof.school_id);
+    const classIds = (classesInSchool || []).map((c) => c.id);
+    if (classIds.length) {
+      await admin
+        .from("class_teachers")
+        .delete()
+        .eq("teacher_id", user.id)
+        .in("class_id", classIds);
+      const ownedIds = (classesInSchool || []).filter((c) => c.owner_id === user.id).map((c) => c.id);
+      if (ownedIds.length) {
+        await admin
+          .from("classes")
+          .update({ owner_id: null })
+          .in("id", ownedIds);
+      }
+    }
+
+    // Drop any pending teacher invites that targeted this teacher's email
+    // for classes in this school (defensive — invites should already be
+    // cleared once they joined; covers stale data).
+    const { data: authUser } = await admin.auth.admin.getUserById(user.id);
+    const teacherEmail = authUser?.user?.email?.toLowerCase();
+    if (teacherEmail && classIds.length) {
+      await admin
+        .from("class_teacher_invites")
+        .delete()
+        .eq("email", teacherEmail)
+        .in("class_id", classIds);
+    }
+
     const { error } = await admin.from("profiles").update({ school_id: null }).eq("id", user.id);
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     return NextResponse.json({ ok: true });
