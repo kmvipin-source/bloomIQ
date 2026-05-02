@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { supabaseBrowser } from "@/lib/supabase/client";
-import { ShieldCheck, Building2, ListChecks, UserPlus, LogOut, ArrowLeft } from "lucide-react";
+import { ShieldCheck, Building2, ListChecks, UserPlus, LogOut, ArrowLeft, BarChart3 } from "lucide-react";
 import ThemeQuickToggle from "@/components/ThemeQuickToggle";
 
 /**
@@ -23,6 +23,7 @@ import ThemeQuickToggle from "@/components/ThemeQuickToggle";
  */
 
 const ADMIN_LINKS = [
+  { href: "/admin/dashboard",      label: "Dashboard",      icon: BarChart3 },
   { href: "/admin/onboard-school", label: "Onboard School", icon: Building2 },
   { href: "/admin/plans",          label: "Plans",          icon: ListChecks },
   { href: "/admin/team",           label: "Admin Team",     icon: UserPlus },

@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { supabaseBrowser } from "@/lib/supabase/client";
+import { toast } from "@/lib/toast";
 import { BLOOM_LEVELS, BLOOM_META, recommendedQuizMinutes, type BloomLevel } from "@/lib/bloom";
 import { Sparkles, FileText, Image as ImageIcon, GraduationCap, Tag, Play, ScrollText } from "lucide-react";
 
@@ -100,6 +101,7 @@ export default function StudentGeneratePage() {
     if (!f) return;
     if (f.size > MAX_IMAGE_BYTES) {
       setErr(`Image is too large (${(f.size / 1024 / 1024).toFixed(1)} MB). Please pick something under 6 MB.`);
+      toast.error("Image > 6 MB.");
       return;
     }
     setErr(null);
@@ -107,6 +109,7 @@ export default function StudentGeneratePage() {
     const reader = new FileReader();
     reader.onload = () => setImagePreview(reader.result as string);
     reader.readAsDataURL(f);
+    toast.success(source === "past_paper" ? `Past paper uploaded — ${f.name}` : `Image uploaded — ${f.name}`);
   }
 
   async function generate() {
@@ -156,11 +159,14 @@ export default function StudentGeneratePage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Generation failed.");
+      toast.success("Test generated successfully.");
 
       // Jump straight into the test
       router.push(`/student/quiz/${data.quizCode}`);
     } catch (e) {
-      setErr(e instanceof Error ? e.message : "Something went wrong");
+      const msg = e instanceof Error ? e.message : "Something went wrong";
+      setErr(msg);
+      toast.error(msg);
     } finally {
       setBusy(false);
     }

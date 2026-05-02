@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { supabaseBrowser } from "@/lib/supabase/client";
+import { toast } from "@/lib/toast";
 import type { Class, Profile } from "@/lib/types";
 import { Copy, UserMinus, Users, UserPlus, KeyRound, ShieldAlert, UserCog, X, Trash2, Upload } from "lucide-react";
 import BulkAddStudents from "@/components/BulkAddStudents";
@@ -377,10 +378,13 @@ export default function ClassDetailPage() {
       if (!res.ok) throw new Error(data.error || "Failed to add student");
 
       setAddOk({ username: newUsername.trim(), password: newPassword });
+      toast.success(`Student added — ${newName.trim()}`);
       setNewName(""); setNewUsername(""); setNewPassword(""); setNewRoll("");
       await load();
     } catch (e) {
-      setAddErr(e instanceof Error ? e.message : "Failed to add student");
+      const msg = e instanceof Error ? e.message : "Failed to add student";
+      setAddErr(msg);
+      toast.error(msg);
     } finally {
       setAddBusy(false);
     }

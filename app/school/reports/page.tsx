@@ -435,46 +435,70 @@ function SchoolReportsInner() {
     setBusyExport("xlsx");
     setExportMsg(null);
     try {
-      const XLSX = await import("xlsx");
-      const wb = XLSX.utils.book_new();
+      const { addSheet, downloadWorkbook, newWorkbook } = await import("@/lib/excelReport");
+      const wb = newWorkbook();
+      const stamp = `Generated ${new Date().toLocaleString()}`;
+      const range = RANGE_PRESETS.find((r) => r.id === rangeId)?.label || rangeId;
 
-      const headlineSheet = [
-        ["Bloom Pulse — " + schoolName],
-        ["Date range", RANGE_PRESETS.find((r) => r.id === rangeId)?.label || rangeId],
-        ["Generated", new Date().toLocaleString()],
-        [],
-        ["Total attempts", totalAttempts],
-        ["Overall average score (%)", overallAvg ?? "—"],
-        ["Higher-order question share (%)", higherOrderPct],
-      ];
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(headlineSheet), "Summary");
+      addSheet(wb, {
+        name: "Summary",
+        title: `Bloom Pulse — ${schoolName}`,
+        subtitle: `${range} · ${stamp}`,
+        headers: ["Metric", "Value"],
+        rows: [
+          ["Date range", range],
+          ["Generated", new Date().toLocaleString()],
+          ["Total attempts", totalAttempts],
+          ["Overall average score (%)", overallAvg ?? "—"],
+          ["Higher-order question share (%)", higherOrderPct],
+        ],
+      });
 
-      const bloomSheet = [["Bloom level", "Answers", "% of all answers"]];
-      for (const r of bloomMix) bloomSheet.push([r.name, String(r.value), String(r.pct)]);
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(bloomSheet), "Bloom mix");
+      addSheet(wb, {
+        name: "Bloom mix",
+        title: "Bloom-level mix",
+        subtitle: stamp,
+        headers: ["Bloom level", "Answers", "% of all answers"],
+        rows: bloomMix.map((r) => [r.name, r.value, r.pct]),
+      });
 
-      const gradeHeader = ["Grade", ...BLOOM_LEVELS, "Total"];
-      const gradeSheet: (string | number)[][] = [gradeHeader];
-      for (const row of gradeBloomMix) {
-        const counts = BLOOM_LEVELS.map((l) => row[l]);
-        const total = counts.reduce((s, x) => s + x, 0);
-        gradeSheet.push([row.grade, ...counts, total]);
-      }
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(gradeSheet), "Bloom by grade");
+      addSheet(wb, {
+        name: "Bloom by grade",
+        title: "Bloom mix per grade",
+        subtitle: stamp,
+        headers: ["Grade", ...BLOOM_LEVELS, "Total"],
+        rows: gradeBloomMix.map((row) => {
+          const counts = BLOOM_LEVELS.map((l) => row[l]);
+          const total = counts.reduce((s, x) => s + x, 0);
+          return [row.grade, ...counts, total];
+        }),
+      });
 
-      const teacherSheet = [["Teacher", "Classes", "Students", "Attempts", "Avg score (%)", "Higher-order (%)"]];
-      for (const t of teacherActivity) teacherSheet.push([t.name, t.classCount, t.studentCount, t.attemptCount, t.avgScore ?? "—", t.bloomHigherPct]);
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(teacherSheet), "Teachers");
+      addSheet(wb, {
+        name: "Teachers",
+        title: "Teacher activity",
+        subtitle: stamp,
+        headers: ["Teacher", "Classes", "Students", "Attempts", "Avg score (%)", "Higher-order (%)"],
+        rows: teacherActivity.map((t) => [t.name, t.classCount, t.studentCount, t.attemptCount, t.avgScore ?? "—", t.bloomHigherPct]),
+      });
 
-      const classSheet = [["Class", "Grade", "Students", "Attempts", "Avg score (%)"]];
-      for (const c of classLeaderboard) classSheet.push([c.name, c.grade ?? "—", c.students, c.attempts, c.avgScore ?? "—"]);
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(classSheet), "Classes");
+      addSheet(wb, {
+        name: "Classes",
+        title: "Class leaderboard",
+        subtitle: stamp,
+        headers: ["Class", "Grade", "Students", "Attempts", "Avg score (%)"],
+        rows: classLeaderboard.map((c) => [c.name, c.grade ?? "—", c.students, c.attempts, c.avgScore ?? "—"]),
+      });
 
-      const riskSheet = [["Student", "Grade", "Attempts (window)", "Avg score (%)"]];
-      for (const s of atRisk) riskSheet.push([s.name, s.grade ?? "—", s.attempts, s.avgScore]);
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(riskSheet), "At-risk students");
+      addSheet(wb, {
+        name: "At-risk students",
+        title: "At-risk students",
+        subtitle: stamp,
+        headers: ["Student", "Grade", "Attempts (window)", "Avg score (%)"],
+        rows: atRisk.map((s) => [s.name, s.grade ?? "—", s.attempts, s.avgScore]),
+      });
 
-      XLSX.writeFile(wb, `${schoolName.replace(/\s+/g, "_")}_BloomPulse_${rangeId}.xlsx`);
+      await downloadWorkbook(wb, `${schoolName.replace(/\s+/g, "_")}_BloomPulse_${rangeId}.xlsx`);
     } catch (e) {
       setExportMsg(`Excel export failed: ${e instanceof Error ? e.message : "unknown error"}`);
     } finally {

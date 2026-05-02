@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { supabaseBrowser } from "@/lib/supabase/client";
+import { toast } from "@/lib/toast";
 import { BLOOM_LEVELS, BLOOM_META, type BloomLevel } from "@/lib/bloom";
 import { Sparkles, FileText, Image as ImageIcon, GraduationCap, Tag } from "lucide-react";
 
@@ -75,6 +76,7 @@ export default function GeneratePage() {
     if (!f) return;
     if (f.size > MAX_IMAGE_BYTES) {
       setErr(`Image is too large (${(f.size / 1024 / 1024).toFixed(1)} MB). Please pick something under 6 MB.`);
+      toast.error("Image > 6 MB.");
       return;
     }
     setErr(null);
@@ -82,6 +84,7 @@ export default function GeneratePage() {
     const reader = new FileReader();
     reader.onload = () => setImagePreview(reader.result as string);
     reader.readAsDataURL(f);
+    toast.success(`Image uploaded — ${f.name}`);
   }
 
   async function generate() {
@@ -143,8 +146,11 @@ export default function GeneratePage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Generation failed");
       setSummary(data.summary);
+      toast.success("Questions generated successfully.");
     } catch (e) {
-      setErr(e instanceof Error ? e.message : "Something went wrong");
+      const msg = e instanceof Error ? e.message : "Something went wrong";
+      setErr(msg);
+      toast.error(msg);
     } finally {
       setBusy(false);
     }

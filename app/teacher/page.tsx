@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { supabaseBrowser } from "@/lib/supabase/client";
 import { Sparkles, Library, ListChecks, Users, Building2, LogOut, MessageCircle, Radio } from "lucide-react";
+import TeacherRetakeRequests from "@/components/TeacherRetakeRequests";
 
 export default function TeacherHome() {
   const [stats, setStats] = useState({ pending: 0, approved: 0, quizzes: 0, attempts: 0 });
@@ -111,6 +112,8 @@ export default function TeacherHome() {
     <div className="max-w-6xl mx-auto fade-in">
       <h1 className="h1">Welcome back{name ? `, ${name.split(" ")[0]}` : ""} 👋</h1>
       <p className="muted mt-1">Here&apos;s your snapshot.</p>
+
+      <TeacherRetakeRequests />
 
       {schoolId ? (
         <div className="mt-4 card flex items-center justify-between gap-3 flex-wrap">

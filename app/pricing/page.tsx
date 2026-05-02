@@ -119,6 +119,15 @@ function PricingInner() {
   const [success, setSuccess] = useState<{ tier: string; expiresAt: string } | null>(null);
   const autoFiredRef = useRef(false);
 
+  // Guest-checkout modal: shown when a logged-out visitor clicks a paid plan.
+  // Captures the minimum we need (email + name + password) so we can
+  // create the account, mint a session, and open Razorpay in one flow.
+  const [guestPlan, setGuestPlan] = useState<{ slug: string; label: string; priceLine: string } | null>(null);
+  const [guestEmail, setGuestEmail] = useState("");
+  const [guestName, setGuestName] = useState("");
+  const [guestPwd, setGuestPwd] = useState("");
+  const [guestAcceptedTerms, setGuestAcceptedTerms] = useState(false);
+
   // Plans loaded live from the platform-admin catalogue (active rows only).
   // Falls back to the hardcoded STUDENT_PLANS constant below if the fetch
   // fails for any reason — so a misconfigured DB can't take pricing offline.
@@ -138,16 +147,18 @@ function PricingInner() {
     max_students?: number | null;
   };
   const [dbPlans, setDbPlans] = useState<DbPlan[]>([]);
+  const [plansLoaded, setPlansLoaded] = useState(false);
   // Interactive headcount input for the per-student calculator on the
   // For-schools section. Defaults to a sensible mid-range school size.
   const [schoolHeadcount, setSchoolHeadcount] = useState(200);
   useEffect(() => {
     (async () => {
       try {
-        const r = await fetch("/api/pricing/active-plans");
+        const r = await fetch("/api/pricing/active-plans", { cache: "no-store" });
         const j = await r.json();
         if (r.ok && Array.isArray(j.plans)) setDbPlans(j.plans);
       } catch { /* silent — fall back to hardcoded plans */ }
+      finally { setPlansLoaded(true); }
     })();
   }, []);
 
@@ -194,9 +205,22 @@ function PricingInner() {
     setErr(null);
     setSuccess(null);
 
-    // Logged out: route to signup with intent so we can come back and auto-pay.
+    // Logged out: open the guest-checkout modal — collects email/name/password,
+    // /api/signup-and-pay creates the account + mints a session + creates the
+    // Razorpay order, then this page calls setSession() and opens Razorpay.
     if (!me) {
-      router.push(`/signup?role=student&intent=pro&plan=${planId}`);
+      const live = dbPlans.find((p) => p.slug === planId);
+      const fallback = STUDENT_PLANS.find((p) => p.id === planId);
+      const slugMap: Record<string, string> = {
+        individual_monthly: "premium_monthly",
+        individual_yearly: "premium_annual",
+      };
+      const slug = slugMap[planId] ?? planId;
+      const label = live?.label || fallback?.label || slug;
+      const priceLine = live
+        ? `₹${(live.price_paise / 100).toLocaleString("en-IN")}`
+        : (fallback?.priceLine || "");
+      setGuestPlan({ slug, label, priceLine });
       return;
     }
 
@@ -264,10 +288,100 @@ function PricingInner() {
     }
   }
 
+  async function guestUpgrade() {
+    if (!guestPlan) return;
+    setErr(null);
+    if (!guestAcceptedTerms) {
+      setErr("Please accept the Terms of Service and Privacy Policy.");
+      return;
+    }
+    if (guestPwd.length < 8) {
+      setErr("Password must be at least 8 characters.");
+      return;
+    }
+    setBusy(guestPlan.slug);
+    try {
+      const r = await fetch("/api/signup-and-pay", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: guestEmail,
+          full_name: guestName,
+          password: guestPwd,
+          plan_slug: guestPlan.slug,
+        }),
+      });
+      const j = await r.json();
+      if (!r.ok) {
+        if (j?.code === "email_exists") {
+          setErr("An account with this email already exists. Sign in, then return to /pricing.");
+        } else {
+          setErr(j?.error || "Could not create account.");
+        }
+        setBusy(null);
+        return;
+      }
+
+      const sb = supabaseBrowser();
+      await sb.auth.setSession({
+        access_token: j.access_token,
+        refresh_token: j.refresh_token,
+      });
+      setMe({
+        id: j.user.id,
+        email: j.user.email,
+        full_name: j.user.full_name,
+        tier: "free",
+      });
+
+      await loadRazorpaySdk();
+      const Razorpay = window.Razorpay;
+      if (!Razorpay) throw new Error("Razorpay didn’t load. Disable any ad blocker and try again.");
+
+      const rzp = new Razorpay({
+        key: j.key_id,
+        order_id: j.order_id,
+        amount: j.amount_paise,
+        currency: j.currency,
+        name: "BloomIQ",
+        description: j.plan?.label || "Subscription",
+        prefill: { email: j.user.email, name: j.user.full_name },
+        theme: { color: "#10b981" },
+        handler: async (resp) => {
+          try {
+            const v = await fetch("/api/checkout/verify", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${j.access_token}`,
+              },
+              body: JSON.stringify(resp),
+            });
+            const vj = await v.json();
+            if (!v.ok) throw new Error(vj?.error || "Verify failed");
+            setSuccess({ tier: vj.tier as string, expiresAt: vj.expires_at as string });
+            setMe((m) => m ? { ...m, tier: vj.tier } : m);
+            setGuestPlan(null);
+            setGuestEmail(""); setGuestName(""); setGuestPwd(""); setGuestAcceptedTerms(false);
+          } catch (e) {
+            setErr(e instanceof Error ? e.message : "Verify failed");
+          } finally {
+            setBusy(null);
+          }
+        },
+        modal: { ondismiss: () => setBusy(null) },
+      });
+      rzp.open();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Could not start checkout");
+      setBusy(null);
+    }
+  }
+
   // Choose the right CTA copy based on auth state and the user's current tier.
   function ctaFor(planId: PlanId): { text: string; disabled: boolean; primary: boolean } {
     if (busy === planId) return { text: "Opening checkout…", disabled: true, primary: true };
-    if (!me) return { text: "Get this plan", disabled: false, primary: true };
+    if (!me) return { text: "Go to Payment", disabled: false, primary: true };
     if (planId === "individual_yearly" && me.tier === "premium")    return { text: "Current plan", disabled: true, primary: false };
     if (planId === "individual_monthly" && me.tier === "individual") return { text: "Current plan", disabled: true, primary: false };
     return { text: "Upgrade", disabled: busy !== null, primary: true };
@@ -397,7 +511,7 @@ function PricingInner() {
         {/* ============ For independent students ============ */}
         <section className="mt-12">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500 mb-4">For independent students</h2>
-          <div className="grid sm:grid-cols-3 gap-4">
+          <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {/* Free card */}
             <div className="card flex flex-col">
               <div className="font-bold text-lg">Free</div>
@@ -424,6 +538,24 @@ function PricingInner() {
                 fetch hasn't returned yet OR returns nothing, we fall back
                 to the hardcoded STUDENT_PLANS so the page still renders. */}
             {(() => {
+              // While the live fetch is in flight, render skeleton placeholders
+              // instead of the hardcoded STUDENT_PLANS — otherwise the page
+              // briefly shows stale prices then snaps to the live values.
+              if (!plansLoaded) {
+                return [0, 1, 2].map((i) => (
+                  <div key={`sk-${i}`} className="card flex flex-col animate-pulse">
+                    <div className="h-5 w-24 bg-slate-200 rounded" />
+                    <div className="h-9 w-28 bg-slate-200 rounded mt-3" />
+                    <div className="h-3 w-40 bg-slate-100 rounded mt-2" />
+                    <div className="space-y-2 mt-4 flex-1">
+                      <div className="h-3 w-full bg-slate-100 rounded" />
+                      <div className="h-3 w-5/6 bg-slate-100 rounded" />
+                      <div className="h-3 w-4/6 bg-slate-100 rounded" />
+                    </div>
+                    <div className="h-10 w-full bg-slate-200 rounded mt-5" />
+                  </div>
+                ));
+              }
               const livePremium = dbPlans
                 .filter((p) => p.tier === "premium")
                 .sort((a, b) => a.period_days - b.period_days);
@@ -463,10 +595,11 @@ function PricingInner() {
               // Live DB-driven render — annual gets the "Best value" highlight.
               return livePremium.map((p) => {
                 const isAnnual = p.period_days >= 360;
+                const periodSuffix = p.period_days >= 360 ? "yr" : p.period_days >= 60 ? `${Math.round(p.period_days / 30)}mo` : "mo";
                 const isCurrent = me?.tier === (isAnnual ? "premium" : "individual");
                 const cta = busy === p.slug
                   ? { text: "Opening checkout…", disabled: true, primary: true }
-                  : !me ? { text: "Get this plan", disabled: false, primary: true }
+                  : !me ? { text: "Go to Payment", disabled: false, primary: true }
                   : isCurrent ? { text: "Current plan", disabled: true, primary: false }
                   : { text: "Upgrade", disabled: busy !== null, primary: true };
                 return (
@@ -479,7 +612,7 @@ function PricingInner() {
                     <div className="font-bold text-lg">{p.label}</div>
                     <div className="text-3xl font-bold mt-2">
                       ₹{(p.price_paise / 100).toLocaleString("en-IN")}
-                      <span className="text-base font-normal muted"> /{isAnnual ? "yr" : "mo"}</span>
+                      <span className="text-base font-normal muted"> /{periodSuffix}</span>
                     </div>
                     {p.blurb && <p className="muted text-xs mt-1">{p.blurb}</p>}
                     <ul className="mt-4 space-y-1.5 text-sm flex-1">
@@ -518,7 +651,7 @@ function PricingInner() {
                     const isCurrent = me?.tier === "premium_plus";
                     const cta = busy === p.slug
                       ? { text: "Opening checkout…", disabled: true, primary: true }
-                      : !me ? { text: "Get this plan", disabled: false, primary: true }
+                      : !me ? { text: "Go to Payment", disabled: false, primary: true }
                       : isCurrent ? { text: "Current plan", disabled: true, primary: false }
                       : { text: "Upgrade", disabled: busy !== null, primary: true };
                     return (
@@ -573,6 +706,24 @@ function PricingInner() {
           <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500 mb-4">For schools</h2>
 
           {(() => {
+            if (!plansLoaded) {
+              return (
+                <div className="grid sm:grid-cols-3 gap-3">
+                  {[0, 1, 2].map((i) => (
+                    <div key={`sk-s-${i}`} className="card flex flex-col animate-pulse">
+                      <div className="h-5 w-32 bg-slate-200 rounded" />
+                      <div className="h-3 w-40 bg-slate-100 rounded mt-2" />
+                      <div className="h-7 w-28 bg-slate-200 rounded mt-3" />
+                      <div className="space-y-2 mt-3 flex-1">
+                        <div className="h-3 w-full bg-slate-100 rounded" />
+                        <div className="h-3 w-5/6 bg-slate-100 rounded" />
+                      </div>
+                      <div className="h-9 w-full bg-slate-200 rounded mt-4" />
+                    </div>
+                  ))}
+                </div>
+              );
+            }
             const liveSchool = dbPlans
               .filter((p) => p.tier.startsWith("school_"))
               .sort((a, b) => (a.min_students ?? 0) - (b.min_students ?? 0));
@@ -723,6 +874,74 @@ function PricingInner() {
             ))}
           </div>
         </section>
+
+        {/* ============ Guest checkout modal ============ */}
+        {guestPlan && (
+          <div className="fixed inset-0 z-50 grid place-items-center bg-slate-900/40 backdrop-blur-sm px-4">
+            <div className="w-full max-w-md card bg-white">
+              <h2 className="text-xl font-bold">Quick details</h2>
+              <p className="text-sm text-slate-600 mt-1">
+                Pay for <strong>{guestPlan.label}</strong>{guestPlan.priceLine && <> — {guestPlan.priceLine}</>}. We&apos;ll create your BloomIQ account and open Razorpay.
+              </p>
+              <form
+                className="space-y-3 mt-4"
+                onSubmit={(e) => { e.preventDefault(); void guestUpgrade(); }}
+              >
+                <div>
+                  <label className="label">Full name</label>
+                  <input className="input" required value={guestName} onChange={(e) => setGuestName(e.target.value)} />
+                </div>
+                <div>
+                  <label className="label">Email</label>
+                  <input className="input" type="email" required value={guestEmail} onChange={(e) => setGuestEmail(e.target.value)} />
+                </div>
+                <div>
+                  <label className="label">Password <span className="muted text-xs">(min 8 chars)</span></label>
+                  <input className="input" type="password" required minLength={8} value={guestPwd} onChange={(e) => setGuestPwd(e.target.value)} />
+                </div>
+                <label className="flex items-start gap-2 text-xs text-slate-700 select-none">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5"
+                    checked={guestAcceptedTerms}
+                    onChange={(e) => setGuestAcceptedTerms(e.target.checked)}
+                  />
+                  <span>
+                    I accept the{" "}
+                    <Link href="/terms" target="_blank" className="text-emerald-700 hover:underline">Terms of Service</Link>{" "}
+                    and{" "}
+                    <Link href="/privacy" target="_blank" className="text-emerald-700 hover:underline">Privacy Policy</Link>.
+                  </span>
+                </label>
+                {err && (
+                  <div className="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">
+                    {err}
+                  </div>
+                )}
+                <div className="flex gap-2 mt-2">
+                  <button
+                    type="button"
+                    className="btn btn-secondary flex-1"
+                    onClick={() => { setGuestPlan(null); setErr(null); }}
+                    disabled={busy === guestPlan.slug}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="btn btn-primary flex-1 inline-flex items-center justify-center gap-1.5"
+                    disabled={busy === guestPlan.slug || !guestAcceptedTerms}
+                  >
+                    {busy === guestPlan.slug ? <><span className="spinner" /> Opening…</> : <><Sparkles size={14} /> Go to Payment</>}
+                  </button>
+                </div>
+                <p className="text-[11px] text-slate-500 mt-2">
+                  Already have an account? <Link href="/login" className="text-emerald-700 hover:underline">Sign in</Link> first, then return to this page.
+                </p>
+              </form>
+            </div>
+          </div>
+        )}
 
         <p className="text-xs muted mt-10 text-center">
           Razorpay processes all payments. We never see or store your card details.

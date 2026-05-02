@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import * as XLSX from "xlsx";
+import { addSheet, downloadWorkbook, newWorkbook, recordsToTable } from "@/lib/excelReport";
 import { supabaseBrowser } from "@/lib/supabase/client";
 import { BLOOM_LEVELS, BLOOM_META, blankBloomCounts, type BloomLevel } from "@/lib/bloom";
 import type { Quiz } from "@/lib/types";
@@ -197,10 +197,16 @@ export default function ReportsPage() {
       });
       rows.sort((a, b) => (b.Percent as number) - (a.Percent as number));
 
-      const ws = XLSX.utils.json_to_sheet(rows);
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, "Class Results");
-      XLSX.writeFile(wb, `bloomiq-${quiz.name.replace(/\s+/g, "_")}-class.xlsx`);
+      const wb = newWorkbook();
+      const { headers, rows: tableRows } = recordsToTable(rows);
+      addSheet(wb, {
+        name: "Class Results",
+        title: `Class results — ${quiz.name}`,
+        subtitle: `Generated ${new Date().toLocaleString()}`,
+        headers,
+        rows: tableRows,
+      });
+      await downloadWorkbook(wb, `bloomiq-${quiz.name.replace(/\s+/g, "_")}-class.xlsx`);
     } finally { setBusy(null); }
   }
 
@@ -209,7 +215,9 @@ export default function ReportsPage() {
     setBusy("term");
     try {
       // Use the filtered scope (period + class), not all data
-      const wb = XLSX.utils.book_new();
+      const wb = newWorkbook();
+      const stamp = `Generated ${new Date().toLocaleString()}`;
+      const scope = `Scope: ${period} · ${classFilter !== "all" ? (classes.find((c) => c.id === classFilter)?.name || "class") : "All classes"}`;
 
       // Sheet 1 — Quiz overview
       const quizOverview = filteredQuizzes.map((q) => {
@@ -229,7 +237,10 @@ export default function ReportsPage() {
           Created: new Date(q.created_at).toLocaleDateString(),
         };
       });
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(quizOverview), "Quizzes");
+      {
+        const t = recordsToTable(quizOverview);
+        addSheet(wb, { name: "Quizzes", title: "Quiz overview", subtitle: `${scope} · ${stamp}`, headers: t.headers, rows: t.rows });
+      }
 
       // Sheet 2 — Per-student summary across all quizzes
       const byStudent = new Map<string, { name: string; attempts: number; ratios: number[] }>();
@@ -247,7 +258,10 @@ export default function ReportsPage() {
         "Worst %": s.ratios.length ? Math.min(...s.ratios) : 0,
         StudentId: id,
       })).sort((a, b) => (b["Average %"] as number) - (a["Average %"] as number));
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(studentSummary), "Students");
+      {
+        const t = recordsToTable(studentSummary);
+        addSheet(wb, { name: "Students", title: "Per-student summary", subtitle: stamp, headers: t.headers, rows: t.rows });
+      }
 
       // Sheet 3 — Bloom mastery (students × levels)
       const bloomMatrix: Record<string, string | number>[] = [];
@@ -261,7 +275,10 @@ export default function ReportsPage() {
         });
         bloomMatrix.push(row);
       });
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(bloomMatrix), "Bloom mastery");
+      {
+        const t = recordsToTable(bloomMatrix);
+        addSheet(wb, { name: "Bloom mastery", title: "Bloom mastery (% correct per level)", subtitle: stamp, headers: t.headers, rows: t.rows });
+      }
 
       // Sheet 4 — Topic mastery (students × topic_family)
       const allTopics = Array.from(new Set(filteredQuizzes.map((q) => q.topic_family || "(uncategorised)")));
@@ -276,7 +293,10 @@ export default function ReportsPage() {
         });
         topicMatrix.push(row);
       });
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(topicMatrix), "Topic mastery");
+      {
+        const t = recordsToTable(topicMatrix);
+        addSheet(wb, { name: "Topic mastery", title: "Topic mastery (% per topic family)", subtitle: stamp, headers: t.headers, rows: t.rows });
+      }
 
       // Sheet 5 — Improvement trajectory (first vs last attempt %)
       const improvement = Array.from(byStudent, ([sid, s]) => {
@@ -295,7 +315,10 @@ export default function ReportsPage() {
           "Tests taken": s.attempts,
         };
       }).sort((a, b) => (typeof b["Change (pp)"] === "number" ? (b["Change (pp)"] as number) : -999) - (typeof a["Change (pp)"] === "number" ? (a["Change (pp)"] as number) : -999));
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(improvement), "Improvement");
+      {
+        const t = recordsToTable(improvement);
+        addSheet(wb, { name: "Improvement", title: "Improvement trajectory (first vs latest)", subtitle: stamp, headers: t.headers, rows: t.rows });
+      }
 
       // Sheet 6 — Question quality audit
       const questionStats = new Map<string, { quiz: string; level: BloomLevel; correct: number; total: number }>();
@@ -323,10 +346,13 @@ export default function ReportsPage() {
                  q.correct / q.total < 0.4 ? "very hard" :
                  q.correct / q.total < 0.7 ? "challenging" : "well-calibrated",
       })).sort((a, b) => (a["% correct"] as number) - (b["% correct"] as number));
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(questionRows), "Question audit");
+      {
+        const t = recordsToTable(questionRows);
+        addSheet(wb, { name: "Question audit", title: "Question quality audit", subtitle: stamp, headers: t.headers, rows: t.rows });
+      }
 
       const slug = `${period}${classFilter !== "all" ? `-${(classes.find((c) => c.id === classFilter)?.name || "class").replace(/\s+/g, "_")}` : ""}`;
-      XLSX.writeFile(wb, `bloomiq-term-summary-${slug}-${new Date().toISOString().slice(0, 10)}.xlsx`);
+      await downloadWorkbook(wb, `bloomiq-term-summary-${slug}-${new Date().toISOString().slice(0, 10)}.xlsx`);
     } finally { setBusy(null); }
   }
 
@@ -349,9 +375,16 @@ export default function ReportsPage() {
         return row;
       });
 
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(matrix), "Topic × Student");
-      XLSX.writeFile(wb, `bloomiq-topic-mastery-${new Date().toISOString().slice(0, 10)}.xlsx`);
+      const wb = newWorkbook();
+      const t = recordsToTable(matrix);
+      addSheet(wb, {
+        name: "Topic × Student",
+        title: "Topic mastery — Topic × Student",
+        subtitle: `Generated ${new Date().toLocaleString()}`,
+        headers: t.headers,
+        rows: t.rows,
+      });
+      await downloadWorkbook(wb, `bloomiq-topic-mastery-${new Date().toISOString().slice(0, 10)}.xlsx`);
     } finally { setBusy(null); }
   }
 
@@ -383,9 +416,16 @@ export default function ReportsPage() {
                  s.correct / s.total < 0.7 ? "challenging" : "well-calibrated",
       })).sort((a, b) => (a["% correct"] as number) - (b["% correct"] as number));
 
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), "Question audit");
-      XLSX.writeFile(wb, `bloomiq-question-audit-${new Date().toISOString().slice(0, 10)}.xlsx`);
+      const wb = newWorkbook();
+      const t = recordsToTable(rows);
+      addSheet(wb, {
+        name: "Question audit",
+        title: "Question quality audit",
+        subtitle: `Generated ${new Date().toLocaleString()}`,
+        headers: t.headers,
+        rows: t.rows,
+      });
+      await downloadWorkbook(wb, `bloomiq-question-audit-${new Date().toISOString().slice(0, 10)}.xlsx`);
     } finally { setBusy(null); }
   }
 

@@ -10,6 +10,7 @@ import { ClipboardList, Clock, Play, Sparkles, TrendingUp, NotebookPen, AlertCir
 import { BLOOM_LEVELS, BLOOM_META, blankBloomCounts } from "@/lib/bloom";
 import StudentGoalPicker, { STUDENT_GOALS } from "@/components/StudentGoalPicker";
 import StudentFeatureTile from "@/components/StudentFeatureTile";
+import MissedAssignments from "@/components/MissedAssignments";
 import { TILE_META, tileLayoutForGoal } from "@/lib/studentGoalTiles";
 import BloomHero from "@/components/BloomHero";
 import PaywallModal from "@/components/PaywallModal";
@@ -582,6 +583,8 @@ export default function StudentHome() {
     <div className="max-w-5xl mx-auto fade-in">
       <h1 className="h1">Hi{name ? `, ${name.split(" ")[0]}` : ""} 👋</h1>
       <p className="muted mt-1">Ready to test your thinking?</p>
+
+      <MissedAssignments />
 
       <div className="grid sm:grid-cols-3 gap-4 mt-6">
         <div className="card">
