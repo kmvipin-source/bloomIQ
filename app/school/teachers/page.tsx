@@ -11,6 +11,8 @@ type TeacherRow = {
   full_name: string | null;
   classCount: number;
   quizCount: number;
+  primaryCount: number;
+  coCount: number;
 };
 
 export default function SchoolTeachersPage() {
@@ -44,15 +46,19 @@ export default function SchoolTeachersPage() {
 
     const rows: TeacherRow[] = await Promise.all(
       teacherList.map(async (t) => {
-        const [{ count: classCt }, { count: quizCt }] = await Promise.all([
+        const [{ count: classCt }, { count: quizCt }, { count: primaryCt }, { count: coCt }] = await Promise.all([
           sb.from("class_teachers").select("class_id", { count: "exact", head: true }).eq("teacher_id", t.id),
           sb.from("quizzes").select("id", { count: "exact", head: true }).eq("owner_id", t.id),
+          sb.from("class_teachers").select("class_id", { count: "exact", head: true }).eq("teacher_id", t.id).eq("role", "primary"),
+          sb.from("class_teachers").select("class_id", { count: "exact", head: true }).eq("teacher_id", t.id).eq("role", "co"),
         ]);
         return {
           id: t.id,
           full_name: t.full_name,
           classCount: classCt || 0,
           quizCount: quizCt || 0,
+          primaryCount: primaryCt || 0,
+          coCount: coCt || 0,
         };
       })
     );
@@ -131,6 +137,7 @@ export default function SchoolTeachersPage() {
             <thead className="bg-slate-50 text-xs uppercase muted">
               <tr>
                 <th className="px-4 py-3 text-left">Teacher</th>
+                <th className="px-4 py-3 text-left">Role</th>
                 <th className="px-4 py-3 text-right">Classes</th>
                 <th className="px-4 py-3 text-right">Quizzes</th>
                 <th className="px-4 py-3 text-right">Action</th>
@@ -140,6 +147,25 @@ export default function SchoolTeachersPage() {
               {teachers.map((t) => (
                 <tr key={t.id} className="hover:bg-slate-50">
                   <td className="px-4 py-3 font-medium">{t.full_name || "(unnamed)"}</td>
+                  <td className="px-4 py-3">
+                    <div className="flex flex-wrap gap-1.5">
+                      {t.primaryCount > 0 && (
+                        <span className="text-[10px] uppercase tracking-wide font-bold px-2 py-0.5 rounded-full" style={{ background: "#dbeafe", color: "#1e3a8a" }}>
+                          Primary{t.primaryCount > 1 ? ` ×${t.primaryCount}` : ""}
+                        </span>
+                      )}
+                      {t.coCount > 0 && (
+                        <span className="text-[10px] uppercase tracking-wide font-bold px-2 py-0.5 rounded-full" style={{ background: "#ede9fe", color: "#5b21b6" }}>
+                          Co-teacher{t.coCount > 1 ? ` ×${t.coCount}` : ""}
+                        </span>
+                      )}
+                      {t.primaryCount === 0 && t.coCount === 0 && (
+                        <span className="text-[10px] uppercase tracking-wide font-bold px-2 py-0.5 rounded-full" style={{ background: "#fef3c7", color: "#92400e" }}>
+                          Unassigned
+                        </span>
+                      )}
+                    </div>
+                  </td>
                   <td className="px-4 py-3 text-right">{t.classCount}</td>
                   <td className="px-4 py-3 text-right">{t.quizCount}</td>
                   <td className="px-4 py-3 text-right">

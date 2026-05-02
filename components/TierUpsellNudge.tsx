@@ -49,6 +49,7 @@ export default function TierUpsellNudge() {
   const [next, setNext] = useState<Plan | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
   const [sessionFp, setSessionFp] = useState<string | null>(null);
+  const [audience, setAudience] = useState<"individual" | "school">("individual");
 
   const onDashboard = DASHBOARD_PREFIXES.some((p) => pathname === p || pathname.startsWith(p + "/"));
 
@@ -125,6 +126,7 @@ export default function TierUpsellNudge() {
 
         setUserId(user.id);
         setSessionFp(sessionFp);
+        setAudience(prof.role === "super_teacher" ? "school" : "individual");
         setNext(plan);
 
         // Auto-dismiss after a short window — long enough to read, short
@@ -176,7 +178,10 @@ export default function TierUpsellNudge() {
           <Sparkles size={18} />
         </div>
         <div className="flex-1 min-w-0">
-          <div className="flex items-baseline gap-2 flex-wrap">
+          <div className="text-[10px] uppercase tracking-wider font-bold text-emerald-700">
+            {audience === "school" ? "Upgrade your school" : "Upgrade your plan"}
+          </div>
+          <div className="flex items-baseline gap-2 flex-wrap mt-0.5">
             <span className="font-bold text-sm text-emerald-900">Unlock {next.label}</span>
             <span className="text-xs text-emerald-700 font-semibold">{priceLine}</span>
           </div>

@@ -5,6 +5,7 @@ import { supabaseBrowser } from "@/lib/supabase/client";
 import { Sparkles, Library, ListChecks, Users, Building2, LogOut, MessageCircle, Radio } from "lucide-react";
 import TeacherRetakeRequests from "@/components/TeacherRetakeRequests";
 import TeacherInvites from "@/components/TeacherInvites";
+import CurrentPlanBadge from "@/components/CurrentPlanBadge";
 
 export default function TeacherHome() {
   const [stats, setStats] = useState({ pending: 0, approved: 0, quizzes: 0, attempts: 0 });
@@ -113,8 +114,13 @@ export default function TeacherHome() {
 
   return (
     <div className="max-w-6xl mx-auto fade-in">
-      <h1 className="h1">Welcome back{name ? `, ${name.split(" ")[0]}` : ""} 👋</h1>
-      <p className="muted mt-1">Here&apos;s your snapshot.</p>
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <h1 className="h1">Welcome back{name ? `, ${name.split(" ")[0]}` : ""} 👋</h1>
+          <p className="muted mt-1">Here&apos;s your snapshot.</p>
+        </div>
+        <CurrentPlanBadge />
+      </div>
 
       <TeacherInvites onChanged={() => loadProfile()} />
       <TeacherRetakeRequests />

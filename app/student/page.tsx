@@ -11,6 +11,7 @@ import { BLOOM_LEVELS, BLOOM_META, blankBloomCounts } from "@/lib/bloom";
 import StudentGoalPicker, { STUDENT_GOALS } from "@/components/StudentGoalPicker";
 import StudentFeatureTile from "@/components/StudentFeatureTile";
 import MissedAssignments from "@/components/MissedAssignments";
+import CurrentPlanBadge from "@/components/CurrentPlanBadge";
 import { TILE_META, tileLayoutForGoal } from "@/lib/studentGoalTiles";
 import BloomHero from "@/components/BloomHero";
 import PaywallModal from "@/components/PaywallModal";
@@ -247,8 +248,13 @@ export default function StudentHome() {
 
     return (
       <div className="max-w-5xl mx-auto fade-in">
-        <h1 className="h1">Hi{name ? `, ${name.split(" ")[0]}` : ""} 👋</h1>
-        <p className="muted mt-1">Generate a practice test, take it, watch your scores climb.</p>
+        <div className="flex items-start justify-between gap-3 flex-wrap">
+          <div>
+            <h1 className="h1">Hi{name ? `, ${name.split(" ")[0]}` : ""} 👋</h1>
+            <p className="muted mt-1">Generate a practice test, take it, watch your scores climb.</p>
+          </div>
+          <CurrentPlanBadge />
+        </div>
 
         {/* Goal chip — shows what the student picked at onboarding, with a
             link back to the picker so they can change it. */}
@@ -581,8 +587,13 @@ export default function StudentHome() {
 
   return (
     <div className="max-w-5xl mx-auto fade-in">
-      <h1 className="h1">Hi{name ? `, ${name.split(" ")[0]}` : ""} 👋</h1>
-      <p className="muted mt-1">Ready to test your thinking?</p>
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <h1 className="h1">Hi{name ? `, ${name.split(" ")[0]}` : ""} 👋</h1>
+          <p className="muted mt-1">Ready to test your thinking?</p>
+        </div>
+        <CurrentPlanBadge />
+      </div>
 
       <MissedAssignments />
 
