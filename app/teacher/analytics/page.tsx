@@ -391,7 +391,7 @@ function AnalyticsInner() {
         <div className="card mt-4">
           <div className="flex items-start justify-between gap-4 flex-wrap">
             <div className="min-w-0">
-              <div className="text-xs muted uppercase tracking-wide font-semibold">Quiz</div>
+              <div className="text-xs muted uppercase tracking-wide font-semibold">Test</div>
               <h2 className="text-xl font-bold mt-0.5">{quiz.name}</h2>
               <div className="flex items-center gap-2 mt-1 flex-wrap">
                 {quiz.subject && <span className="text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 font-semibold">{quiz.subject}</span>}

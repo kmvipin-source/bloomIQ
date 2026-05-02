@@ -9,6 +9,7 @@ import { UserPlus, UserMinus, Copy, ArrowLeft } from "lucide-react";
 type TeacherRow = {
   id: string;
   full_name: string | null;
+  email: string | null;
   classCount: number;
   quizCount: number;
   primaryCount: number;
@@ -55,6 +56,7 @@ export default function SchoolTeachersPage() {
         return {
           id: t.id,
           full_name: t.full_name,
+          email: null,
           classCount: classCt || 0,
           quizCount: quizCt || 0,
           primaryCount: primaryCt || 0,
@@ -63,6 +65,28 @@ export default function SchoolTeachersPage() {
       })
     );
     rows.sort((a, b) => (b.classCount + b.quizCount) - (a.classCount + a.quizCount));
+
+    // Hydrate emails. Email lives on auth.users, not on profiles, so
+    // we hit the GET /api/admin/school/teachers endpoint which reads
+    // it via the service-role admin client. Done after the other
+    // stats so a slow auth round-trip doesn't hold up the table.
+    try {
+      const { data: { session } } = await sb.auth.getSession();
+      if (session) {
+        const r = await fetch("/api/admin/school/teachers", {
+          headers: { Authorization: `Bearer ${session.access_token}` },
+        });
+        if (r.ok) {
+          const j = await r.json();
+          type EmailRow = { id: string; email: string | null };
+          const emailById = new Map<string, string | null>(
+            ((j.teachers as EmailRow[]) || []).map((t) => [t.id, t.email]),
+          );
+          for (const row of rows) row.email = emailById.get(row.id) ?? null;
+        }
+      }
+    } catch { /* non-fatal — email column just shows "—" */ }
+
     setTeachers(rows);
     setLoading(false);
   }
@@ -139,14 +163,19 @@ export default function SchoolTeachersPage() {
                 <th className="px-4 py-3 text-left">Teacher</th>
                 <th className="px-4 py-3 text-left">Role</th>
                 <th className="px-4 py-3 text-right">Classes</th>
-                <th className="px-4 py-3 text-right">Quizzes</th>
+                <th className="px-4 py-3 text-right">Tests</th>
                 <th className="px-4 py-3 text-right">Action</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {teachers.map((t) => (
                 <tr key={t.id} className="hover:bg-slate-50">
-                  <td className="px-4 py-3 font-medium">{t.full_name || "(unnamed)"}</td>
+                  <td className="px-4 py-3">
+                    <div className="font-medium">{t.full_name || "(unnamed)"}</div>
+                    {t.email && (
+                      <div className="text-xs muted mt-0.5 truncate" title={t.email}>{t.email}</div>
+                    )}
+                  </td>
                   <td className="px-4 py-3">
                     <div className="flex flex-wrap gap-1.5">
                       {t.primaryCount > 0 && (

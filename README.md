@@ -12,6 +12,86 @@ This project uses **Next.js 16** with breaking changes — APIs, conventions, an
 
 ---
 
+## 👤 First-time account creation & login — by role
+
+How a fresh account becomes a working account, for each of the five
+roles BloomIQ supports. All flows go through the same Supabase Auth
+backend; the differences are in what gets gated, what's required
+before features unlock, and who can self-onboard vs needs admin
+intervention.
+
+The role-aware redirect happens via `app/login/page.tsx` after auth
+returns. Profile rows (`public.profiles`) are auto-created via the
+auth trigger from migration 02; role is set at signup or by an admin.
+
+### 1. Independent student (self-serve)
+
+| Step | Where | What happens |
+|---|---|---|
+| Sign up | `/signup?role=student` (default if no `?role=`) | Email + password. Optional: pick exam goal at this step or later. Profile row inserted with `role='student'`, `is_school_student=false`, `school_id=null`. |
+| First login | `/login` | Redirected to `/student`. |
+| First-run gating | `/student` dashboard | If `exam_goal` is null, the goal-picker card prompts them to choose (Class 10 boards, JEE prep, etc.). |
+| Plan | `subscriptions.tier` defaults to `free` (no row required). They can upgrade at `/pricing` via Razorpay → goes through `/api/checkout` + `/api/checkout/verify`. |
+| Locked features | Lock badges show **"Premium" / "Premium Plus"** (never "School Pilot" — fixed by lib/featureAccess `findUnlockingTier(key, "personal")`). Clicking opens `<PaywallModal>` with /pricing CTA. |
+
+**No school involvement.** They own their data; can leave it inactive
+forever; can delete their account; can upgrade/downgrade independently.
+
+### 2. School student (admin-managed)
+
+| Step | Where | What happens |
+|---|---|---|
+| Sign up | **Cannot self-sign-up as a school student.** Must be created by their school's Admin Head via `/school/students` bulk-create or `/api/admin/students/bulk-create`. Migration 02 sets `is_school_student=true` and `school_id` to the school. |
+| First login | `/login` | Redirected to `/student`. Sidebar renders the school-student variant (Class / Live / Practice groups). |
+| First-run gating | None — they land on the dashboard with whatever quizzes the teacher has assigned. |
+| Plan | Inherits the school's plan (`subscriptions.tier` resolved with `source='school'` in `useFeatureAccess`). They can never upgrade themselves. |
+| Locked features | Lock badges show their school tier ("School Pilot" / "School Standard" / "School Plus"). PaywallModal variant tells them "ask your school admin" — no /pricing link. |
+
+**No self-enrol path.** The "Join class via code" feature exists in the
+codebase but is intentionally NOT exposed in their UI; classes are
+admin-rostered. Same logic for password resets — teacher administers.
+
+### 3. Teacher (school code OR email invite)
+
+| Step | Where | What happens |
+|---|---|---|
+| Sign up | `/signup?role=teacher` | Email + password. Profile row inserted with `role='teacher'`, `school_id=null`. |
+| First login | `/login` | Redirected to `/teacher`. |
+| **First-run gating — the big one** | `/teacher` layout | If `school_id` is null, every `/teacher/*` sub-route redirects back to `/teacher` home, which renders **only** the welcome strip + "Join your school" card. No focus card, no stats trio, no recent tests, no Generate / Tests / Live / Coach. Teachers MUST be in a school to use teacher features. |
+| Two ways to join | (a) paste the 8-char school code from the Admin Head into the join form on `/teacher` home → POST `/api/school/join`. (b) Admin Head invites them by email from `/school/teachers` → invite email lands → first signup auto-claims via migration 09. |
+| After join | `school_id` populates, layout gate releases, full dashboard reveals. |
+| Plan | Inherits school's plan. No personal upgrade path. |
+
+### 4. Super-teacher (Admin Head)
+
+| Step | Where | What happens |
+|---|---|---|
+| Sign up | `/signup?role=teacher` initially. The Admin Head role is granted, not self-claimed. |
+| Becoming Admin Head | One of: (a) bootstrap their school via `/api/admin/onboard-school` (platform-admin–driven), (b) the existing Admin Head transfers via the "Transfer Admin Head" UI on `/school` home, (c) explicit SQL flip on `profiles.role`. Migration 03 wires the trigger that promotes role to `super_teacher`. |
+| First login as Admin Head | `/login` | Redirected to `/school`. Sidebar renders the super-teacher variant (Roster / Insights / Assist). |
+| First-run gating | If their school has no `join_code`, one is auto-generated on first dashboard visit (handled in `/school/page.tsx` legacy-recovery path). |
+| Plan | School plan; visible in the badge top-right. Plan changes go via support@bloomiq.app — not self-serve. |
+
+### 5. Platform admin (BloomIQ internal staff)
+
+| Step | Where | What happens |
+|---|---|---|
+| Bootstrap | The first admin is set via raw SQL: `update profiles set platform_admin=true where id='<user_uuid>'`. This is the chicken-and-egg case — there's nobody to grant it through the UI yet. |
+| Login | `/staff` (hidden route, not linked from public pages) → standard email/password. Redirects to `/admin/onboard-school` (or the last visited admin path). |
+| Sidebar | Renders the platform-admin variant of the shared Sidebar component (Dashboard / Onboard School / Plans / Admin Team), wired in via the Sidebar refactor in 2026-05-02. |
+| Granting more admins | `/admin/team` → invite by email. Recipient signs up normally; the invite-claim mechanism flips `platform_admin` on first auth. Two-eyes rule for plan-proposal approval kicks in once a second admin exists. |
+| Plan / school | Platform admins are exclusive — no school, no plan badge, no role-based dashboard ping-pong. They live in `/admin/*` only. |
+
+### Common edge cases to keep in mind
+
+- **A user upgrading from teacher → super_teacher** keeps the same auth user and profile row; only `role` flips. Their school_id stays.
+- **Email change** is not self-serve in the UI; users must contact support. The auth row's email is the source of truth — `profiles` doesn't store email separately.
+- **Password reset** lives at `/auth/set-password` for everyone except school students (their teacher resets via `/school/students` action).
+- **2FA** is opt-in for everyone except school students (we don't expect 8-year-olds to manage TOTP). Enable at `/settings/security`.
+- **Email confirmation on signup** is currently DISABLED in Supabase (Auth → Providers → Email → uncheck "Confirm email"). Switch to real transactional email before production.
+
+---
+
 ## 🆕 Latest session — 2026-05-01 evening (Cohort pacing benchmarks + rank-prediction disclaimers + RLS recursion fix + test-user seed)
 
 A wide-ranging session covering one student-facing feature (Premium Plus only),

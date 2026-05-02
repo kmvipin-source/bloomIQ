@@ -284,7 +284,7 @@ export default function TakeQuiz() {
       <div className="min-h-screen grid place-items-center px-6">
         <div className="card max-w-lg w-full text-center">
           <div className="text-3xl mb-2">😕</div>
-          <div className="font-semibold mb-2">Couldn&apos;t open this quiz</div>
+          <div className="font-semibold mb-2">Couldn&apos;t open this test</div>
           <div className="text-sm text-slate-600 mb-4">{loadErr}</div>
           <button className="btn btn-secondary" onClick={() => router.replace("/student")}>Back to home</button>
         </div>

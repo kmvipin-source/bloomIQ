@@ -54,6 +54,60 @@ export async function POST(req: Request) {
 }
 
 /**
+ * GET → list teachers in the Admin Head's school, including email.
+ * Email isn't stored on `profiles` (it lives on auth.users), so we
+ * read it via the service-role admin client and join in memory.
+ *
+ * Returns: { teachers: Array<{ id, full_name, email }> }
+ */
+export async function GET(req: Request) {
+  try {
+    const token = getBearer(req);
+    if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const sb = supabaseServer(token);
+    const { data: { user } } = await sb.auth.getUser();
+    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+    const { data: me } = await sb.from("profiles").select("role, school_id").eq("id", user.id).single();
+    if (!me || me.role !== "super_teacher" || !me.school_id) {
+      return NextResponse.json({ error: "Only the Admin Head can do this." }, { status: 403 });
+    }
+
+    const admin = supabaseAdmin();
+    // Pull the teacher profiles in this school first.
+    const { data: profs, error: pErr } = await admin
+      .from("profiles")
+      .select("id, full_name")
+      .eq("school_id", me.school_id)
+      .eq("role", "teacher");
+    if (pErr) return NextResponse.json({ error: pErr.message }, { status: 500 });
+    const profList = ((profs as Array<{ id: string; full_name: string | null }>) || []);
+
+    if (profList.length === 0) {
+      return NextResponse.json({ teachers: [] });
+    }
+
+    // Fetch emails for those user_ids. listUsers paginates; for the
+    // sizes we expect here (a few dozen teachers per school) one page
+    // is plenty. If any school grows past 1000 teachers, this would
+    // need a paged loop.
+    const { data: usersList, error: uErr } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 });
+    if (uErr) return NextResponse.json({ error: uErr.message }, { status: 500 });
+    const emailById = new Map<string, string | null>();
+    for (const u of usersList.users) emailById.set(u.id, u.email ?? null);
+
+    const teachers = profList.map((p) => ({
+      id: p.id,
+      full_name: p.full_name,
+      email: emailById.get(p.id) ?? null,
+    }));
+    return NextResponse.json({ teachers });
+  } catch (e) {
+    return NextResponse.json({ error: e instanceof Error ? e.message : "Failed" }, { status: 500 });
+  }
+}
+
+/**
  * DELETE → remove a teacher from the school.
  * Body: { teacher_id: string }
  */

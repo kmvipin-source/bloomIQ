@@ -145,7 +145,33 @@ export async function POST(req: Request) {
     };
     const legacyTier = legacyTierMap[planRow.tier] || planRow.tier;
 
-    const expiresAt = new Date(Date.now() + planRow.period_days * 24 * 60 * 60 * 1000).toISOString();
+    // 4) Update-or-insert the subscription row. Pull expires_at first so
+    // we can anchor the new term correctly when this is an UPGRADE on
+    // top of an active subscription.
+    const { data: existing, error: selErr } = await admin
+      .from("subscriptions")
+      .select("id, expires_at")
+      .eq("user_id", user.id)
+      .maybeSingle();
+    if (selErr) return NextResponse.json({ error: selErr.message }, { status: 500 });
+
+    // ===== Upgrade-aware expiry (Model B: extension) =====
+    // Anchor the new term off whichever is later — now, or the old
+    // plan's existing expiry. So if a user upgrades from Premium
+    // Monthly with 18 days remaining to Premium Plus Quarterly,
+    // their new expires_at is (today + 18 days) + 90 days, not just
+    // today + 90 days. The user pays the full new-plan price (not
+    // a prorated differential), but they don't forfeit unused time.
+    //
+    // Edge cases handled by max():
+    //   - No prior subscription      → existing is null, anchor = now
+    //   - Old sub already expired    → oldExpiresMs <= now, anchor = now
+    //   - Old sub still active       → anchor = oldExpiresMs
+    //   - Old sub very far in future → anchor = oldExpiresMs (no surprise rollback)
+    const oldExpiresMs =
+      existing?.expires_at ? new Date(existing.expires_at).getTime() : 0;
+    const anchorMs = Math.max(Date.now(), oldExpiresMs);
+    const expiresAt = new Date(anchorMs + planRow.period_days * 24 * 60 * 60 * 1000).toISOString();
 
     // The amount the customer actually paid for THIS term. Locked onto
     // the subscription so a future plan price-change doesn't retroactively
@@ -154,14 +180,6 @@ export async function POST(req: Request) {
     const pricePaidPaise = typeof order.amount === "number" && order.amount > 0
       ? order.amount
       : 0;
-
-    // 4) Update-or-insert the subscription row.
-    const { data: existing, error: selErr } = await admin
-      .from("subscriptions")
-      .select("id")
-      .eq("user_id", user.id)
-      .maybeSingle();
-    if (selErr) return NextResponse.json({ error: selErr.message }, { status: 500 });
 
     if (existing?.id) {
       const { error: updErr } = await admin

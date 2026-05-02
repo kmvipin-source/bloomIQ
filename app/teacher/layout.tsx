@@ -1,11 +1,29 @@
 "use client";
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
 import { supabaseBrowser } from "@/lib/supabase/client";
 
+/**
+ * Teacher layout — auth + role + school-membership gate.
+ *
+ * Two checks layered together:
+ *   1. Auth + role: must be signed in AND have role='teacher'. Other
+ *      roles are bounced to their own home; platform admins to /admin.
+ *   2. School membership: a teacher with school_id = null hasn't been
+ *      onboarded into a school yet. Without a school there's no plan,
+ *      and feature gating is a no-op — they could otherwise hit any
+ *      /teacher/* URL directly and use everything for free. So we
+ *      redirect every sub-route (/teacher/quizzes, /teacher/live, etc)
+ *      back to /teacher home, where the dashboard renders ONLY the
+ *      "Join your school" card and suppresses everything else.
+ *
+ *      The /teacher home page is itself allowed to render with no
+ *      school — the join CTA needs to be reachable.
+ */
 export default function TeacherLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
+  const pathname = usePathname();
   const [ok, setOk] = useState(false);
 
   useEffect(() => {
@@ -16,21 +34,29 @@ export default function TeacherLayout({ children }: { children: React.ReactNode 
 
       const { data: prof } = await sb
         .from("profiles")
-        .select("role, platform_admin")
+        .select("role, platform_admin, school_id")
         .eq("id", user.id)
         .single();
 
       // platform_admin is exclusive — no hybrid display. Force them to /admin.
       if (prof?.platform_admin)           { router.replace("/admin/onboard-school"); return; }
-      // Each role has exactly one home — no ping-pong between layouts
+      // Each role has exactly one home — no ping-pong between layouts.
       if (prof?.role === "student")       { router.replace("/student"); return; }
       if (prof?.role === "super_teacher") { router.replace("/school");  return; }
       if (prof?.role !== "teacher")       { router.replace("/login");   return; }
 
+      // School-membership gate: any sub-route is blocked until they join.
+      // The home page itself shows the join card, so we let it through.
+      const isHome = pathname === "/teacher" || pathname === "/teacher/";
+      if (!prof?.school_id && !isHome) {
+        router.replace("/teacher");
+        return;
+      }
+
       setOk(true);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [pathname]);
 
   if (!ok) {
     return <div className="min-h-screen grid place-items-center"><div className="spinner" /></div>;

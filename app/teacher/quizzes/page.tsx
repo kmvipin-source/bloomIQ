@@ -46,18 +46,18 @@ export default function QuizzesPage() {
     <div className="max-w-5xl mx-auto fade-in">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="h1">Your quizzes</h1>
+          <h1 className="h1">Your tests</h1>
           <p className="muted mt-1">{items.length} total</p>
         </div>
-        <Link href="/teacher/quizzes/new" className="btn btn-primary"><Plus size={16} /> New quiz</Link>
+        <Link href="/teacher/quizzes/new" className="btn btn-primary"><Plus size={16} /> New test</Link>
       </div>
 
       {items.length === 0 ? (
         <Empty
           icon="📝"
-          title="No quizzes yet"
-          body="Create a quiz from your approved questions to get a code you can share with students."
-          action={<Link href="/teacher/quizzes/new" className="btn btn-primary">Create your first quiz</Link>}
+          title="No tests yet"
+          body="Create a test from your approved questions to get a code you can share with students."
+          action={<Link href="/teacher/quizzes/new" className="btn btn-primary">Create your first test</Link>}
         />
       ) : (
         <div className="grid gap-3 mt-6">

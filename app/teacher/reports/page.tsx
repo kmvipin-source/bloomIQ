@@ -489,16 +489,16 @@ export default function ReportsPage() {
 
       {/* Hero stats */}
       <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4 mt-4">
-        <StatCard icon={ListChecks} label="Quizzes" value={stats.quizzes} color="from-emerald-500 to-emerald-600" />
+        <StatCard icon={ListChecks} label="Tests" value={stats.quizzes} color="from-emerald-500 to-emerald-600" />
         <StatCard icon={Users} label="Students" value={stats.students} color="from-sky-500 to-sky-600" />
         <StatCard icon={FileSpreadsheet} label="Submissions" value={stats.attempts} color="from-amber-500 to-amber-600" />
         <StatCard icon={TrendingUp} label="Average %" value={stats.attempts > 0 ? `${stats.avg}%` : "—"} color="from-violet-500 to-violet-600" />
       </div>
 
       {/* Section 1 — By quiz */}
-      <h2 className="h2 mt-10 mb-3">By quiz <span className="text-sm font-normal muted">— ignores filters above</span></h2>
+      <h2 className="h2 mt-10 mb-3">By test <span className="text-sm font-normal muted">— ignores filters above</span></h2>
       <div className="card mb-3">
-        <label className="label">Pick a quiz</label>
+        <label className="label">Pick a test</label>
         <select className="select" value={quizId} onChange={(e) => setQuizId(e.target.value)}>
           {quizzes.map((q) => <option key={q.id} value={q.id}>{q.name}{q.subject ? ` — ${q.subject}` : ""}</option>)}
         </select>
@@ -509,7 +509,7 @@ export default function ReportsPage() {
           color="from-emerald-500 to-emerald-600"
           title="Class summary"
           fmt="Excel"
-          desc="Every student's score, time taken, and Bloom-level breakdown for this quiz. Sorted top to bottom by score."
+          desc="Every student's score, time taken, and Bloom-level breakdown for this test. Sorted top to bottom by score."
           onClick={downloadClassSummary}
           busy={busy === "class"}
         />
@@ -518,8 +518,8 @@ export default function ReportsPage() {
           color="from-amber-500 to-amber-600"
           title="Per-student PDF reports"
           fmt="PDF"
-          desc="A printable report card for each student — strengths, weaknesses, recommended next topics. Generate one at a time from a quiz's attempts list."
-          buttonLabel="Open quiz attempts →"
+          desc="A printable report card for each student — strengths, weaknesses, recommended next topics. Generate one at a time from a test's attempts list."
+          buttonLabel="Open test attempts →"
           onClick={() => { window.location.href = `/teacher/quizzes/${quizId}`; }}
           busy={false}
         />
@@ -536,7 +536,7 @@ export default function ReportsPage() {
           color="from-sky-500 to-sky-600"
           title="Term summary workbook"
           fmt="Excel · 6 sheets"
-          desc="One file with: Quizzes overview · Students summary · Bloom mastery matrix · Topic mastery matrix · Improvement trajectory · Question quality audit."
+          desc="One file with: Tests overview · Students summary · Bloom mastery matrix · Topic mastery matrix · Improvement trajectory · Question quality audit."
           highlight
           onClick={downloadTermSummary}
           busy={busy === "term"}
@@ -565,7 +565,7 @@ export default function ReportsPage() {
           color="from-red-500 to-red-600"
           title="Question quality audit"
           fmt="Excel"
-          desc="Every question across every quiz, ranked by % correct. Flags 'too easy', 'too hard / unclear', 'challenging', 'well-calibrated' — find questions to retire or rewrite."
+          desc="Every question across every test, ranked by % correct. Flags 'too easy', 'too hard / unclear', 'challenging', 'well-calibrated' — find questions to retire or rewrite."
           onClick={downloadQuestionAudit}
           busy={busy === "audit"}
         />
@@ -579,7 +579,7 @@ export default function ReportsPage() {
           color="from-indigo-500 to-indigo-600"
           title="Weekly class digest"
           fmt="Email preview"
-          desc="A short summary email of the past week — quizzes, completion, average score, students needing attention. Currently a server-side preview."
+          desc="A short summary email of the past week — tests, completion, average score, students needing attention. Currently a server-side preview."
           buttonLabel="Send digest"
           onClick={sendDigest}
           busy={busy === "digest"}

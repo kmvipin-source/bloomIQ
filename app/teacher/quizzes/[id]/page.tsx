@@ -138,6 +138,35 @@ export default function QuizDetailPage() {
     if (scope === "specific" && pickedStudents.size === 0) {
       return setAssignErr("Select at least one student, or switch to whole-class.");
     }
+    // Due date+time is now mandatory — every assignment must have a
+    // deadline so the student knows when to submit and so the
+    // extension-request flow has a clear "by when" to extend.
+    if (!dueAt) {
+      return setAssignErr("Pick a due date and time.");
+    }
+    const dueMs = Date.parse(dueAt);
+    if (Number.isNaN(dueMs) || dueMs <= Date.now()) {
+      return setAssignErr("Due date must be in the future.");
+    }
+
+    // Duplicate-assignment guard. If this exact (quiz, class) or
+    // (quiz, student) pair already has an assignment row, prompt
+    // before inserting a second one — multiple silent duplicates
+    // confuse students ("which one do I answer?") and inflate the
+    // teacher's analytics. Confirm and proceed if intentional
+    // (e.g., different due dates for two cohorts).
+    const dupes = scope === "whole"
+      ? assignments.filter((a) => a.class_id === pickedClassId)
+      : assignments.filter((a) => a.student_id !== null && pickedStudents.has(a.student_id));
+    if (dupes.length > 0) {
+      const who = scope === "whole"
+        ? `the class "${pickedClass?.name || ""}"`
+        : `${dupes.length} student${dupes.length === 1 ? "" : "s"}`;
+      const ok = window.confirm(
+        `This test is already assigned to ${who}. Assign again with the new due date?`,
+      );
+      if (!ok) return;
+    }
 
     setAssignBusy(true);
     try {
@@ -145,7 +174,7 @@ export default function QuizDetailPage() {
       const { data: { user } } = await sb.auth.getUser();
       if (!user) throw new Error("Not signed in");
 
-      const due_at = dueAt ? new Date(dueAt).toISOString() : null;
+      const due_at = new Date(dueMs).toISOString();
       const rows = scope === "whole"
         ? [{ quiz_id: id, class_id: pickedClassId, student_id: null, assigned_by: user.id, due_at }]
         : Array.from(pickedStudents).map((sid) => ({
@@ -181,12 +210,12 @@ export default function QuizDetailPage() {
 
   return (
     <div className="max-w-5xl mx-auto fade-in">
-      <Link href="/teacher/quizzes" className="text-sm text-emerald-700 font-semibold">← All quizzes</Link>
+      <Link href="/teacher/quizzes" className="text-sm text-emerald-700 font-semibold">← All tests</Link>
       <h1 className="h1 mt-2">{quiz.name}</h1>
 
       <div className="grid sm:grid-cols-3 gap-4 mt-5">
         <div className="card">
-          <div className="text-xs muted uppercase font-semibold">Quiz code</div>
+          <div className="text-xs muted uppercase font-semibold">Test code</div>
           <div className="flex items-center gap-2 mt-2">
             <code className="text-2xl font-mono font-bold">{quiz.code}</code>
             <button className="btn btn-ghost" onClick={() => navigator.clipboard.writeText(quiz.code)}>
@@ -255,9 +284,13 @@ export default function QuizDetailPage() {
       {/* ============ ASSIGN MODAL ============ */}
       {showAssign && (
         <div className="fixed inset-0 bg-black/40 grid place-items-center z-50 p-4" onClick={resetAssignForm}>
-          <div className="card max-w-lg w-full" onClick={(e) => e.stopPropagation()}>
+          <div
+            className="card max-w-lg w-full overflow-y-auto"
+            style={{ maxHeight: "calc(100vh - 2rem)" }}
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="flex items-center justify-between mb-3">
-              <h3 className="h2">Assign quiz</h3>
+              <h3 className="h2">Assign test</h3>
               <button onClick={resetAssignForm} className="btn btn-ghost"><X size={16} /></button>
             </div>
 
@@ -319,10 +352,13 @@ export default function QuizDetailPage() {
               </>
             )}
 
-            <label className="label mt-4">Due date <span className="muted text-xs">(optional)</span></label>
+            <label className="label mt-4">
+              Due date &amp; time <span className="text-red-600">*</span>
+            </label>
             <input
               type="datetime-local"
               className="input"
+              required
               value={dueAt}
               onChange={(e) => setDueAt(e.target.value)}
             />
@@ -343,7 +379,7 @@ export default function QuizDetailPage() {
       <h2 className="h2 mt-8 mb-3">Attempts</h2>
       {attempts.length === 0 ? (
         <div className="card text-center py-12 muted">
-          No attempts yet. Share the code <code className="px-2 py-1 bg-slate-100 rounded">{quiz.code}</code> with your students, or assign the quiz above.
+          No attempts yet. Share the code <code className="px-2 py-1 bg-slate-100 rounded">{quiz.code}</code> with your students, or assign the test above.
         </div>
       ) : (
         <div className="card overflow-x-auto p-0">

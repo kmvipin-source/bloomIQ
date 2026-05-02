@@ -7,6 +7,7 @@ import type { School } from "@/lib/types";
 import { Building2, UserRound, ListChecks, ClipboardList, TrendingUp, Settings, Copy, Pencil, UserCog, BarChart3, MessageCircle, Sparkles } from "lucide-react";
 import CurrentPlanBadge from "@/components/CurrentPlanBadge";
 import { generateQuizCode } from "@/lib/utils";
+import { loadClassQuizIdsForClasses } from "@/lib/studentScope";
 
 type Stats = {
   teachers: number;
@@ -135,13 +136,24 @@ export default function SchoolHome() {
       classRows = await Promise.all(
         list.map(async (c) => {
           const owner = c.owner_id ? teacherMembers.find((t) => t.id === c.owner_id) : null;
+
+          // Class-scoped quiz_ids: only quizzes that were actually
+          // assigned to THIS class. Personal practice attempts by
+          // members would otherwise inflate avgScore / attemptCount
+          // with non-class-quiz data.
+          const classAssignedQuizIds = await loadClassQuizIdsForClasses(sb, [c.id]);
+          const assignedIdsArr = Array.from(classAssignedQuizIds);
+
           const [{ count: mCt }, { data: ct }, { data: atts }] = await Promise.all([
             sb.from("class_members").select("student_id", { count: "exact", head: true }).eq("class_id", c.id),
             sb.from("class_teachers").select("teacher_id, profile:profiles!class_teachers_teacher_id_fkey(full_name)").eq("class_id", c.id).eq("role", "primary").maybeSingle(),
-            sb.from("quiz_attempts")
-              .select("score, total")
-              .in("student_id", studentMembers.map((s) => s.id).concat(["00000000-0000-0000-0000-000000000000"]))
-              .not("submitted_at", "is", null),
+            assignedIdsArr.length === 0
+              ? Promise.resolve({ data: [] as Array<{ score: number; total: number }> })
+              : sb.from("quiz_attempts")
+                  .select("score, total")
+                  .in("student_id", studentMembers.map((s) => s.id).concat(["00000000-0000-0000-0000-000000000000"]))
+                  .in("quiz_id", assignedIdsArr)
+                  .not("submitted_at", "is", null),
           ]);
           type CtRow = { teacher_id: string; profile: { full_name: string | null } | null };
           const primaryName = (ct as unknown as CtRow | null)?.profile?.full_name || owner?.full_name || null;
@@ -163,19 +175,26 @@ export default function SchoolHome() {
     }
     setClasses(classRows);
 
-    // School-wide aggregate stats (using student_ids in school)
+    // School-wide aggregate stats — scoped to class-assigned
+    // quizzes only. Personal practice never enters these numbers.
     const studentIds = studentMembers.map((s) => s.id);
     let attCount = 0, avgScore = 0;
     if (studentIds.length > 0) {
-      const { data: att, count } = await sb
-        .from("quiz_attempts")
-        .select("score, total", { count: "exact" })
-        .in("student_id", studentIds)
-        .not("submitted_at", "is", null);
-      const arr = (att as Array<{ score: number; total: number }> | null) || [];
-      attCount = count || 0;
-      const ratios = arr.filter((a) => a.total > 0).map((a) => (a.score / a.total) * 100);
-      avgScore = ratios.length ? Math.round(ratios.reduce((s, x) => s + x, 0) / ratios.length) : 0;
+      const schoolClassIds = classRows.map((c) => c.id);
+      const schoolClassQuizIds = await loadClassQuizIdsForClasses(sb, schoolClassIds);
+      const quizIdArr = Array.from(schoolClassQuizIds);
+      if (quizIdArr.length > 0) {
+        const { data: att, count } = await sb
+          .from("quiz_attempts")
+          .select("score, total", { count: "exact" })
+          .in("student_id", studentIds)
+          .in("quiz_id", quizIdArr)
+          .not("submitted_at", "is", null);
+        const arr = (att as Array<{ score: number; total: number }> | null) || [];
+        attCount = count || 0;
+        const ratios = arr.filter((a) => a.total > 0).map((a) => (a.score / a.total) * 100);
+        avgScore = ratios.length ? Math.round(ratios.reduce((s, x) => s + x, 0) / ratios.length) : 0;
+      }
     }
 
     const totalQuizzes = teacherStats.reduce((s, t) => s + t.quizCount, 0);
@@ -426,27 +445,14 @@ export default function SchoolHome() {
       <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 mt-6">
         <Stat label="Teachers"     value={stats?.teachers}  icon={UserRound}     color="from-emerald-500 to-emerald-600" />
         <Stat label="Classes"      value={stats?.classes}   icon={Building2}     color="from-sky-500 to-sky-600" />
-        <Stat label="Quizzes made" value={stats?.quizzes}   icon={ListChecks}    color="from-amber-500 to-amber-600" />
+        <Stat label="Tests made" value={stats?.quizzes}   icon={ListChecks}    color="from-amber-500 to-amber-600" />
         <Stat label="Attempts"     value={stats?.attempts}  icon={ClipboardList} color="from-violet-500 to-violet-600" sub={stats && stats.attempts > 0 ? `Avg ${stats.avgScore}%` : undefined} />
       </div>
 
-      <h2 className="h2 mt-8 mb-3 flex items-center gap-2"><Sparkles size={20} /> Principal AI</h2>
-      <div className="grid sm:grid-cols-2 gap-3">
-        <NavCard
-          href="/school/coach"
-          title="Principal Coach"
-          subtitle="Chat with your school's data."
-          icon={MessageCircle}
-          gradient="from-emerald-500 to-emerald-600"
-        />
-        <NavCard
-          href="/school/digest"
-          title="This Week"
-          subtitle="AI-generated weekly briefing."
-          icon={Sparkles}
-          gradient="from-violet-500 to-violet-600"
-        />
-      </div>
+      {/* Principal AI tile row used to live here (Principal Coach,
+          This Week). Both are now first-class sidebar destinations
+          under the ASSIST group, so the tile row was just duplicate
+          navigation and has been removed to declutter the home page. */}
 
       <h2 className="h2 mt-8 mb-3 flex items-center gap-2"><UserRound size={20} /> Teacher activity</h2>
       {teachers.length === 0 ? (
@@ -460,7 +466,7 @@ export default function SchoolHome() {
               <tr>
                 <th className="px-4 py-3 text-left">Teacher</th>
                 <th className="px-4 py-3 text-right">Classes</th>
-                <th className="px-4 py-3 text-right">Quizzes</th>
+                <th className="px-4 py-3 text-right">Tests</th>
                 <th className="px-4 py-3 text-right">Assignments</th>
               </tr>
             </thead>

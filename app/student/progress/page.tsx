@@ -9,6 +9,7 @@ import {
   ResponsiveContainer, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar,
   BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, LabelList, Cell,
 } from "recharts";
+import { loadClassQuizIds } from "@/lib/studentScope";
 
 type Answer = {
   attempt_id: string;
@@ -33,14 +34,27 @@ export default function ProgressPage() {
   const [attempts, setAttempts] = useState<AttemptMeta[]>([]);
   const [answers, setAnswers] = useState<Answer[]>([]);
   const [quizMetas, setQuizMetas] = useState<Map<string, QuizMeta>>(new Map());
+  // For school students this page shows CLASS-SCOPE ONLY — strictly
+  // class-assigned quizzes. Personal practice does not appear here
+  // under any circumstances; it has its own dedicated home at
+  // /student/tests ("My Practice"). Independent students see all
+  // their attempts (their data is all personal practice anyway).
+  const [isSchoolStudent, setIsSchoolStudent] = useState<boolean | null>(null);
 
   useEffect(() => {
     (async () => {
       const sb = supabaseBrowser();
       const { data: { user } } = await sb.auth.getUser();
       if (!user) return;
-      const { data: prof } = await sb.from("profiles").select("full_name").eq("id", user.id).single();
-      setName(prof?.full_name || "");
+      const { data: prof } = await sb
+        .from("profiles")
+        .select("full_name, is_school_student")
+        .eq("id", user.id)
+        .single();
+      const profRow = prof as { full_name: string | null; is_school_student: boolean | null } | null;
+      setName(profRow?.full_name || "");
+      const isSchool = !!profRow?.is_school_student;
+      setIsSchoolStudent(isSchool);
 
       const { data: atts } = await sb
         .from("quiz_attempts")
@@ -48,7 +62,18 @@ export default function ProgressPage() {
         .eq("student_id", user.id)
         .not("submitted_at", "is", null)
         .order("submitted_at", { ascending: true });
-      const attemptList = ((atts as AttemptMeta[]) || []);
+      const rawAttempts = ((atts as AttemptMeta[]) || []);
+
+      // School-student scoping: only class-assigned quizzes feed this
+      // page. Personal practice is filtered out and lives entirely on
+      // /student/tests. Independent students keep their full list.
+      let attemptList: AttemptMeta[];
+      if (isSchool) {
+        const classQuizIds = await loadClassQuizIds(sb);
+        attemptList = rawAttempts.filter((a) => a.quiz_id && classQuizIds.has(a.quiz_id));
+      } else {
+        attemptList = rawAttempts;
+      }
       setAttempts(attemptList);
 
       const attemptIds = attemptList.map((a) => a.id);
@@ -174,13 +199,25 @@ export default function ProgressPage() {
   if (attempts.length === 0) {
     return (
       <div className="max-w-3xl mx-auto fade-in">
-        <h1 className="h1 flex items-center gap-2"><TrendingUp size={28} /> My Progress</h1>
-        <p className="muted mt-1">Take a few practice tests to start seeing your mastery curve.</p>
+        <h1 className="h1 flex items-center gap-2">
+          <TrendingUp size={28} /> {isSchoolStudent ? "My Class Progress" : "My Progress"}
+        </h1>
+        <p className="muted mt-1">
+          {isSchoolStudent
+            ? "Stats below count only quizzes assigned by your teacher. Once you've completed a few, your mastery curve fills in here."
+            : "Take a few practice tests to start seeing your mastery curve."}
+        </p>
         <div className="card mt-6 text-center py-10">
           <div className="text-4xl mb-2">📊</div>
           <div className="font-semibold mb-1">No data yet</div>
-          <div className="muted text-sm mb-4">Generate and complete a test — your first results show up here.</div>
-          <Link href="/student/generate" className="btn btn-primary inline-flex"><Sparkles size={16} /> New test</Link>
+          <div className="muted text-sm mb-4">
+            {isSchoolStudent
+              ? "Submit your first assigned quiz from the dashboard — its results show up here."
+              : "Generate and complete a test — your first results show up here."}
+          </div>
+          {!isSchoolStudent && (
+            <Link href="/student/generate" className="btn btn-primary inline-flex"><Sparkles size={16} /> New test</Link>
+          )}
         </div>
       </div>
     );
@@ -188,25 +225,34 @@ export default function ProgressPage() {
 
   return (
     <div className="max-w-5xl mx-auto fade-in">
-      <h1 className="h1 flex items-center gap-2"><TrendingUp size={28} /> My Progress</h1>
-      <p className="muted mt-1">{name ? `${name.split(" ")[0]}, here` : "Here"}&apos;s how you&apos;re doing across {overall.taken} test{overall.taken === 1 ? "" : "s"}.</p>
+      <h1 className="h1 flex items-center gap-2">
+        <TrendingUp size={28} /> {isSchoolStudent ? "My Class Progress" : "My Progress"}
+      </h1>
+      <p className="muted mt-1">
+        {name ? `${name.split(" ")[0]}, here` : "Here"}&apos;s how you&apos;re doing across {overall.taken}{" "}
+        {isSchoolStudent ? "class quiz" : "test"}{overall.taken === 1 ? "" : isSchoolStudent ? "zes" : "s"}.
+      </p>
 
       {/* Headline cards */}
-      <div className="grid sm:grid-cols-3 gap-3 mt-6">
+      <div className="grid sm:grid-cols-2 gap-3 mt-6">
         <div className="card">
-          <div className="text-xs muted uppercase font-semibold">Tests taken</div>
+          <div className="text-xs muted uppercase font-semibold">
+            {isSchoolStudent ? "Class quizzes taken" : "Tests taken"}
+          </div>
           <div className="text-3xl font-bold">{overall.taken}</div>
         </div>
         <div className="card">
-          <div className="text-xs muted uppercase font-semibold">Average score</div>
+          <div className="text-xs muted uppercase font-semibold">
+            {isSchoolStudent ? "Class average" : "Average score"}
+          </div>
           <div className={`text-3xl font-bold ${overall.avg >= 70 ? "text-emerald-700" : overall.avg >= 50 ? "text-amber-700" : "text-red-700"}`}>
             {overall.avg}%
           </div>
         </div>
-        <div className="card">
-          <div className="text-xs muted uppercase font-semibold">Topics practised</div>
-          <div className="text-3xl font-bold">{familyStats.length}</div>
-        </div>
+        {/* "Topics practised" card removed — the word "practised" was
+            misleading on a class-progress page (this surface is class
+            scope only), and the count itself is more meaningfully
+            shown in the "Progress by topic" section further down. */}
       </div>
 
       {/* ============ FOCUS AREAS — the most clickable thing on the page ============ */}

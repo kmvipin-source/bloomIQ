@@ -34,11 +34,11 @@ export default function JoinPage() {
 
   return (
     <div className="max-w-md mx-auto fade-in">
-      <h1 className="h1">Join a quiz</h1>
+      <h1 className="h1">Join a test</h1>
       <p className="muted mt-1">Enter the 6-character code your teacher shared.</p>
 
       <div className="card mt-6">
-        <label className="label">Quiz code</label>
+        <label className="label">Test code</label>
         <input
           className="input text-center text-2xl tracking-[0.4em] font-mono uppercase"
           maxLength={8}

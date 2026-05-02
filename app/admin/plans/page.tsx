@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { supabaseBrowser } from "@/lib/supabase/client";
-import { Layers, Users, AlertCircle, CheckCircle2, Pencil, GitBranch, Copy } from "lucide-react";
+import { Layers, Users, AlertCircle, CheckCircle2, Pencil, GitBranch, Copy, ShieldAlert, ArrowRight } from "lucide-react";
 import type { Plan } from "@/lib/types";
 import { FEATURES_BY_KEY } from "@/lib/features";
 
@@ -56,6 +56,11 @@ const TIER_ORDER = ["free", "premium", "premium_plus", "school_pilot", "school_s
 export default function PlansPage() {
   const [plans, setPlans] = useState<PlanRow[]>([]);
   const [openProposalCount, setOpenProposalCount] = useState<number>(0);
+  // Proposals specifically AWAITING the current admin's approval — i.e.,
+  // status='open' and created by someone other than me. Drives the hero
+  // banner so an admin lands on /admin/plans and immediately sees if
+  // there's a queue to clear before doing catalogue work.
+  const [forMeCount, setForMeCount] = useState<number>(0);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
@@ -67,9 +72,10 @@ export default function PlansPage() {
         if (!session) throw new Error("Not signed in.");
         const headers = { Authorization: `Bearer ${session.access_token}` };
 
-        const [r, rOpen] = await Promise.all([
+        const [r, rOpen, rForMe] = await Promise.all([
           fetch("/api/admin/plans", { headers }),
           fetch("/api/admin/plan-proposals?status=open", { headers }),
+          fetch("/api/admin/plan-proposals?scope=for_me", { headers }),
         ]);
         const j = await r.json();
         if (!r.ok) throw new Error(j?.error || "Could not load plans.");
@@ -78,6 +84,10 @@ export default function PlansPage() {
         if (rOpen.ok) {
           const jOpen = await rOpen.json();
           setOpenProposalCount((jOpen.proposals || []).length);
+        }
+        if (rForMe.ok) {
+          const jForMe = await rForMe.json();
+          setForMeCount((jForMe.proposals || []).length);
         }
       } catch (e) {
         setErr(e instanceof Error ? e.message : "Could not load plans.");
@@ -121,6 +131,54 @@ export default function PlansPage() {
         the <Link href="/admin/plans/queue" className="font-semibold underline">proposal queue</Link>{" "}
         for two-eyes review before it lands.
       </p>
+
+      {/* Pending-proposals hero — surfaces unfinished review work BEFORE
+          the catalogue, so an admin lands here and sees the queue first.
+          Three render states:
+            - forMeCount > 0: amber-orange "N proposals awaiting you" with
+              direct link to the Awaiting tab. The high-leverage default.
+            - forMeCount === 0 && openProposalCount > 0: muted note about
+              other admins' open drafts (we're not blocking them, but it's
+              worth knowing).
+            - both zero: hero hidden entirely (no clutter when the queue
+              is empty).
+          Phase 2 Item #5 — replicates the BloomHero "first-thing-seen"
+          pattern from the student dashboard to the admin catalogue. */}
+      {!loading && forMeCount > 0 && (
+        <Link
+          href="/admin/plans/queue?tab=for_me"
+          className="card mb-6 flex items-center gap-3 hover:opacity-90 transition"
+          style={{
+            background: "color-mix(in oklab, #fef3c7 65%, transparent)",
+            borderColor: "#f59e0b",
+            borderLeft: "4px solid #f59e0b",
+          }}
+        >
+          <ShieldAlert size={20} style={{ color: "#a07700" }} className="shrink-0" />
+          <div className="flex-1">
+            <div className="text-sm font-bold" style={{ color: "#7c5400" }}>
+              {forMeCount} proposal{forMeCount === 1 ? "" : "s"} awaiting your approval
+            </div>
+            <div className="text-xs" style={{ color: "#a07700" }}>
+              Two-eyes principle: another admin needs you to review their draft before it can land.
+            </div>
+          </div>
+          <span className="text-sm font-semibold inline-flex items-center gap-1" style={{ color: "#7c5400" }}>
+            Review now <ArrowRight size={14} />
+          </span>
+        </Link>
+      )}
+      {!loading && forMeCount === 0 && openProposalCount > 0 && (
+        <div
+          className="text-xs muted mb-6 inline-flex items-center gap-2 px-3 py-2 rounded-lg"
+          style={{ background: "var(--color-bg-soft)", border: "1px solid var(--color-border)" }}
+        >
+          <GitBranch size={12} />
+          <span>
+            {openProposalCount} open proposal{openProposalCount === 1 ? "" : "s"} in the queue (none waiting on you).
+          </span>
+        </div>
+      )}
 
       {loading ? (
         <div className="card text-center py-8"><span className="spinner" /></div>

@@ -54,10 +54,30 @@ export async function POST(req: Request, ctx: Ctx) {
     if (upErr) return NextResponse.json({ error: upErr.message }, { status: 500 });
 
     if (decision === "approve") {
-      // Extend the assignment's due_at via admin so we don't depend on the
-      // teacher having direct UPDATE rights through RLS on quiz_assignments.
+      // The teacher can pass a specific new_due_at (ISO datetime) on
+      // approval — typically picked from a date+time input in the UI.
+      // If they don't (legacy callers, simple "approve" path), fall
+      // back to "+7 days from now" so behaviour stays the same as
+      // before this change.
+      const reqDue = typeof body?.new_due_at === "string" ? body.new_due_at : "";
+      let newDue: string;
+      if (reqDue) {
+        const t = Date.parse(reqDue);
+        if (Number.isNaN(t) || t <= Date.now()) {
+          return NextResponse.json(
+            { error: "new_due_at must be a future date/time." },
+            { status: 400 },
+          );
+        }
+        newDue = new Date(t).toISOString();
+      } else {
+        newDue = new Date(Date.now() + EXTEND_DAYS_ON_APPROVE * 86400000).toISOString();
+      }
+
+      // Extend the assignment's due_at via admin so we don't depend on
+      // the teacher having direct UPDATE rights through RLS on
+      // quiz_assignments.
       const admin = supabaseAdmin();
-      const newDue = new Date(Date.now() + EXTEND_DAYS_ON_APPROVE * 86400000).toISOString();
       await admin.from("quiz_assignments").update({ due_at: newDue }).eq("id", r.assignment_id);
     }
 

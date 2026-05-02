@@ -69,6 +69,12 @@ export default function ResultsPage() {
   // The student's own consent value — drives whether we even attempt
   // to fetch benchmarks. NULL/false → show the consent CTA instead.
   const [trackTime, setTrackTime] = useState<boolean | null | undefined>(undefined);
+  // School student? Used to swap the Premium Plus / "See plans" upgrade
+  // copy for a quieter "your school's plan doesn't include this" note —
+  // school students can't self-upgrade, so the /pricing CTA is wrong
+  // for them. We default to null (unknown) and resolve in the profile
+  // fetch below; banner waits for the resolution to avoid a flash.
+  const [isSchoolStudent, setIsSchoolStudent] = useState<boolean | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -96,11 +102,16 @@ export default function ResultsPage() {
       if (!user) return;
       const { data: prof } = await sb
         .from("profiles")
-        .select("track_question_time")
+        .select("track_question_time, is_school_student")
         .eq("id", user.id)
         .maybeSingle();
-      const consent = (prof as { track_question_time: boolean | null } | null)?.track_question_time ?? null;
+      const profRow = prof as {
+        track_question_time: boolean | null;
+        is_school_student: boolean | null;
+      } | null;
+      const consent = profRow?.track_question_time ?? null;
       setTrackTime(consent);
+      setIsSchoolStudent(!!profRow?.is_school_student);
       if (consent === true) {
         const { data: { session } } = await sb.auth.getSession();
         if (!session) return;
@@ -372,13 +383,15 @@ export default function ResultsPage() {
                       <td className="py-2 pr-3 text-right tabular-nums">
                         {benchData.benchmark_allowed
                           ? (medS !== null ? `${medS}s` : <span className="muted text-xs">—</span>)
-                          : <span className="muted text-xs">Premium Plus</span>}
+                          : <span className="muted text-xs">{isSchoolStudent ? "—" : "Premium Plus"}</span>}
                       </td>
                       <td className="py-2">
                         {benchData.benchmark_allowed ? (
                           <span className={`inline-block text-xs px-2 py-0.5 rounded-full border ${paceTone}`}>
                             {paceLabel}
                           </span>
+                        ) : isSchoolStudent ? (
+                          <span className="muted text-xs">—</span>
                         ) : (
                           <Link href="/pricing" className="inline-flex items-center gap-1 text-xs text-amber-800 hover:text-amber-700">
                             <Lock size={11} /> Unlock
@@ -391,7 +404,7 @@ export default function ResultsPage() {
               </tbody>
             </table>
           </div>
-          {!benchData.benchmark_allowed && (
+          {!benchData.benchmark_allowed && isSchoolStudent === false && (
             <div className="mt-3 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-[13px] text-amber-900 flex items-start gap-2">
               <Lock size={14} className="mt-0.5 shrink-0" />
               <div>
@@ -399,6 +412,15 @@ export default function ResultsPage() {
                 pace stacks up against other students on each question, with fast / on-pace / slow
                 indicators. Your own per-question times are always visible.{" "}
                 <Link href="/pricing" className="underline">See plans →</Link>
+              </div>
+            </div>
+          )}
+          {!benchData.benchmark_allowed && isSchoolStudent === true && (
+            <div className="mt-3 rounded-lg bg-slate-50 border border-slate-200 px-3 py-2 text-[13px] muted flex items-start gap-2">
+              <Lock size={14} className="mt-0.5 shrink-0" />
+              <div>
+                Per-question pace comparison against other students isn&apos;t included in your
+                school&apos;s plan. Your own per-question times are always shown above.
               </div>
             </div>
           )}

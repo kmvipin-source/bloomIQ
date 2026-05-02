@@ -223,7 +223,10 @@ export function useFeatureAccess(): FeatureAccessState {
  * This is async because we read from the plans table, but the data is
  * tiny and stable — caller should cache the result for the session.
  */
-export async function findUnlockingTier(featureKey: string): Promise<
+export async function findUnlockingTier(
+  featureKey: string,
+  ladder?: "personal" | "school",
+): Promise<
   { tier: PlanTier; label: string; rank: number } | null
 > {
   const sb = supabaseBrowser();
@@ -236,6 +239,18 @@ export async function findUnlockingTier(featureKey: string): Promise<
   const rows = (plans as Row[] | null) || [];
   let best: { tier: PlanTier; label: string; rank: number } | null = null;
   for (const r of rows) {
+    // Ladder filter: an independent student should never see "School
+    // Pilot" on a lock badge because it's irrelevant to them — they
+    // can only upgrade through the personal ladder (Free / Premium /
+    // Premium Plus). Same in reverse for a school user — surfacing
+    // "Premium" would be confusing because their plan is set by the
+    // school admin against the school ladder. Both ladders share
+    // rank values (school_pilot and premium are both rank 1), so
+    // without this filter whichever row came back from PostgREST
+    // first won, which was non-deterministic.
+    const isSchoolTier = r.tier.startsWith("school_");
+    if (ladder === "personal" && isSchoolTier) continue;
+    if (ladder === "school" && !isSchoolTier) continue;
     const arr = Array.isArray(r.features) ? (r.features as string[]) : [];
     if (!arr.includes(featureKey)) continue;
     const rank = tierRank(r.tier);

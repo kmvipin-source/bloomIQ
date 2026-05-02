@@ -4,6 +4,7 @@ import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import { supabaseBrowser } from "@/lib/supabase/client";
+import { loadClassQuizIdsForClasses } from "@/lib/studentScope";
 import {
   BarChart3, Download, Copy, ArrowLeft, Users, BookOpen, AlertTriangle,
 } from "lucide-react";
@@ -154,11 +155,24 @@ function SchoolReportsInner() {
       return;
     }
 
-    // Attempts in window
+    // Class-scoped quiz_ids for the school's classes. School reports
+    // are official records — they MUST exclude personal practice the
+    // student did on their own. We only count attempts on quizzes
+    // that were formally assigned to the school's classes.
+    const classQuizIds = await loadClassQuizIdsForClasses(sb, classIds);
+    const classQuizIdArr = Array.from(classQuizIds);
+    if (classQuizIdArr.length === 0) {
+      setAttempts([]); setAnswers([]);
+      setLoading(false);
+      return;
+    }
+
+    // Attempts in window — scoped to class quizzes only.
     let attemptsQ = sb
       .from("quiz_attempts")
       .select("id, student_id, quiz_id, score, total, submitted_at")
       .in("student_id", studentIds)
+      .in("quiz_id", classQuizIdArr)
       .not("submitted_at", "is", null);
     if (since) attemptsQ = attemptsQ.gte("submitted_at", since);
     const { data: atts } = await attemptsQ;

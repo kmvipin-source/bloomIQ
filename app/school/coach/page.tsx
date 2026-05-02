@@ -151,7 +151,7 @@ export default function PrincipalCoachPage() {
           <h1 className="h1 flex items-center gap-2 mt-1">
             <MessageCircle size={28} /> Principal Coach
           </h1>
-          <p className="muted mt-1">Ask anything about your school&rsquo;s quiz data.</p>
+          <p className="muted mt-1">Ask anything about your school&rsquo;s test data.</p>
         </div>
         <div className="flex items-center gap-2">
           <button

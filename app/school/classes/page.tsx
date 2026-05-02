@@ -5,6 +5,7 @@ import Link from "next/link";
 import { supabaseBrowser } from "@/lib/supabase/client";
 import { Building2, ArrowLeft, Search, Plus } from "lucide-react";
 import { pct } from "@/lib/utils";
+import { loadClassQuizIdsForClasses } from "@/lib/studentScope";
 
 // === Class-naming standard ===========================================
 // Every class follows the canonical format:   Grade {N} · Section {X}
@@ -129,12 +130,18 @@ export default function SchoolClassesPage() {
 
         const { data: members } = await sb.from("class_members").select("student_id").eq("class_id", c.id);
         const studentIds = ((members as Array<{ student_id: string }>) || []).map((m) => m.student_id);
+        // Per-class avgScore is scoped to attempts on quizzes
+        // assigned to THIS class. Personal practice would otherwise
+        // distort the class-level metric.
+        const classAssignedQuizIds = await loadClassQuizIdsForClasses(sb, [c.id]);
+        const assignedIdsArr = Array.from(classAssignedQuizIds);
         let avgScore: number | null = null;
-        if (studentIds.length > 0) {
+        if (studentIds.length > 0 && assignedIdsArr.length > 0) {
           const { data: atts } = await sb
             .from("quiz_attempts")
             .select("score, total")
             .in("student_id", studentIds)
+            .in("quiz_id", assignedIdsArr)
             .not("submitted_at", "is", null);
           const arr = (atts as Array<{ score: number; total: number }> | null) || [];
           const ratios = arr.filter((a) => a.total > 0).map((a) => pct(a.score, a.total));
@@ -428,7 +435,7 @@ export default function SchoolClassesPage() {
                 <th className="px-4 py-3 text-left">Class</th>
                 <th className="px-4 py-3 text-left">Primary teacher</th>
                 <th className="px-4 py-3 text-right">Students</th>
-                <th className="px-4 py-3 text-right">Quizzes</th>
+                <th className="px-4 py-3 text-right">Tests</th>
                 <th className="px-4 py-3 text-right">Avg score</th>
                 <th className="px-4 py-3 text-right">Actions</th>
               </tr>

@@ -314,7 +314,7 @@ function ComposerInner() {
   function clearAll() { setSelectedIds([]); }
 
   async function deleteFromLibrary(id: string) {
-    if (!confirm("Permanently delete this question from your bank? It will also be removed from this quiz draft.")) return;
+    if (!confirm("Permanently delete this question from your bank? It will also be removed from this test draft.")) return;
     const sb = supabaseBrowser();
     const { error } = await sb.from("question_bank").delete().eq("id", id);
     if (error) {
@@ -345,7 +345,7 @@ function ComposerInner() {
 
   async function create() {
     setErr(null);
-    if (!name.trim()) return setErr("Please name your quiz.");
+    if (!name.trim()) return setErr("Please name your test.");
     if (selectedIds.length === 0) return setErr("Add at least one question.");
 
     if (mixedTopics) {
@@ -419,7 +419,7 @@ function ComposerInner() {
 
       router.push(`/teacher/quizzes/${quiz!.id}`);
     } catch (e) {
-      setErr(e instanceof Error ? e.message : "Failed to create quiz");
+      setErr(e instanceof Error ? e.message : "Failed to create test");
     } finally {
       setBusy(false);
     }
@@ -429,8 +429,8 @@ function ComposerInner() {
     <div className="max-w-7xl mx-auto fade-in">
       <div className="flex items-end justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="h1">Compose a quiz</h1>
-          <p className="muted mt-1">Browse your library on the left, build the quiz on the right.</p>
+          <h1 className="h1">Compose a test</h1>
+          <p className="muted mt-1">Browse your library on the left, build the test on the right.</p>
         </div>
         <div className="flex items-center gap-3 flex-wrap">
           <div className="text-sm muted">
@@ -534,8 +534,8 @@ function ComposerInner() {
                             ? "bg-emerald-600 text-white"
                             : "bg-slate-100 text-slate-500 hover:bg-emerald-100 hover:text-emerald-700"
                         }`}
-                        aria-label={on ? "Remove from quiz" : "Add to quiz"}
-                        title={on ? "Added — click to remove" : "Add to quiz"}
+                        aria-label={on ? "Remove from test" : "Add to test"}
+                        title={on ? "Added — click to remove" : "Add to test"}
                       >
                         {on ? <Check size={16} /> : <Plus size={16} />}
                       </button>
@@ -604,7 +604,7 @@ function ComposerInner() {
 
         <aside className="lg:sticky lg:top-6 self-start space-y-3">
           <div className="card">
-            <label className="label">Quiz name</label>
+            <label className="label">Test name</label>
             <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Photosynthesis Test" />
             <label className="label mt-3">Subject <span className="muted text-xs">(optional)</span></label>
             <input className="input" value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="e.g. Science" />
@@ -668,7 +668,7 @@ function ComposerInner() {
                 </div>
                 {mixedTopics && (
                   <div className="mt-3 text-xs text-amber-800 bg-amber-50 border border-amber-200 px-3 py-2 rounded-lg">
-                    Heads up — this quiz mixes topics: {selectedTopics.join(", ")}.
+                    Heads up — this test mixes topics: {selectedTopics.join(", ")}.
                   </div>
                 )}
               </>
@@ -712,7 +712,7 @@ function ComposerInner() {
                       <button
                         onClick={() => remove(q.id)}
                         className="p-1 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded shrink-0"
-                        title="Remove from quiz"
+                        title="Remove from test"
                       >
                         <X size={14} />
                       </button>
@@ -730,7 +730,7 @@ function ComposerInner() {
             disabled={busy || selectedIds.length === 0 || !name.trim()}
             onClick={create}
           >
-            {busy ? <><span className="spinner" /> Creating…</> : `Create quiz (${selectedIds.length})`}
+            {busy ? <><span className="spinner" /> Creating…</> : `Create test (${selectedIds.length})`}
           </button>
         </aside>
       </div>

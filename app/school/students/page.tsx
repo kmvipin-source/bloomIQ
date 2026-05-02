@@ -5,6 +5,7 @@ import Link from "next/link";
 import { supabaseBrowser } from "@/lib/supabase/client";
 import { TrendingUp, AlertTriangle, Trophy, ArrowLeft, Search } from "lucide-react";
 import { pct } from "@/lib/utils";
+import { loadClassQuizIdsForClasses } from "@/lib/studentScope";
 
 type StudentRow = {
   id: string;
@@ -52,18 +53,31 @@ export default function SchoolStudentsPage() {
         memsByStudent.get(m.student_id)!.push(m.class.name);
       });
 
-      // 3) Their attempts (one batched query)
-      const { data: atts } = await sb
-        .from("quiz_attempts")
-        .select("student_id, score, total, submitted_at")
-        .in("student_id", studentIds)
-        .not("submitted_at", "is", null);
+      // 3) Their attempts (one batched query) — scoped to
+      //    class-assigned quizzes only. Personal practice attempts
+      //    by these students never appear in school admin's per-
+      //    student stats; they're an entirely separate scope.
+      const { data: schoolClasses } = await sb
+        .from("classes")
+        .select("id")
+        .eq("school_id", prof.school_id);
+      const schoolClassIds = ((schoolClasses as Array<{ id: string }> | null) || []).map((c) => c.id);
+      const schoolClassQuizIds = await loadClassQuizIdsForClasses(sb, schoolClassIds);
+      const quizIdArr = Array.from(schoolClassQuizIds);
       type Att = { student_id: string; score: number; total: number; submitted_at: string | null };
       const attsByStudent = new Map<string, Att[]>();
-      ((atts as Att[]) || []).forEach((a) => {
-        if (!attsByStudent.has(a.student_id)) attsByStudent.set(a.student_id, []);
-        attsByStudent.get(a.student_id)!.push(a);
-      });
+      if (quizIdArr.length > 0) {
+        const { data: atts } = await sb
+          .from("quiz_attempts")
+          .select("student_id, score, total, submitted_at")
+          .in("student_id", studentIds)
+          .in("quiz_id", quizIdArr)
+          .not("submitted_at", "is", null);
+        ((atts as Att[]) || []).forEach((a) => {
+          if (!attsByStudent.has(a.student_id)) attsByStudent.set(a.student_id, []);
+          attsByStudent.get(a.student_id)!.push(a);
+        });
+      }
 
       // 4) Stitch the per-student row
       const out: StudentRow[] = students.map((s) => {

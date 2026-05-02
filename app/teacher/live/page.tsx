@@ -86,6 +86,30 @@ export default function TeacherLivePicker() {
         </div>
       </div>
 
+      {/* Teacher-facing notice — keep this visible so teachers know
+          live sessions are engagement-only and don't pollute the
+          class record they actually grade students on. The data
+          model enforces it (live_session_answers is a separate table
+          from quiz_attempts, never queried by class-stats rollups);
+          this banner just makes the rule transparent. */}
+      <div
+        className="mt-4 rounded-lg px-3 py-2 text-sm flex items-start gap-2"
+        style={{
+          background: "color-mix(in oklab, #fb7185 8%, var(--color-card))",
+          border: "1px solid color-mix(in oklab, #fb7185 25%, var(--color-border))",
+          color: "var(--color-fg)",
+        }}
+      >
+        <Radio size={16} className="mt-0.5 shrink-0 text-rose-700" />
+        <div>
+          <strong>Engagement-only:</strong> live quiz scores, answers, and the
+          leaderboard are kept separate from your students&apos; official class
+          record. Nothing here counts toward class averages, Bloom mastery, or
+          school admin reports — to grade for the record, assign the quiz from
+          the Quizzes page instead.
+        </div>
+      </div>
+
       <div className="mt-6 card flex items-center gap-3 flex-wrap">
         <label className="text-sm font-medium">Seconds per question</label>
         <input

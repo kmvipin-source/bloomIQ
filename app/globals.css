@@ -1007,6 +1007,31 @@ table, .tabular-nums { font-variant-numeric: tabular-nums; }
 .card-hover:active {
   box-shadow: var(--shadow-sm);
 }
+
+/* sidebar-link — pure CSS hover state for nav entries.
+ * Replaces the previous JS onMouseEnter/onMouseLeave pattern that was
+ * mutating e.currentTarget.style.background directly, bypassing React
+ * reconciliation. That pattern was the suspected cause of "click is
+ * swallowed, must click twice to navigate" bug reports — DOM mutations
+ * outside React's control can interact badly with the prefetch/click
+ * pipeline. CSS hover is faster (no JS frame), atomic, and doesn't
+ * disturb React's view of the DOM. */
+.sidebar-link {
+  color: var(--color-fg-soft);
+  background: transparent;
+}
+.sidebar-link:hover {
+  background: var(--color-bg-soft);
+}
+.sidebar-link--active {
+  background: var(--color-accent-soft);
+  color: var(--brand-700);
+  font-weight: 600;
+}
+.sidebar-link--active:hover {
+  /* Active row stays put on hover — no flash, no shift. */
+  background: var(--color-accent-soft);
+}
 /* card-feature — premium decoration with animated brand glow on hover */
 .card-feature {
   position: relative;

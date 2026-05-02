@@ -11,12 +11,14 @@ import { BLOOM_LEVELS, BLOOM_META, blankBloomCounts } from "@/lib/bloom";
 import StudentGoalPicker, { STUDENT_GOALS } from "@/components/StudentGoalPicker";
 import StudentFeatureTile from "@/components/StudentFeatureTile";
 import MissedAssignments from "@/components/MissedAssignments";
+import ExtensionRequestButton, { type ExtensionRequest } from "@/components/ExtensionRequestButton";
 import CurrentPlanBadge from "@/components/CurrentPlanBadge";
-import { TILE_META, tileLayoutForGoal } from "@/lib/studentGoalTiles";
+import { TILE_META, tileLayoutForGoal, tilesByCategoryForGoal, CATEGORY_META } from "@/lib/studentGoalTiles";
 import BloomHero from "@/components/BloomHero";
 import PaywallModal from "@/components/PaywallModal";
 import RenewBanner from "@/components/RenewBanner";
 import { useFeatureAccess, findUnlockingTier, tierLabel } from "@/lib/featureAccess";
+import { loadClassQuizIds } from "@/lib/studentScope";
 import type { PlanTier } from "@/lib/types";
 
 type AttemptRow = QuizAttempt & { quiz: { name: string; code: string } | null };
@@ -35,6 +37,11 @@ type AssignedRow = {
     time_limit_minutes: number;
     question_count: number;
   } | null;
+  /** Latest non-denied retake/extension request for this assignment, if any.
+   *  Drives the inline button state on each card (request vs. pending vs.
+   *  approved vs. denied). Same data as MissedAssignments uses below the
+   *  fold for past-due items — just fetched here for the upcoming list. */
+  request: ExtensionRequest;
 };
 
 type BloomBreakdown = Record<string, { correct: number; total: number }>;
@@ -42,6 +49,11 @@ type BloomBreakdown = Record<string, { correct: number; total: number }>;
 export default function StudentHome() {
   const [name, setName] = useState("");
   const [isSchool, setIsSchool] = useState<boolean | null>(null);
+  // For independent students: all their attempts (all personal
+  // practice by definition). For school students: ONLY the
+  // class-scoped attempts (teacher-assigned). Personal practice
+  // attempts for school students don't live in this state at all —
+  // they live entirely on the /student/tests page.
   const [attempts, setAttempts] = useState<AttemptRow[]>([]);
   const [assigned, setAssigned] = useState<AssignedRow[]>([]);
   const [bloomMastery, setBloomMastery] = useState<BloomBreakdown>({});
@@ -79,12 +91,12 @@ export default function StudentHome() {
       const keys = Object.values(TILE_META).map((m) => m.featureKey).filter(Boolean) as string[];
       for (const k of keys) {
         if (access.allowed.has(k)) continue;
-        const tier = await findUnlockingTier(k);
+        const tier = await findUnlockingTier(k, isSchool ? "school" : "personal");
         if (tier) out[k] = { tier: tier.tier, label: tier.label };
       }
       setUnlockMap(out);
     })();
-  }, [access.isLoading, access.allowed]);
+  }, [access.isLoading, access.allowed, isSchool]);
 
   function openPaywall(key: string | undefined) {
     if (!key) return;
@@ -141,7 +153,21 @@ export default function StudentHome() {
         .select("*, quiz:quizzes(name, code)")
         .eq("student_id", user.id)
         .order("started_at", { ascending: false });
-      const rows = (data as unknown as AttemptRow[]) || [];
+      const rawRows = (data as unknown as AttemptRow[]) || [];
+
+      // School students see ONLY class-assigned quizzes on this
+      // dashboard. Personal practice is filtered out completely —
+      // it lives on /student/tests ("My Practice") and never mixes
+      // into the class-scope numbers, BloomHero, or assigned list
+      // here. Independent students have no class scope; their full
+      // list IS personal practice by definition.
+      let rows: AttemptRow[];
+      if (prof?.is_school_student) {
+        const classQuizIds = await loadClassQuizIds(sb);
+        rows = rawRows.filter((a) => a.quiz_id && classQuizIds.has(a.quiz_id));
+      } else {
+        rows = rawRows;
+      }
       setAttempts(rows);
 
       if (prof?.is_school_student) {
@@ -175,36 +201,69 @@ export default function StudentHome() {
           });
         }
 
-        setAssigned(open.map((a) => ({
-          id: a.id,
-          due_at: a.due_at,
-          assigned_at: a.created_at,
-          via: a.class_id ? "class" : "direct",
-          via_label: a.class_id ? (a.class?.name || "Class") : "Assigned to you",
-          quiz: a.quiz ? {
-            id: a.quiz.id,
-            name: a.quiz.name,
-            code: a.quiz.code,
-            subject: a.quiz.subject,
-            time_limit_minutes: a.quiz.time_limit_minutes,
-            question_count: counts.get(a.quiz.id) || 0,
-          } : null,
-        })));
-      } else {
-        const submittedIds = rows.filter((a) => a.submitted_at).map((a) => a.id);
-        if (submittedIds.length > 0) {
-          const { data: ans } = await sb
-            .from("attempt_answers")
-            .select("bloom_level, is_correct")
-            .in("attempt_id", submittedIds);
-          const breakdown: BloomBreakdown = {};
-          ((ans as Array<{ bloom_level: string; is_correct: boolean | null }>) || []).forEach((a) => {
-            if (!breakdown[a.bloom_level]) breakdown[a.bloom_level] = { correct: 0, total: 0 };
-            breakdown[a.bloom_level].total++;
-            if (a.is_correct) breakdown[a.bloom_level].correct++;
+        // Pull latest non-denied retake/extension request per assignment.
+        // We treat 'pending' and 'approved' as live state; 'denied' resets
+        // the row so the student can ask again with a fresh note (and we
+        // only render denied state for past-due items via MissedAssignments).
+        const assignmentIds = open.map((a) => a.id);
+        type ReqRow = { id: string; assignment_id: string; status: "pending" | "approved" | "denied"; decision_note: string | null; created_at: string };
+        let requestByAssignment = new Map<string, ReqRow>();
+        if (assignmentIds.length > 0) {
+          const { data: reqs } = await sb
+            .from("quiz_retake_requests")
+            .select("id, assignment_id, status, decision_note, created_at")
+            .in("assignment_id", assignmentIds)
+            .eq("student_id", user.id)
+            .order("created_at", { ascending: false });
+          // Take the most recent per assignment (already sorted desc).
+          ((reqs as ReqRow[]) || []).forEach((r) => {
+            if (!requestByAssignment.has(r.assignment_id)) {
+              requestByAssignment.set(r.assignment_id, r);
+            }
           });
-          setBloomMastery(breakdown);
         }
+
+        setAssigned(open.map((a) => {
+          const req = requestByAssignment.get(a.id) || null;
+          return {
+            id: a.id,
+            due_at: a.due_at,
+            assigned_at: a.created_at,
+            via: a.class_id ? "class" : "direct",
+            via_label: a.class_id ? (a.class?.name || "Class") : "Assigned to you",
+            quiz: a.quiz ? {
+              id: a.quiz.id,
+              name: a.quiz.name,
+              code: a.quiz.code,
+              subject: a.quiz.subject,
+              time_limit_minutes: a.quiz.time_limit_minutes,
+              question_count: counts.get(a.quiz.id) || 0,
+            } : null,
+            request: req
+              ? { id: req.id, status: req.status, decision_note: req.decision_note }
+              : null,
+          };
+        }));
+      }
+
+      // Bloom mastery — computed for the active dashboard scope only
+      // (class for school students, all-personal-practice for
+      // independent ones). `rows` is already scope-filtered above so
+      // this naturally shows only the right data without any extra
+      // bucketing logic.
+      const submittedIds = rows.filter((a) => a.submitted_at).map((a) => a.id);
+      if (submittedIds.length > 0) {
+        const { data: ans } = await sb
+          .from("attempt_answers")
+          .select("bloom_level, is_correct")
+          .in("attempt_id", submittedIds);
+        const breakdown: BloomBreakdown = {};
+        ((ans as Array<{ bloom_level: string; is_correct: boolean | null }>) || []).forEach((a) => {
+          if (!breakdown[a.bloom_level]) breakdown[a.bloom_level] = { correct: 0, total: 0 };
+          breakdown[a.bloom_level].total++;
+          if (a.is_correct) breakdown[a.bloom_level].correct++;
+        });
+        setBloomMastery(breakdown);
       }
 
       // SRS due count — best-effort. Migration 15 may not be applied;
@@ -275,6 +334,31 @@ export default function StudentHome() {
           </div>
         )}
 
+        {/* At-a-glance scorecard — only renders for students with at least
+            one submitted attempt. For brand-new students the same numbers
+            would be 0 / — / — across the board, which adds noise; the
+            BloomHero below has a friendly empty state with a CTA that
+            covers their starting case instead. For returning students
+            this is the headline answer to "how am I doing?" — placed
+            above all secondary surfaces so it's the first thing their
+            eye lands on after the greeting. */}
+        {completed.length > 0 && (
+          <div className="grid sm:grid-cols-3 gap-3 mt-4">
+            <div className="card">
+              <div className="text-xs muted uppercase font-semibold">Tests taken</div>
+              <div className="text-3xl font-bold">{completed.length}</div>
+            </div>
+            <div className="card">
+              <div className="text-xs muted uppercase font-semibold">Average score</div>
+              <div className="text-3xl font-bold">{`${avg}%`}</div>
+            </div>
+            <div className="card">
+              <div className="text-xs muted uppercase font-semibold">Best level so far</div>
+              <div className="text-2xl font-bold">{bestLevel(bloomMastery) || "—"}</div>
+            </div>
+          </div>
+        )}
+
         {/* Renewal banner — only renders for paid independent subscriptions
             within 7 days of expiry or already expired. School students
             don't see this (school renews via offline contract). */}
@@ -285,12 +369,22 @@ export default function StudentHome() {
           source={access.source}
         />
 
-        {/* Bloom heat-map hero — the visual anchor of the dashboard.
-            Always rendered, even before the student has any attempts (it
-            shows a clean empty state with a single "Take your first
-            practice test" CTA). When data exists, it surfaces strongest +
-            weakest Bloom levels with a "Drill it" link that routes them
-            to the Misconception Detective. */}
+        {/* No onboarding checklist for independent students either. The
+            BloomHero below already shows a friendly empty state with a
+            "Generate your first test" CTA when there's no data, which
+            covers the new-user case without a separate scaffold; and
+            once they have data the checklist would just be visual
+            noise. Goal-pick is still enforced upstream via
+            StudentGoalPicker. (Originally Phase 1 #1; removed across
+            both flows after the school-flow removal proved the
+            dashboard reads cleaner without it.) */}
+
+        {/* Bloom heat-map hero — the visual anchor of the dashboard, now
+            promoted to first-thing-seen (per Phase 1 Item #5). When the
+            student has data, it shows strongest + weakest Bloom levels
+            with a "Drill it" CTA — that's the single sentence story we
+            want them to land on. Empty state shows "Take your first
+            practice test" — also handled by the checklist above. */}
         <BloomHero mastery={bloomMastery} />
 
         {sprint && sprint.days_remaining >= 0 && (
@@ -409,114 +503,99 @@ export default function StudentHome() {
           </div>
         </div>
 
-        {/* ============ Goal-aware feature tiles ============
-            Replaces the previous three themed sections (Boost / Ace /
-            Learn deeper) with two goal-driven sections. The priority is
-            looked up from lib/studentGoalTiles.ts based on profiles.exam_goal.
-            See 2026-04-30 strategy session — "regroup, don't remove":
-            no features deleted, just deprioritised under "More tools". */}
+        {/* ============ Verb-categorised feature tiles (Phase 3 #2) ============
+            Replaces the previous "Recommended for you / More tools" model
+            with a Test / Train / Diagnose / Share grouping driven by
+            TileMeta.category. The order WITHIN each category is still
+            goal-aware (primary tiles first, then secondary) — so a JEE
+            student sees Sprint at the top of Train, while a Class-10
+            student sees Teach-Back there.
+
+            "Test" doesn't pull from TILE_META (no tiles are categorised
+            as 'test' — practice tests live behind the dedicated /student/
+            generate flow). We render a CTA card for it instead. */}
         {(() => {
-          const layout = tileLayoutForGoal(examGoal);
+          const buckets = tilesByCategoryForGoal(examGoal);
+          const renderTile = (key: typeof buckets["train"][number]) => {
+            const meta = TILE_META[key];
+            const fk = meta.featureKey;
+            const locked = !access.isLoading && !!fk && !access.allowed.has(fk);
+            return (
+              <StudentFeatureTile
+                key={key}
+                meta={meta}
+                fullWidth={key === "sprint"}
+                locked={locked}
+                lockedTierLabel={fk ? unlockMap[fk]?.label : undefined}
+                onLockedClick={openPaywall}
+              />
+            );
+          };
+
           return (
             <>
-              <div className="mt-8">
-                <div className="flex items-center gap-2 mb-3">
-                  <h2 className="h2">Recommended for you</h2>
-                  <span className="text-[10px] uppercase tracking-wide font-bold text-emerald-700 bg-emerald-100 rounded-full px-2 py-0.5">
-                    {goalMeta?.label || "Personalised"}
-                  </span>
-                </div>
-                <div className="grid sm:grid-cols-2 gap-3">
-                  {layout.primary.map((key) => {
-                    const meta = TILE_META[key];
-                    const fk = meta.featureKey;
-                    const locked = !access.isLoading && !!fk && !access.allowed.has(fk);
-                    return (
-                      <StudentFeatureTile
-                        key={key}
-                        meta={meta}
-                        // The Sprint tile takes the wide slot when it appears in primary
-                        fullWidth={key === "sprint"}
-                        locked={locked}
-                        lockedTierLabel={fk ? unlockMap[fk]?.label : undefined}
-                        onLockedClick={openPaywall}
-                      />
-                    );
-                  })}
-                </div>
-              </div>
-
-              {layout.secondary.length > 0 && (
-                <details className="mt-8 group">
-                  <summary className="cursor-pointer list-none flex items-center gap-2 mb-3">
-                    <h2 className="h2">More tools</h2>
-                    <span className="text-xs muted">
-                      ({layout.secondary.length} more — click to expand)
-                    </span>
-                  </summary>
-                  <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                    {layout.secondary.map((key) => {
-                      const meta = TILE_META[key];
-                      const fk = meta.featureKey;
-                      const locked = !access.isLoading && !!fk && !access.allowed.has(fk);
-                      return (
-                        <StudentFeatureTile
-                          key={key}
-                          meta={meta}
-                          locked={locked}
-                          lockedTierLabel={fk ? unlockMap[fk]?.label : undefined}
-                          onLockedClick={openPaywall}
-                        />
-                      );
-                    })}
+              {/* Train your skills — the densest category. Primary tiles
+                  for the active goal sort to the top; secondary collapse
+                  into a "More" expander to keep above-the-fold tight. */}
+              {buckets.train.length > 0 && (
+                <section className="mt-8">
+                  <div className="flex items-center gap-2 mb-1">
+                    <h2 className="h2">{CATEGORY_META.train.label}</h2>
+                    {goalMeta && (
+                      <span className="text-[10px] uppercase tracking-wide font-bold text-emerald-700 bg-emerald-100 rounded-full px-2 py-0.5">
+                        Sorted for {goalMeta.label}
+                      </span>
+                    )}
                   </div>
-                </details>
+                  <p className="text-xs muted mb-3 max-w-2xl">{CATEGORY_META.train.intro}</p>
+                  <div className="grid sm:grid-cols-2 gap-3">
+                    {buckets.train.slice(0, 4).map(renderTile)}
+                  </div>
+                  {buckets.train.length > 4 && (
+                    <details className="mt-3 group">
+                      <summary className="cursor-pointer list-none text-sm font-semibold text-emerald-700">
+                        Show {buckets.train.length - 4} more →
+                      </summary>
+                      <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3 mt-3">
+                        {buckets.train.slice(4).map(renderTile)}
+                      </div>
+                    </details>
+                  )}
+                </section>
+              )}
+
+              {/* Diagnose a weakness — analytical tools. Smaller list, no
+                  collapse needed. */}
+              {buckets.diagnose.length > 0 && (
+                <section className="mt-8">
+                  <h2 className="h2">{CATEGORY_META.diagnose.label}</h2>
+                  <p className="text-xs muted mb-3 max-w-2xl">{CATEGORY_META.diagnose.intro}</p>
+                  <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {buckets.diagnose.map(renderTile)}
+                  </div>
+                </section>
+              )}
+
+              {/* Share — currently just the parent-share tile, but
+                  reserved as its own section so future share affordances
+                  (export PDF, share link) land here naturally. */}
+              {buckets.share.length > 0 && (
+                <section className="mt-8">
+                  <h2 className="h2">{CATEGORY_META.share.label}</h2>
+                  <p className="text-xs muted mb-3 max-w-2xl">{CATEGORY_META.share.intro}</p>
+                  <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {buckets.share.map(renderTile)}
+                  </div>
+                </section>
               )}
             </>
           );
         })()}
 
-        <div className="grid sm:grid-cols-3 gap-4 mt-6">
-          <div className="card">
-            <div className="text-xs muted uppercase font-semibold">Tests taken</div>
-            <div className="text-3xl font-bold">{completed.length}</div>
-          </div>
-          <div className="card">
-            <div className="text-xs muted uppercase font-semibold">Average score</div>
-            <div className="text-3xl font-bold">{completed.length ? `${avg}%` : ""}</div>
-          </div>
-          <div className="card">
-            <div className="text-xs muted uppercase font-semibold">Best level so far</div>
-            <div className="text-2xl font-bold">{bestLevel(bloomMastery) || ""}</div>
-          </div>
-        </div>
-
-        {Object.keys(bloomMastery).length > 0 && (
-          <div className="card mt-6">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="font-semibold flex items-center gap-2"><TrendingUp size={18} /> Your thinking-level breakdown</h3>
-              <Link href="/student/progress" className="text-sm text-emerald-700 font-semibold">Full progress </Link>
-            </div>
-            <div className="space-y-2">
-              {BLOOM_LEVELS.map((l) => {
-                const data = bloomMastery[l];
-                if (!data || !data.total) return null;
-                const p = Math.round((data.correct / data.total) * 100);
-                return (
-                  <div key={l}>
-                    <div className="flex items-center justify-between text-sm mb-1">
-                      <span className="font-medium">{BLOOM_META[l].label}</span>
-                      <span className="muted">{data.correct}/{data.total} {p}%</span>
-                    </div>
-                    <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
-                      <div className="h-full" style={{ width: `${p}%`, backgroundColor: BLOOM_META[l].color }} />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
+        {/* Note: the "Your thinking-level breakdown" card that used to
+            live here was removed — it duplicated the BloomHero pyramid
+            above. Full per-level deep-dive (with trends, topic
+            breakdowns, etc.) lives at /student/progress. */}
 
         <h2 className="h2 mt-8 mb-3 flex items-center gap-2"><NotebookPen size={20} /> Recent tests</h2>
         {attempts.length === 0 ? (
@@ -597,128 +676,33 @@ export default function StudentHome() {
 
       <MissedAssignments />
 
-      <div className="grid sm:grid-cols-3 gap-4 mt-6">
-        <div className="card">
-          <div className="text-xs muted uppercase font-semibold">Quizzes taken</div>
-          <div className="text-3xl font-bold">{completed.length}</div>
-        </div>
-        <div className="card">
-          <div className="text-xs muted uppercase font-semibold">Average score</div>
-          <div className="text-3xl font-bold">{completed.length ? `${avg}%` : ""}</div>
-        </div>
-        <div className="card flex flex-col items-start">
-          <div className="text-xs muted uppercase font-semibold">Got a code?</div>
-          <Link href="/student/join" className="btn btn-primary mt-2">Join a quiz</Link>
-        </div>
+      {/* ============ CLASS SCOPE ============
+          Everything from here down to the "Personal practice" divider
+          covers the student's TEACHER-ASSIGNED quizzes. Numbers,
+          mastery, and lists below are filtered to class-scope only —
+          the official record the teacher and school care about. */}
+      <div className="mt-6 mb-2 flex items-center gap-2">
+        <h2 className="h2 mb-0">Your assigned work</h2>
+        <span className="text-[10px] uppercase tracking-wide font-bold text-emerald-700 bg-emerald-100 rounded-full px-2 py-0.5">
+          Class
+        </span>
       </div>
 
-      <div className="mt-6">
-        <div className="flex items-center gap-2 mb-3">
-          <h2 className="h2">Reflect on your progress</h2>
-        </div>
-        <div className="grid sm:grid-cols-3 gap-3">
-          <Link href="/student/coach" className="card card-hover flex items-start gap-3">
-            <div className="rounded-lg bg-emerald-100 text-emerald-700 p-2 shrink-0"><MessageCircle size={18} /></div>
-            <div className="flex-1 min-w-0">
-              <div className="font-semibold">Performance Coach</div>
-              <div className="text-xs muted mt-1">Reflect on your progress.</div>
-            </div>
-          </Link>
-          <Link href="/student/digest" className="card card-hover flex items-start gap-3">
-            <div className="rounded-lg bg-sky-100 text-sky-700 p-2 shrink-0"><Sparkles size={18} /></div>
-            <div className="flex-1 min-w-0">
-              <div className="font-semibold">This Week</div>
-              <div className="text-xs muted mt-1">Your weekly briefing.</div>
-            </div>
-          </Link>
-          <Link href="/student/practice" className="card card-hover flex items-start gap-3">
-            <div className="rounded-lg bg-rose-100 text-rose-700 p-2 shrink-0"><Target size={18} /></div>
-            <div className="flex-1 min-w-0">
-              <div className="font-semibold">Adaptive Practice</div>
-              <div className="text-xs muted mt-1">5 questions tuned to your weakest level.</div>
-            </div>
-          </Link>
-          <Link href="/student/drill" className="card card-hover flex items-start gap-3">
-            <div className="rounded-lg bg-amber-100 text-amber-700 p-2 shrink-0"><Zap size={18} /></div>
-            <div className="flex-1 min-w-0">
-              <div className="font-semibold">Today&apos;s drill</div>
-              <div className="text-xs muted mt-1">5 questions targeted at your weakest spots.</div>
-            </div>
-          </Link>
-          {srsDueCount > 0 && (
-            <Link href="/student/memory" className="card card-hover flex items-start gap-3 border-cyan-200 bg-cyan-50/40">
-              <div className="rounded-lg bg-cyan-100 text-cyan-700 p-2 shrink-0"><Clock size={18} /></div>
-              <div className="flex-1 min-w-0">
-                <div className="font-semibold">{srsDueCount} review{srsDueCount === 1 ? "" : "s"} due today</div>
-                <div className="text-xs muted mt-1">Spaced-repetition queue is calling.</div>
-              </div>
-            </Link>
-          )}
-        </div>
-      </div>
+      {/* Live class quiz join lives in the sidebar at /student/live —
+          one click from anywhere, doesn't crowd the dashboard, and
+          (importantly) keeps live engagement physically separate from
+          the official class-record surface here. Live scores never
+          enter quiz_attempts and so never roll up into the stats /
+          BloomHero / progress / admin reports — the table separation
+          enforces that, no app-level filter required. */}
 
-      {/* ============ Goal-aware feature tiles for school students ============
-          Same data-driven catalogue as the independent dashboard but
-          gated by the SCHOOL's plan (resolved via useFeatureAccess →
-          source: "school"). Tiles whose featureKey isn't in the school
-          plan render locked, and clicking opens the school-student
-          paywall variant ("ask your school admin"), since school
-          students can't self-upgrade.
-          Replaces the previous 3 hardcoded tiles. */}
-      {(() => {
-        const layout = tileLayoutForGoal(null);
-        const renderTile = (key: typeof layout.primary[number]) => {
-          const meta = TILE_META[key];
-          const fk = meta.featureKey;
-          const locked = !access.isLoading && !!fk && !access.allowed.has(fk);
-          return (
-            <StudentFeatureTile
-              key={key}
-              meta={meta}
-              fullWidth={key === "sprint"}
-              locked={locked}
-              lockedTierLabel={fk ? unlockMap[fk]?.label : undefined}
-              onLockedClick={openPaywall}
-            />
-          );
-        };
-        return (
-          <>
-            <div className="mt-8">
-              <div className="flex items-center gap-2 mb-3">
-                <h2 className="h2">All your tools</h2>
-                <span className="text-[10px] uppercase tracking-wide font-bold text-emerald-700 bg-emerald-100 rounded-full px-2 py-0.5">
-                  Your school&apos;s plan
-                </span>
-              </div>
-              <div className="grid sm:grid-cols-2 gap-3">
-                {layout.primary.map(renderTile)}
-              </div>
-            </div>
-            {layout.secondary.length > 0 && (
-              <details className="mt-6 group">
-                <summary className="cursor-pointer list-none flex items-center gap-2 mb-3">
-                  <h2 className="h2">More tools</h2>
-                  <span className="text-xs muted">
-                    ({layout.secondary.length} more — click to expand)
-                  </span>
-                </summary>
-                <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                  {layout.secondary.map(renderTile)}
-                </div>
-              </details>
-            )}
-          </>
-        );
-      })()}
-
-      <h2 className="h2 mt-8 mb-3 flex items-center gap-2">
+      <h2 className="h2 mt-4 mb-3 flex items-center gap-2">
         <ClipboardList size={20} /> Assigned to you
         {assigned.length > 0 && <span className="text-sm font-normal muted">({assigned.length})</span>}
       </h2>
       {assigned.length === 0 ? (
         <div className="card text-center py-8 muted text-sm">
-          Nothing assigned right now. Check back later, or join a quiz with a code.
+          Nothing assigned right now. Your teacher will push tests here as they&apos;re ready.
         </div>
       ) : (
         <div className="space-y-3">
@@ -762,8 +746,23 @@ export default function StudentHome() {
                       <span className="text-slate-500 font-normal">No due date take it whenever</span>
                     )}
                   </div>
-                  <div className="text-[11px] muted mt-1">
-                    Assigned {new Date(a.assigned_at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+                  <div className="text-[11px] muted mt-1 flex items-center gap-3 flex-wrap">
+                    <span>
+                      Assigned {new Date(a.assigned_at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+                    </span>
+                    {/* Pre-due-date extension request — student can ask
+                        the teacher to push the due date out before they
+                        actually miss it. Past-due (overdue) items are
+                        instead handled by the MissedAssignments component
+                        higher up the page, which renders the same kind
+                        of request UI but with "missed" framing. Both
+                        write to the same quiz_retake_requests row. */}
+                    {!overdue && (
+                      <ExtensionRequestButton
+                        assignmentId={a.id}
+                        existingRequest={a.request}
+                      />
+                    )}
                   </div>
                 </div>
                 {a.quiz && (
@@ -777,44 +776,85 @@ export default function StudentHome() {
         </div>
       )}
 
-      <h2 className="h2 mt-8 mb-3">Your attempts</h2>
-      {attempts.length === 0 ? (
-        <Empty
-          icon="🚀"
-          title="No attempts yet"
-          body="Ask your teacher for a 6-character quiz code and start your first test."
-          action={<Link href="/student/join" className="btn btn-primary">Enter quiz code</Link>}
-        />
-      ) : (
-        <div className="card overflow-x-auto p-0">
-          <table className="w-full text-sm">
-            <thead className="bg-slate-50 text-xs uppercase muted">
-              <tr>
-                <th className="px-4 py-3 text-left">Quiz</th>
-                <th className="px-4 py-3 text-left">Code</th>
-                <th className="px-4 py-3 text-left">Score</th>
-                <th className="px-4 py-3 text-left">Date</th>
-                <th className="px-4 py-3 text-right">Result</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {attempts.map((a) => (
-                <tr key={a.id} className="hover:bg-slate-50">
-                  <td className="px-4 py-3 font-medium">{a.quiz?.name || "Quiz"}</td>
-                  <td className="px-4 py-3"><code className="text-xs px-2 py-0.5 bg-slate-100 rounded">{a.quiz?.code}</code></td>
-                  <td className="px-4 py-3">
-                    {a.submitted_at ? <strong>{a.score}/{a.total} ({pct(a.score, a.total)}%)</strong> : <span className="badge badge-pending">In progress</span>}
-                  </td>
-                  <td className="px-4 py-3 muted">{a.submitted_at ? new Date(a.submitted_at).toLocaleDateString() : ""}</td>
-                  <td className="px-4 py-3 text-right">
-                    {a.submitted_at && <Link className="text-emerald-700 font-semibold" href={`/student/results/${a.id}`}>View </Link>}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      {/* At-a-glance scorecard — labelled "Class quizzes" so the
+          scoping is unambiguous. These numbers reflect ONLY teacher-
+          assigned quizzes (filtered upstream against class_quiz_ids).
+          Personal practice — if the school plan ever exposes it — is
+          a separate scope and would have its own stats panel, never
+          mixed into these. */}
+      <div className="grid sm:grid-cols-2 gap-3 mt-4">
+        <div className="card">
+          <div className="text-xs muted uppercase font-semibold">Class tests taken</div>
+          <div className="text-3xl font-bold">{completed.length}</div>
         </div>
-      )}
+        <div className="card">
+          <div className="text-xs muted uppercase font-semibold">Class average</div>
+          <div className="text-3xl font-bold">{completed.length ? `${avg}%` : "—"}</div>
+        </div>
+      </div>
+
+      {/* No onboarding checklist for school students. The "Assigned to
+          you" section above already tells them what to do (literally,
+          with a Start button on every card), so a separate "take your
+          first quiz" reminder was redundant noise. Their Bloom hero
+          below auto-fills after the first attempt — that flow is
+          self-explanatory and doesn't need a checklist scaffold. */}
+
+      {/* Bloom mastery hero — promoted to first-thing-seen for school
+          students too (Phase 2 #5). Same component as the independent
+          flow; renders empty state with a "take a test" CTA when no data,
+          strongest/weakest callouts with "Drill it" link when data exists. */}
+      <BloomHero mastery={bloomMastery} />
+
+      {/* "Reflect on your progress" tiles used to live here. They've moved
+          out of the dashboard — sidebar's "My Progress" link is now the
+          dedicated home for Performance Coach / This Week / Adaptive
+          Practice / drill / memory. Keeps the dashboard focused on
+          "what's pending now" instead of repeating sidebar destinations. */}
+
+      {/* ============ Verb-categorised feature tiles (Phase 3 #2) ============
+          School students get only the Share section. Train/Diagnose are
+          self-study verbs aimed at independent students who pay for
+          premium features — for school students they'd render mostly as
+          locked tiles with "ask your school admin" CTAs, which adds
+          noise without helping the kid get to their assigned work. The
+          school dashboard's primary path is "Assigned to you" below. */}
+      {(() => {
+        const buckets = tilesByCategoryForGoal(null);
+        const renderTile = (key: typeof buckets["share"][number]) => {
+          const meta = TILE_META[key];
+          const fk = meta.featureKey;
+          const locked = !access.isLoading && !!fk && !access.allowed.has(fk);
+          return (
+            <StudentFeatureTile
+              key={key}
+              meta={meta}
+              locked={locked}
+              lockedTierLabel={fk ? unlockMap[fk]?.label : undefined}
+              onLockedClick={openPaywall}
+            />
+          );
+        };
+        return (
+          <>
+            {buckets.share.length > 0 && (
+              <section className="mt-8">
+                <h2 className="h2">{CATEGORY_META.share.label}</h2>
+                <p className="text-xs muted mb-3 max-w-2xl">{CATEGORY_META.share.intro}</p>
+                <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {buckets.share.map(renderTile)}
+                </div>
+              </section>
+            )}
+          </>
+        );
+      })()}
+
+      {/* "Your attempts" table used to render here. Moved to its own
+          page at /student/tests, reachable from the sidebar's "My
+          Attempts" link. The dashboard now stays focused on what's
+          pending; the history is one click away when the student wants
+          to look back. */}
 
       {/* Paywall modal for school students — opens when they click a
           locked tile. Variant routes them to email their Admin Head

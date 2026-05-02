@@ -21,6 +21,10 @@ export default function TeacherRetakeRequests() {
   const [items, setItems] = useState<RetakeRequest[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [decisionNote, setDecisionNote] = useState<Record<string, string>>({});
+  // Per-request "new due date/time" picker. Pre-fills to "+7 days from
+  // now" when the input first renders; submitted as new_due_at on
+  // approve.
+  const [newDueAt, setNewDueAt] = useState<Record<string, string>>({});
 
   async function load() {
     try {
@@ -46,7 +50,13 @@ export default function TeacherRetakeRequests() {
       const r = await fetch(`/api/teacher/retake-requests/${id}/decision`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
-        body: JSON.stringify({ decision, note: decisionNote[id] || "" }),
+        body: JSON.stringify({
+          decision,
+          note: decisionNote[id] || "",
+          // Only meaningful on approve. Server validates it parses
+          // and is in the future.
+          new_due_at: decision === "approve" ? (newDueAt[id] || "") : "",
+        }),
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j?.error || "Failed");
@@ -99,14 +109,32 @@ export default function TeacherRetakeRequests() {
                 onChange={(e) => setDecisionNote((m) => ({ ...m, [it.id]: e.target.value }))}
                 maxLength={500}
               />
+              {/* New due date/time — teacher can pick exactly when the
+                  extended assignment closes. Defaults to +7 days from
+                  now if they don't change it. */}
+              <div className="flex items-center gap-2 flex-wrap">
+                <label className="text-xs muted shrink-0">New due date &amp; time</label>
+                <input
+                  type="datetime-local"
+                  className="input text-xs"
+                  value={
+                    newDueAt[it.id] ||
+                    (() => {
+                      const d = new Date(Date.now() + 7 * 86400000);
+                      const pad = (n: number) => String(n).padStart(2, "0");
+                      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+                    })()
+                  }
+                  onChange={(e) => setNewDueAt((m) => ({ ...m, [it.id]: e.target.value }))}
+                />
+              </div>
               <div className="flex gap-2">
                 <button
                   className="btn btn-primary text-xs inline-flex items-center gap-1.5"
                   disabled={busy === it.id}
                   onClick={() => decide(it.id, "approve")}
                 >
-                  <CheckCircle2 size={12} /> Approve (extends 7d)
-                </button>
+                  <CheckCircle2 size={12} /> Approve</button>
                 <button
                   className="btn btn-secondary text-xs inline-flex items-center gap-1.5"
                   disabled={busy === it.id}
