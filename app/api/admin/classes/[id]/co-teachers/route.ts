@@ -80,11 +80,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       );
     }
 
-    // Try to resolve the email to an existing account.
+    // Two-sided invite \u2014 never silently link. Sanity-check email if an
+    // account already exists (refuse if it's an Admin Head of another school
+    // or the same user trying to invite themselves), then create a pending
+    // invite. Teacher accepts via their dashboard.
     const { data: usersList, error: listErr } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 });
     if (listErr) return NextResponse.json({ error: listErr.message }, { status: 500 });
     const target = usersList.users.find((u) => u.email?.toLowerCase() === email);
-
     if (target) {
       if (target.id === user.id) {
         return NextResponse.json(
@@ -92,8 +94,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           { status: 400 }
         );
       }
-      // Pull them into the school as a teacher (covers fresh student/independent
-      // accounts). If they\u2019re an Admin Head of a different school, refuse.
       const { data: tProf } = await admin
         .from("profiles")
         .select("role, school_id")
@@ -105,34 +105,21 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           { status: 409 }
         );
       }
-      await admin
-        .from("profiles")
-        .update({ role: "teacher", school_id: cls.school_id })
-        .eq("id", target.id);
-
-      const { error: insertErr } = await admin
-        .from("class_teachers")
-        .upsert(
-          { class_id: classId, teacher_id: target.id, role: "co", subject },
-          { onConflict: "class_id,teacher_id" }
-        );
-      if (insertErr) return NextResponse.json({ error: insertErr.message }, { status: 500 });
-
-      // Drop any matching pending invite \u2014 it\u2019s now claimed.
-      await admin
-        .from("class_teacher_invites")
-        .delete()
-        .eq("class_id", classId)
-        .eq("email", email);
-
-      return NextResponse.json({ ok: true, status: "linked", teacher_id: target.id, email });
     }
 
-    // No account: store / refresh pending invite.
+    // Reset status so a prior accepted/declined row doesn't keep its old verdict.
     const { error: invErr } = await admin
       .from("class_teacher_invites")
       .upsert(
-        { class_id: classId, email, role: "co", subject, invited_by: user.id },
+        {
+          class_id: classId,
+          email,
+          role: "co",
+          subject,
+          invited_by: user.id,
+          status: "pending",
+          responded_at: null,
+        },
         { onConflict: "class_id,email" }
       );
     if (invErr) return NextResponse.json({ error: invErr.message }, { status: 500 });
