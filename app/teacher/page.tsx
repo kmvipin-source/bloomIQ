@@ -4,6 +4,7 @@ import Link from "next/link";
 import { supabaseBrowser } from "@/lib/supabase/client";
 import { Sparkles, Library, ListChecks, Users, Building2, LogOut, MessageCircle, Radio } from "lucide-react";
 import TeacherRetakeRequests from "@/components/TeacherRetakeRequests";
+import TeacherInvites from "@/components/TeacherInvites";
 
 export default function TeacherHome() {
   const [stats, setStats] = useState({ pending: 0, approved: 0, quizzes: 0, attempts: 0 });
@@ -115,6 +116,7 @@ export default function TeacherHome() {
       <h1 className="h1">Welcome back{name ? `, ${name.split(" ")[0]}` : ""} 👋</h1>
       <p className="muted mt-1">Here&apos;s your snapshot.</p>
 
+      <TeacherInvites onChanged={() => loadProfile()} />
       <TeacherRetakeRequests />
 
       {schoolId ? (

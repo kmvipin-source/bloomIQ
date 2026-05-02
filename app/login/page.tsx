@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { supabaseBrowser } from "@/lib/supabase/client";
 import { Eye, EyeOff, GraduationCap, BookOpen, Building2, ShieldCheck, KeyRound } from "lucide-react";
-import LoginCaptcha, { recordLoginFailure, clearLoginFailures, captchaRequired } from "@/components/LoginCaptcha";
 
 const SCHOOL_DOMAIN = "bloomiq.invalid";
 const TOS_VERSION = "2026-04-30";
@@ -105,8 +104,6 @@ export default function LoginPage() {
 
   // Adaptive bot deterrent. Set true the moment we hit FAIL_THRESHOLD on
   // this identifier; user must solve a one-shot math puzzle to re-enable.
-  const [needCaptcha, setNeedCaptcha] = useState(false);
-  const [captchaPassed, setCaptchaPassed] = useState(false);
 
   // 2FA state. After password succeeds, if the user has a verified TOTP
   // factor, we pause and ask for the 6-digit code.
@@ -192,7 +189,6 @@ export default function LoginPage() {
       prof?.role === "teacher" ? "/teacher" :
       prof?.role === "super_teacher" ? "/school" :
       "/student";
-    clearLoginFailures(identifier);
     router.push(next || home);
   }
 
@@ -201,10 +197,6 @@ export default function LoginPage() {
     setErr(null);
     if (!tosOk) {
       setErr("Please tick the box to accept the Terms of Service and Privacy Policy.");
-      return;
-    }
-    if (needCaptcha && !captchaPassed) {
-      setErr("Please solve the puzzle to continue.");
       return;
     }
     setBusy(true);
@@ -218,13 +210,7 @@ export default function LoginPage() {
 
       const { error } = await sb.auth.signInWithPassword({ email, password });
       if (error) {
-        const fails = recordLoginFailure(raw);
-        if (captchaRequired(raw)) { setNeedCaptcha(true); setCaptchaPassed(false); }
-        throw new Error(
-          fails >= 3
-            ? "Email/username or password is incorrect. Solve the puzzle below to keep trying."
-            : "Email/username or password is incorrect."
-        );
+        throw new Error("Email/username or password is incorrect.");
       }
 
       // Determine MFA requirement. School students are skipped — many are
@@ -328,13 +314,6 @@ export default function LoginPage() {
       setMfaBusy(false);
     }
   }
-
-  // Re-evaluate captcha gate whenever the identifier changes — a user who
-  // switches accounts after some failures should not be punished.
-  useEffect(() => {
-    setNeedCaptcha(captchaRequired(identifier));
-    setCaptchaPassed(false);
-  }, [identifier]);
 
   return (
     <main className="min-h-screen grid place-items-center px-6 py-10 bg-gradient-to-br from-emerald-50 via-white to-sky-50">
@@ -487,12 +466,6 @@ export default function LoginPage() {
                 {forgotMsg}
               </div>
             )}
-            {!forgotMode && needCaptcha && !captchaPassed && mfaPhase === "idle" && (
-              <LoginCaptcha
-                onPass={() => { setCaptchaPassed(true); setErr(null); }}
-              />
-            )}
-
             {/* Explicit click-wrap. Required on every sign-in so consent is
                 refreshed each session and we can re-stamp tos_version onto
                 user_metadata when Terms are updated. */}
@@ -561,7 +534,7 @@ export default function LoginPage() {
             ) : (
               <button
                 className="btn btn-primary w-full"
-                disabled={busy || !tosOk || (needCaptcha && !captchaPassed)}
+                disabled={busy || !tosOk}
                 suppressHydrationWarning
               >
                 {busy && <span className="spinner" />} Sign in

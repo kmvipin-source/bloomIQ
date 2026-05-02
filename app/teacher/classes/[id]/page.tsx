@@ -19,11 +19,12 @@ type Member = Pick<Profile, "id" | "full_name"> & {
 };
 
 type CoTeacherRow = {
-  teacher_id: string | null;        // null when this row is a pending invite
+  teacher_id: string | null;        // null when this row is a pending/declined invite
   role: "primary" | "co";
   subject: string | null;
-  full_name: string | null;          // for linked teachers; null for pending
+  full_name: string | null;          // for linked teachers; null for invites
   pendingEmail: string | null;       // set for pending invites
+  declinedEmail: string | null;      // set for declined invites
 };
 
 function timeAgo(iso: string | null | undefined): string {
@@ -167,11 +168,12 @@ export default function ClassDetailPage() {
         .select("teacher_id, role, subject, profile:profiles!class_teachers_teacher_id_fkey(full_name)")
         .eq("class_id", id),
       sb.from("class_teacher_invites")
-        .select("email, role, subject")
-        .eq("class_id", id),
+        .select("email, role, subject, status")
+        .eq("class_id", id)
+        .in("status", ["pending", "declined"]),
     ]);
     type CtRow = { teacher_id: string; role: "primary" | "co"; subject: string | null; profile: { full_name: string | null } | null };
-    type InvRow = { email: string; role: "primary" | "co"; subject: string | null };
+    type InvRow = { email: string; role: "primary" | "co"; subject: string | null; status: "pending" | "declined" };
 
     const linked: CoTeacherRow[] = ((cts as unknown as CtRow[]) || []).map((c) => ({
       teacher_id: c.teacher_id,
@@ -179,19 +181,21 @@ export default function ClassDetailPage() {
       subject: c.subject,
       full_name: c.profile?.full_name || null,
       pendingEmail: null,
+      declinedEmail: null,
     }));
-    const pending: CoTeacherRow[] = ((invites as InvRow[]) || []).map((i) => ({
+    const inviteRows: CoTeacherRow[] = ((invites as InvRow[]) || []).map((i) => ({
       teacher_id: null,
       role: i.role,
       subject: i.subject,
       full_name: null,
-      pendingEmail: i.email,
+      pendingEmail: i.status === "pending" ? i.email : null,
+      declinedEmail: i.status === "declined" ? i.email : null,
     }));
-    const combined = [...linked, ...pending];
-    // Sort: primary linked first, then linked co-teachers, then any pending rows.
+    const combined = [...linked, ...inviteRows];
+    // Sort: primary linked first, then linked co-teachers, then pending, then declined.
     combined.sort((a, b) => {
       const score = (r: CoTeacherRow) =>
-        r.pendingEmail ? 2 : (r.role === "primary" ? 0 : 1);
+        r.declinedEmail ? 3 : r.pendingEmail ? 2 : (r.role === "primary" ? 0 : 1);
       return score(a) - score(b);
     });
     setCoTeachers(combined);
@@ -616,17 +620,22 @@ export default function ClassDetailPage() {
         <table className="w-full text-sm">
           <tbody className="divide-y divide-slate-100">
             {coTeachers.map((t, i) => {
-              const key = t.teacher_id || `pending-${t.pendingEmail}-${i}`;
+              const key = t.teacher_id || `inv-${t.pendingEmail || t.declinedEmail}-${i}`;
               const isPending = !!t.pendingEmail;
+              const isDeclined = !!t.declinedEmail;
               return (
-                <tr key={key} className={isPending ? "bg-sky-50/40 hover:bg-sky-50" : "hover:bg-slate-50"}>
+                <tr key={key} className={isPending ? "bg-sky-50/40 hover:bg-sky-50" : isDeclined ? "bg-red-50/40 hover:bg-red-50" : "hover:bg-slate-50"}>
                   <td className="px-4 py-3 font-medium">
-                    {t.full_name || (isPending ? <span className="italic text-slate-700">{t.pendingEmail}</span> : "(unnamed teacher)")}
+                    {t.full_name || ((isPending || isDeclined) ? <span className="italic text-slate-700">{t.pendingEmail || t.declinedEmail}</span> : "(unnamed teacher)")}
                   </td>
                   <td className="px-4 py-3">
                     {isPending ? (
                       <span className="text-[10px] uppercase tracking-wide font-bold text-sky-800 bg-sky-50 border border-sky-200 rounded-full px-2 py-0.5">
                         ⏳ Pending {t.role === "primary" ? "primary" : `co-teacher${t.subject ? ` · ${t.subject}` : ""}`}
+                      </span>
+                    ) : isDeclined ? (
+                      <span className="text-[10px] uppercase tracking-wide font-bold text-red-800 bg-red-50 border border-red-200 rounded-full px-2 py-0.5">
+                        ❌ Rejected {t.role === "primary" ? "primary" : "co-teacher"}
                       </span>
                     ) : t.role === "primary" ? (
                       <span className="text-[10px] uppercase tracking-wide font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5">
@@ -658,6 +667,15 @@ export default function ClassDetailPage() {
                           </button>
                         )}
                       </>
+                    )}
+                    {isDeclined && t.declinedEmail && isPrimary && (
+                      <button
+                        className="btn btn-ghost text-red-600 text-xs"
+                        onClick={() => removePendingInvite(t.declinedEmail!)}
+                        title="Remove rejected invite"
+                      >
+                        Dismiss
+                      </button>
                     )}
                     {!isPending && isPrimary && t.role === "co" && t.teacher_id && (
                       <>

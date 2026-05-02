@@ -32,8 +32,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
     const body = await req.json().catch(() => ({}));
     const rawEmail = body?.email;
+    // Coerce missing / undefined / empty to null. Without this, `String(undefined)`
+    // ends up as the literal "undefined" string and gets stored as a pending
+    // invite email — then renders as "⏳ Pending undefined" on /school/classes.
     let email: string | null =
-      rawEmail === null || rawEmail === ""
+      rawEmail == null || rawEmail === ""
         ? null
         : String(rawEmail).trim().toLowerCase() || null;
     const teacherIdInput: string | null = body?.teacher_id ? String(body.teacher_id).trim() : null;
@@ -112,78 +115,47 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       );
     }
 
-    // === Case: email is provided -> resolve to existing account if possible ===
-    const { data: usersList, error: listErr } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 });
-    if (listErr) return NextResponse.json({ error: listErr.message }, { status: 500 });
-    const target = usersList.users.find((u) => u.email?.toLowerCase() === email);
-
-    if (target) {
-      // Account exists. Verify it's a teacher (or upgrade them quietly to teacher
-      // if they're currently 'student' with no school — happens with fresh test
-      // accounts). Reject super_teacher of OTHER schools.
-      const { data: tProf } = await admin
-        .from("profiles")
-        .select("role, school_id")
-        .eq("id", target.id)
-        .maybeSingle();
-      if (!tProf) {
-        return NextResponse.json(
-          { error: "Account exists but profile missing — ask them to log in once first." },
-          { status: 400 }
-        );
+    // === Email path — always create a PENDING INVITE. ===
+    // The teacher must accept via their dashboard before class_teachers /
+    // classes.owner_id are touched. This makes "primary teacher of a class"
+    // a two-sided agreement, not a unilateral assignment by the school
+    // admin. Status reflects on /school/classes as Pending → Accepted /
+    // Rejected once the teacher responds.
+    //
+    // Sanity guard: if the email belongs to the super_teacher of ANOTHER
+    // school, refuse. Doesn't matter if their account exists or not.
+    if (email) {
+      const { data: usersList, error: listErr } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 });
+      if (listErr) return NextResponse.json({ error: listErr.message }, { status: 500 });
+      const target = usersList.users.find((u) => u.email?.toLowerCase() === email);
+      if (target) {
+        const { data: tProf } = await admin
+          .from("profiles")
+          .select("role, school_id")
+          .eq("id", target.id)
+          .maybeSingle();
+        if (tProf?.role === "super_teacher" && tProf.school_id && tProf.school_id !== me.school_id) {
+          return NextResponse.json(
+            { error: "That email belongs to the Admin Head of another school." },
+            { status: 409 }
+          );
+        }
       }
-      if (tProf.role === "super_teacher" && tProf.school_id && tProf.school_id !== me.school_id) {
-        return NextResponse.json(
-          { error: "That email belongs to the Admin Head of another school." },
-          { status: 409 }
-        );
-      }
-      // Pull them into this school as a teacher (covers the case where they
-      // signed up as 'student' or are unaffiliated).
-      await admin
-        .from("profiles")
-        .update({ role: "teacher", school_id: me.school_id })
-        .eq("id", target.id);
-
-      // Demote current primary, then promote.
-      const { data: currentPrimary } = await admin
-        .from("class_teachers")
-        .select("teacher_id")
-        .eq("class_id", classId)
-        .eq("role", "primary")
-        .maybeSingle();
-      if (currentPrimary?.teacher_id && currentPrimary.teacher_id !== target.id) {
-        await admin
-          .from("class_teachers")
-          .update({ role: "co" })
-          .eq("class_id", classId)
-          .eq("teacher_id", currentPrimary.teacher_id);
-      }
-      const { error: upErr } = await admin
-        .from("class_teachers")
-        .upsert(
-          { class_id: classId, teacher_id: target.id, role: "primary" },
-          { onConflict: "class_id,teacher_id" }
-        );
-      if (upErr) return NextResponse.json({ error: upErr.message }, { status: 500 });
-
-      await admin.from("classes").update({ owner_id: target.id }).eq("id", classId);
-
-      // Drop any pending invite for this email + class (no longer pending).
-      await admin
-        .from("class_teacher_invites")
-        .delete()
-        .eq("class_id", classId)
-        .eq("email", email);
-
-      return NextResponse.json({ ok: true, status: "linked", teacher_id: target.id });
     }
 
-    // === No account yet -> store a pending invite ===
+    // Re-invite resets status back to pending so the prior "declined" or
+    // "accepted" historical row doesn't keep its old verdict.
     const { error: invErr } = await admin
       .from("class_teacher_invites")
       .upsert(
-        { class_id: classId, email, role: "primary", invited_by: user.id },
+        {
+          class_id: classId,
+          email,
+          role: "primary",
+          invited_by: user.id,
+          status: "pending",
+          responded_at: null,
+        },
         { onConflict: "class_id,email" }
       );
     if (invErr) return NextResponse.json({ error: invErr.message }, { status: 500 });

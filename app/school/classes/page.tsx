@@ -34,6 +34,8 @@ type ClassRow = {
   primaryName: string | null;
   primaryEmail: string | null;       // email of the linked primary, if known
   pendingPrimaryEmail: string | null; // email of a pending invite (no account yet)
+  inviteStatus: "pending" | "accepted" | "declined" | null; // status of the latest invite for this class
+  inviteEmail: string | null; // email used in the latest invite (any status)
   coTeacherCount: number;            // active (non-primary) co-teachers
   memberCount: number;
   quizCount: number;
@@ -110,14 +112,18 @@ export default function SchoolClassesPage() {
         const [{ data: ct }, { count: mCt }, { data: invite }, { count: coCount }] = await Promise.all([
           sb.from("class_teachers").select("teacher_id, profile:profiles!class_teachers_teacher_id_fkey(full_name)").eq("class_id", c.id).eq("role", "primary").maybeSingle(),
           sb.from("class_members").select("student_id", { count: "exact", head: true }).eq("class_id", c.id),
-          sb.from("class_teacher_invites").select("email").eq("class_id", c.id).eq("role", "primary").maybeSingle(),
+          sb.from("class_teacher_invites").select("email, status, responded_at").eq("class_id", c.id).eq("role", "primary").order("responded_at", { ascending: false, nullsFirst: false }).maybeSingle(),
           sb.from("class_teachers").select("teacher_id", { count: "exact", head: true }).eq("class_id", c.id).eq("role", "co"),
         ]);
         type CtRow = { teacher_id: string; profile: { full_name: string | null } | null };
         const ctRow = ct as unknown as CtRow | null;
         const primaryId = ctRow?.teacher_id || null;
         const primaryName = ctRow?.profile?.full_name || null;
-        const pendingPrimaryEmail = (invite as { email: string } | null)?.email || null;
+        type InviteRow = { email: string; status: "pending" | "accepted" | "declined" | null };
+        const inviteRow = invite as InviteRow | null;
+        const inviteEmail = inviteRow?.email || null;
+        const inviteStatus = inviteRow?.status || null;
+        const pendingPrimaryEmail = inviteStatus === "pending" ? inviteEmail : null;
 
         const { count: qCt } = await sb.from("quiz_assignments").select("id", { count: "exact", head: true }).eq("class_id", c.id);
 
@@ -144,6 +150,8 @@ export default function SchoolClassesPage() {
           primaryName,
           primaryEmail: null,  // not surfaced for now; we already have the name
           pendingPrimaryEmail,
+          inviteStatus,
+          inviteEmail,
           coTeacherCount: coCount || 0,
           memberCount: mCt || 0,
           quizCount: qCt || 0,
@@ -434,14 +442,19 @@ export default function SchoolClassesPage() {
                   </td>
                   <td className="px-4 py-3">
                     {c.primaryName ? (
-                      <span className="inline-flex items-center gap-1.5">
-                        <span className="text-[10px] uppercase tracking-wide font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5">✅ Active</span>
-                        {c.primaryName}
+                      <span className="inline-flex items-center gap-1.5 flex-wrap">
+                        <span className="text-[10px] uppercase tracking-wide font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5">✅ Accepted</span>
+                        <span>{c.primaryName}</span>
                       </span>
-                    ) : c.pendingPrimaryEmail ? (
-                      <span className="inline-flex items-center gap-1.5 italic">
+                    ) : c.inviteStatus === "pending" && c.pendingPrimaryEmail ? (
+                      <span className="inline-flex items-center gap-1.5 italic flex-wrap">
                         <span className="text-[10px] uppercase tracking-wide font-bold text-sky-800 bg-sky-50 border border-sky-200 rounded-full px-2 py-0.5">⏳ Pending</span>
                         <span className="text-slate-700">{c.pendingPrimaryEmail}</span>
+                      </span>
+                    ) : c.inviteStatus === "declined" ? (
+                      <span className="inline-flex items-center gap-1.5 italic flex-wrap">
+                        <span className="text-[10px] uppercase tracking-wide font-bold text-red-800 bg-red-50 border border-red-200 rounded-full px-2 py-0.5">❌ Rejected</span>
+                        <span className="text-slate-700">{c.inviteEmail}</span>
                       </span>
                     ) : (
                       <span className="text-[10px] uppercase tracking-wide font-bold text-amber-800 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5">
