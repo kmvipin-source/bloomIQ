@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { supabaseBrowser } from "@/lib/supabase/client";
 import { Eye, EyeOff, ShieldCheck, KeyRound, AlertCircle } from "lucide-react";
-import LoginCaptcha, { recordLoginFailure, clearLoginFailures, captchaRequired } from "@/components/LoginCaptcha";
 
 const TOS_VERSION = "2026-04-30";
 
@@ -35,8 +34,7 @@ const TOS_VERSION = "2026-04-30";
  *   2FA: if the user has a verified TOTP factor, the second-factor
  *   challenge is required before redirect. (See same logic in /login.)
  *
- *   ToS acceptance + captcha-after-3-fails are reused from /login's
- *   shared infrastructure (LoginCaptcha component, TOS_VERSION constant).
+ *   ToS acceptance reuses /login's TOS_VERSION constant.
  */
 
 export default function StaffLoginPage() {
@@ -50,10 +48,6 @@ export default function StaffLoginPage() {
 
   const [tosOk, setTosOk] = useState(false);
 
-  // Captcha (after 3 failed attempts on the same identifier).
-  const [needCaptcha, setNeedCaptcha] = useState(false);
-  const [captchaPassed, setCaptchaPassed] = useState(false);
-
   // 2FA challenge phase. After password validates, if a TOTP factor exists,
   // we pause for the 6-digit code before redirecting.
   const [mfaPhase, setMfaPhase] = useState<"idle" | "needs_code">("idle");
@@ -61,11 +55,6 @@ export default function StaffLoginPage() {
   const [mfaChallengeId, setMfaChallengeId] = useState<string | null>(null);
   const [mfaCode, setMfaCode] = useState("");
   const [mfaBusy, setMfaBusy] = useState(false);
-
-  useEffect(() => {
-    setNeedCaptcha(captchaRequired(email));
-    setCaptchaPassed(false);
-  }, [email]);
 
   async function finalizeSignIn() {
     const sb = supabaseBrowser();
@@ -81,7 +70,6 @@ export default function StaffLoginPage() {
         data: { tos_accepted_at: new Date().toISOString(), tos_version: TOS_VERSION },
       });
     } catch { /* non-fatal */ }
-    clearLoginFailures(email);
     router.push("/admin/onboard-school");
   }
 
@@ -92,10 +80,6 @@ export default function StaffLoginPage() {
       setErr("Please tick the box to accept the Terms of Service and Privacy Policy.");
       return;
     }
-    if (needCaptcha && !captchaPassed) {
-      setErr("Please solve the puzzle to continue.");
-      return;
-    }
     setBusy(true);
     try {
       const sb = supabaseBrowser();
@@ -104,14 +88,8 @@ export default function StaffLoginPage() {
 
       const { error } = await sb.auth.signInWithPassword({ email: raw, password });
       if (error) {
-        const fails = recordLoginFailure(raw);
-        if (captchaRequired(raw)) { setNeedCaptcha(true); setCaptchaPassed(false); }
         // Ambiguous error — does NOT leak whether the email exists.
-        throw new Error(
-          fails >= 3
-            ? "Incorrect credentials. Solve the puzzle below to keep trying."
-            : "Incorrect credentials.",
-        );
+        throw new Error("Incorrect credentials.");
       }
 
       // Verify platform_admin AFTER auth succeeds. A non-staff account that
@@ -244,10 +222,6 @@ export default function StaffLoginPage() {
                 </div>
               </div>
 
-              {needCaptcha && (
-                <LoginCaptcha onSolved={setCaptchaPassed} />
-              )}
-
               <label className="flex items-start gap-2 text-xs muted cursor-pointer">
                 <input
                   type="checkbox"
@@ -273,7 +247,7 @@ export default function StaffLoginPage() {
               <button
                 type="submit"
                 className="btn btn-primary w-full"
-                disabled={busy || (needCaptcha && !captchaPassed) || !tosOk}
+                disabled={busy || !tosOk}
                 suppressHydrationWarning
               >
                 {busy ? <span className="spinner" /> : <ShieldCheck size={14} />} Sign in
