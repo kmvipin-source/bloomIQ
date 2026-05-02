@@ -5,6 +5,7 @@ import Link from "next/link";
 import { supabaseBrowser } from "@/lib/supabase/client";
 import type { School } from "@/lib/types";
 import { Building2, UserRound, ListChecks, ClipboardList, TrendingUp, Settings, Copy, Pencil, UserCog, BarChart3, MessageCircle, Sparkles } from "lucide-react";
+import CurrentPlanBadge from "@/components/CurrentPlanBadge";
 import { generateQuizCode } from "@/lib/utils";
 
 type Stats = {
@@ -362,6 +363,7 @@ export default function SchoolHome() {
             <div className="mt-2 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{renameErr}</div>
           )}
           <p className="muted mt-1">School-wide overview · {stats?.teachers || 0} teacher{stats?.teachers === 1 ? "" : "s"} · {stats?.students || 0} student{stats?.students === 1 ? "" : "s"}</p>
+          <div className="mt-2"><CurrentPlanBadge /></div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <Link href="/school/reports" className="btn btn-primary"><BarChart3 size={14} /> Bloom Pulse</Link>
