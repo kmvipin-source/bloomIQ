@@ -80,78 +80,21 @@ export async function GET(req: Request) {
 }
 
 /**
- * POST — create a new SKU. Use sparingly: in the new model the catalogue
- * is meant to stay stable (the seeded 8 are all you usually need). This
- * endpoint exists for legitimately new product tiers (e.g., introducing
- * a Quarterly billing period later). Edits to existing SKUs go through
- * PUT, not a new POST.
+ * POST — DEPRECATED in migration 43.
  *
- * Body: { slug, tier, label, blurb?, feature_summary?, price_paise?,
- *   currency?, period_days?, features?, pricing_model?,
- *   per_student_price_paise?, min_students?, max_students? }
+ * Direct plan creation no longer happens here. Every new SKU is born as
+ * a kind='create' proposal at /api/admin/plan-proposals; on approval the
+ * proposal is flattened into an INSERT here by the approve route's
+ * service-role client.
+ *
+ * Returns 410 Gone so any straggler client surfaces the change loudly.
  */
-export async function POST(req: Request) {
-  try {
-    const auth = await requireAdmin(req);
-    if ("err" in auth) return auth.err;
-    void auth;
-    const body = await req.json().catch(() => ({}));
-
-    const admin = supabaseAdmin();
-
-    const slug = String(body.slug ?? "").trim();
-    const tier = String(body.tier ?? "").trim();
-    if (!slug) return NextResponse.json({ error: "slug is required" }, { status: 400 });
-    if (!tier) return NextResponse.json({ error: "tier is required" }, { status: 400 });
-
-    const label = String(body.label ?? "").trim() || slug;
-    const blurb = body.blurb ?? null;
-    const feature_summary = Array.isArray(body.feature_summary) ? body.feature_summary : [];
-    const price_paise = typeof body.price_paise === "number" ? body.price_paise : 0;
-    const currency = String(body.currency ?? "INR").toUpperCase();
-    const period_days = typeof body.period_days === "number" ? body.period_days : 30;
-    const features = Array.isArray(body.features) ? body.features : [];
-
-    // School plans default to per_student mode unless caller explicitly
-    // sets otherwise. The DB constraint plans_per_student_price_required
-    // forbids per_student with a 0 price, so we seed a ₹1 placeholder
-    // for the admin to replace in the editor.
-    let pricing_model: string =
-      body.pricing_model === "fixed" || body.pricing_model === "per_student"
-        ? body.pricing_model
-        : (tier.startsWith("school_") ? "per_student" : "fixed");
-    let per_student_price_paise =
-      typeof body.per_student_price_paise === "number" ? body.per_student_price_paise : 0;
-    if (pricing_model === "per_student" && per_student_price_paise <= 0) {
-      per_student_price_paise = 100;
-    }
-    const min_students = typeof body.min_students === "number" ? body.min_students : 0;
-    const max_students =
-      typeof body.max_students === "number" ? body.max_students
-      : (body.max_students === null ? null : null);
-
-    const { data: inserted, error } = await admin
-      .from("plans")
-      .insert({
-        slug, tier, label, blurb, feature_summary,
-        price_paise, currency, period_days, features,
-        pricing_model, per_student_price_paise, min_students, max_students,
-      })
-      .select()
-      .single();
-    if (error) {
-      // Friendly error for the most common failure mode: duplicate slug.
-      const msg = error.message.toLowerCase().includes("unique")
-        ? `A plan with slug "${slug}" already exists. Edit it instead.`
-        : error.message;
-      return NextResponse.json({ error: msg }, { status: 500 });
-    }
-
-    return NextResponse.json({ ok: true, plan: inserted });
-  } catch (e) {
-    return NextResponse.json(
-      { error: e instanceof Error ? e.message : "Create failed" },
-      { status: 500 }
-    );
-  }
+export async function POST() {
+  return NextResponse.json(
+    {
+      error:
+        "Direct plan creation was removed in migration 43. Submit a proposal at POST /api/admin/plan-proposals with kind='create' instead. The /admin/plans/new UI handles this for you.",
+    },
+    { status: 410 }
+  );
 }

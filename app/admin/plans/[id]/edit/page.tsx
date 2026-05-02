@@ -15,20 +15,24 @@ import type { Plan } from "@/lib/types";
 /**
  * /admin/plans/[id]/edit
  *
- * Edit a SKU in place. Post-migration-30 there's no draft/submit/approve
- * workflow — the catalogue is flat and edits are immediate. The page is
- * deliberately simple:
- *   - one form
- *   - one Save button (writes the change live)
- *   - one Delete button (only allowed if no subs point at this SKU)
+ * Submit changes to a SKU as a proposal. Post-migration-43, no edit lands
+ * on the live `plans` table directly — every change goes through the
+ * proposal-review-approve flow at /admin/plans/queue.
  *
- * Saving applies right away:
- *   - new signups + renewals see the new price
- *   - existing subscribers keep their locked price till expires_at
- *   - existing subscribers see the new features immediately (live)
+ * Page behaviour:
+ *   - On load, checks for an existing OPEN edit-proposal targeting this
+ *     plan. If one exists, redirects to /admin/plans/queue/[proposal-id]
+ *     (only one open edit per target — DB unique index enforces this).
+ *   - The form is the same as before; the Save button now creates a
+ *     proposal and redirects to the queue detail page where it can be
+ *     reviewed (and self-approved in bootstrap mode).
+ *   - Delete is unchanged — it still hits DELETE /api/admin/plans/[id]
+ *     because deleting a SKU is rare and refused if subscribers exist.
+ *     If you want delete to flow through the proposal queue too, that's
+ *     a follow-up.
  *
- * The "active subscriber count" is shown so the admin sees blast-radius
- * before saving.
+ * The "active subscriber count" warning is preserved so the admin sees
+ * blast-radius before submitting their proposal.
  */
 
 type PageProps = { params: Promise<{ id: string }> };
@@ -65,9 +69,27 @@ export default function EditPlanPage(props: PageProps) {
       const sb = supabaseBrowser();
       const { data: { session } } = await sb.auth.getSession();
       if (!session) throw new Error("Not signed in.");
-      const r = await fetch(`/api/admin/plans/${id}`, {
-        headers: { Authorization: `Bearer ${session.access_token}` },
-      });
+      const headers = { Authorization: `Bearer ${session.access_token}` };
+
+      // First — check whether an OPEN edit-proposal already targets this
+      // plan. Only one is allowed at a time (DB unique index
+      // `proposals_one_open_edit_per_target`); if someone else (or you
+      // earlier) already drafted edits for this SKU, reuse that draft
+      // rather than collide.
+      const rOpen = await fetch("/api/admin/plan-proposals?status=open", { headers });
+      const jOpen = await rOpen.json();
+      if (rOpen.ok) {
+        const existing = (jOpen.proposals || []).find(
+          (p: { kind: string; target_plan_id: string | null }) =>
+            p.kind === "edit" && p.target_plan_id === id,
+        );
+        if (existing) {
+          router.replace(`/admin/plans/queue/${existing.id}`);
+          return;
+        }
+      }
+
+      const r = await fetch(`/api/admin/plans/${id}`, { headers });
       const j = await r.json();
       if (!r.ok) throw new Error(j?.error || "Could not load plan.");
       const p: Plan = j.plan;
@@ -83,9 +105,7 @@ export default function EditPlanPage(props: PageProps) {
       setMaxStudents(p.max_students ?? null);
 
       // Get subscriber count from the list endpoint (cheap; cached).
-      const r2 = await fetch("/api/admin/plans", {
-        headers: { Authorization: `Bearer ${session.access_token}` },
-      });
+      const r2 = await fetch("/api/admin/plans", { headers });
       const j2 = await r2.json();
       if (r2.ok) {
         const me = (j2.plans || []).find((x: { id: string; active_subscriber_count?: number }) => x.id === id);
@@ -118,37 +138,53 @@ export default function EditPlanPage(props: PageProps) {
     setSaving(true);
     setErr(null);
     try {
+      if (!plan) throw new Error("Plan not loaded.");
       const sb = supabaseBrowser();
       const { data: { session } } = await sb.auth.getSession();
       if (!session) throw new Error("Not signed in.");
-      const body: Record<string, unknown> = {
+
+      // Build a complete proposal payload. The proposals API expects every
+      // editable field — slug + tier are required by validation but we
+      // pass the live plan's values since they're immutable on edit.
+      const proposed = {
+        slug: plan.slug,
+        tier: plan.tier,
         label,
-        blurb,
+        blurb: blurb || null,
+        feature_summary: plan.feature_summary || [],
         price_paise: pricePaise,
+        currency: plan.currency,
         period_days: periodDays,
         features: Array.from(features),
         pricing_model: pricingModel,
+        per_student_price_paise: pricingModel === "per_student"
+          ? Math.round(perStudentRupees * 100)
+          : (plan.per_student_price_paise || 0),
+        min_students: pricingModel === "per_student" ? minStudents : (plan.min_students || 0),
+        max_students: pricingModel === "per_student" ? maxStudents : (plan.max_students ?? null),
+        razorpay_plan_id: plan.razorpay_plan_id ?? null,
       };
-      if (pricingModel === "per_student") {
-        body.per_student_price_paise = Math.round(perStudentRupees * 100);
-        body.min_students = minStudents;
-        body.max_students = maxStudents;
-      }
-      const r = await fetch(`/api/admin/plans/${id}`, {
-        method: "PUT",
+
+      const r = await fetch("/api/admin/plan-proposals", {
+        method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${session.access_token}`,
         },
-        body: JSON.stringify(body),
+        body: JSON.stringify({
+          kind: "edit",
+          target_plan_id: id,
+          proposed,
+        }),
       });
       const j = await r.json();
-      if (!r.ok) throw new Error(j?.error || "Save failed.");
-      setSavedAt(new Date().toLocaleTimeString());
-      setTimeout(() => setSavedAt(null), 3000);
+      if (!r.ok) throw new Error(j?.error || "Could not submit proposal.");
+
+      // Land on the proposal detail page so the user can review the diff
+      // and (in bootstrap mode) self-approve.
+      router.push(`/admin/plans/queue/${j.proposal.id}`);
     } catch (e) {
-      setErr(e instanceof Error ? e.message : "Save failed.");
-    } finally {
+      setErr(e instanceof Error ? e.message : "Submit failed.");
       setSaving(false);
     }
   }
@@ -417,8 +453,15 @@ export default function EditPlanPage(props: PageProps) {
           disabled={saving}
           className="btn btn-primary"
         >
-          {saving ? <><span className="spinner" /> Saving…</> : <><Save size={14} /> Save changes</>}
+          {saving ? (
+            <><span className="spinner" /> Submitting…</>
+          ) : (
+            <><Save size={14} /> Submit for review</>
+          )}
         </button>
+        <span className="text-xs muted">
+          Creates a draft proposal — review &amp; approve from the queue.
+        </span>
         {savedAt && (
           <span className="inline-flex items-center gap-1 text-xs" style={{ color: "var(--color-success)" }}>
             <CheckCircle2 size={14} /> Saved at {savedAt}

@@ -3,29 +3,28 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { supabaseBrowser } from "@/lib/supabase/client";
-import { Layers, Users, AlertCircle, CheckCircle2, Pencil } from "lucide-react";
+import { Layers, Users, AlertCircle, CheckCircle2, Pencil, GitBranch, Copy } from "lucide-react";
 import type { Plan } from "@/lib/types";
 import { FEATURES_BY_KEY } from "@/lib/features";
 
 /**
  * /admin/plans
  *
- * Flat catalogue of every SKU. Post-migration-30 there are exactly as
- * many rows as there are products you sell — no versions, no drafts,
- * no archived snapshots. The seeded set is 8: Free + Premium Monthly /
- * Annual + Premium Plus Monthly / Annual + 3 school tiers.
+ * Flat catalogue of every live SKU (status='active'). Post-migration-43,
+ * every change goes through the proposal queue at /admin/plans/queue.
  *
- * Click any card → /admin/plans/[id]/edit, where you change price /
- * features / blurb in place. Saving immediately:
- *   - shows the new price + features at /pricing for new signups
- *   - gives existing subscribers the new features (live, no migration)
- *   - keeps existing subscribers' price locked at what they paid for
- *     this term (subscriptions.price_paid_paise stays put till renewal)
+ *   - Card click → /admin/plans/[id]/edit, which builds a kind='edit'
+ *     proposal and routes the user to the queue detail page.
+ *   - Each card has a "Clone" affordance → /admin/plans/new?clone=<id>
+ *     to model a new variant (e.g., Monthly → Quarterly).
+ *   - "+ New SKU" creates from scratch.
+ *   - "View queue" surfaces pending proposals with a count badge.
  *
- * If you ever genuinely need a brand-new SKU (e.g., adding a Quarterly
- * billing period), use the "+ New SKU" button — but the bar is high.
- * Most "I want to change something" cases are EDITS to the 8 stable
- * rows, not new ones.
+ * Existing-subscriber semantics (unchanged from the edit-in-place era,
+ * still apply once a proposal is approved):
+ *   - new signups + renewals see the new price + features
+ *   - existing subscribers keep their locked price till expires_at
+ *   - existing subscribers see the new features (live, no migration)
  */
 
 type PlanRow = Plan & { active_subscriber_count: number };
@@ -56,6 +55,7 @@ const TIER_ORDER = ["free", "premium", "premium_plus", "school_pilot", "school_s
 
 export default function PlansPage() {
   const [plans, setPlans] = useState<PlanRow[]>([]);
+  const [openProposalCount, setOpenProposalCount] = useState<number>(0);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
@@ -65,12 +65,20 @@ export default function PlansPage() {
         const sb = supabaseBrowser();
         const { data: { session } } = await sb.auth.getSession();
         if (!session) throw new Error("Not signed in.");
-        const r = await fetch("/api/admin/plans", {
-          headers: { Authorization: `Bearer ${session.access_token}` },
-        });
+        const headers = { Authorization: `Bearer ${session.access_token}` };
+
+        const [r, rOpen] = await Promise.all([
+          fetch("/api/admin/plans", { headers }),
+          fetch("/api/admin/plan-proposals?status=open", { headers }),
+        ]);
         const j = await r.json();
         if (!r.ok) throw new Error(j?.error || "Could not load plans.");
         setPlans(j.plans || []);
+
+        if (rOpen.ok) {
+          const jOpen = await rOpen.json();
+          setOpenProposalCount((jOpen.proposals || []).length);
+        }
       } catch (e) {
         setErr(e instanceof Error ? e.message : "Could not load plans.");
       } finally {
@@ -90,13 +98,28 @@ export default function PlansPage() {
     <div className="fade-in">
       <div className="flex items-start justify-between gap-3 flex-wrap mb-1">
         <h1 className="h1 flex items-center gap-2"><Layers size={28} /> Plan catalogue</h1>
-        <Link href="/admin/plans/new" className="btn btn-secondary text-sm">+ New SKU</Link>
+        <div className="flex items-center gap-2 flex-wrap">
+          <Link
+            href="/admin/plans/queue"
+            className="btn btn-secondary text-sm inline-flex items-center gap-2"
+          >
+            <GitBranch size={14} /> View queue
+            {openProposalCount > 0 && (
+              <span
+                className="text-[10px] font-bold rounded-full px-1.5 py-0.5"
+                style={{ background: "var(--brand-600)", color: "white" }}
+              >
+                {openProposalCount}
+              </span>
+            )}
+          </Link>
+          <Link href="/admin/plans/new" className="btn btn-secondary text-sm">+ New SKU</Link>
+        </div>
       </div>
       <p className="muted text-sm mb-6 max-w-2xl">
-        These are the SKUs you sell. <strong>Edit in place</strong> — saving updates
-        the price + features immediately. Existing subscribers keep their{" "}
-        <em>price</em> locked till their term renews, but they get any new{" "}
-        <em>features</em> live.
+        These are the live SKUs you sell. Every change — edit, clone, or new SKU — flows through
+        the <Link href="/admin/plans/queue" className="font-semibold underline">proposal queue</Link>{" "}
+        for two-eyes review before it lands.
       </p>
 
       {loading ? (
@@ -124,18 +147,36 @@ export default function PlansPage() {
                 </header>
                 <div className="grid lg:grid-cols-2 gap-3">
                   {g.plans.map((p) => (
-                    <Link
+                    <div
                       key={p.id}
-                      href={`/admin/plans/${p.id}/edit`}
-                      className="card card-hover block"
+                      className="card card-hover relative"
                     >
-                      <header className="flex items-start justify-between gap-3 flex-wrap">
+                      {/* Stretched-link for the "propose change" action.
+                          The Clone button below uses stopPropagation to
+                          escape this overlay. */}
+                      <Link
+                        href={`/admin/plans/${p.id}/edit`}
+                        className="absolute inset-0 rounded-lg z-0"
+                        aria-label={`Propose changes to ${p.label}`}
+                      />
+                      <header className="flex items-start justify-between gap-3 flex-wrap relative z-10">
                         <div>
                           <div className="text-[11px] muted font-mono">{p.slug}</div>
                           <div className="text-lg font-bold">{p.label}</div>
                           {p.blurb && <div className="text-xs muted mt-0.5">{p.blurb}</div>}
                         </div>
-                        <Pencil size={14} className="muted shrink-0 mt-1" />
+                        <div className="flex items-center gap-1 shrink-0">
+                          <Link
+                            href={`/admin/plans/new?clone=${p.id}`}
+                            onClick={(e) => e.stopPropagation()}
+                            className="text-xs font-semibold px-2 py-1 rounded inline-flex items-center gap-1 relative z-10"
+                            style={{ color: "var(--brand-700)", background: "var(--color-bg-soft)", border: "1px solid var(--color-border)" }}
+                            title="Clone this SKU as a starting point for a new variant"
+                          >
+                            <Copy size={11} /> Clone
+                          </Link>
+                          <Pencil size={14} className="muted" />
+                        </div>
                       </header>
 
                       <div className="flex items-baseline gap-2 mt-3">
@@ -158,7 +199,7 @@ export default function PlansPage() {
                       </div>
 
                       <details
-                        className="mt-4 group"
+                        className="mt-4 group relative z-10"
                         onClick={(e) => e.stopPropagation()}
                       >
                         <summary className="cursor-pointer text-xs font-semibold" style={{ color: "var(--color-fg-soft)" }}>
@@ -186,7 +227,7 @@ export default function PlansPage() {
                           {p.features.length === 0 && <li className="muted">No features.</li>}
                         </ul>
                       </details>
-                    </Link>
+                    </div>
                   ))}
                 </div>
               </section>

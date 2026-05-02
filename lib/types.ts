@@ -160,7 +160,8 @@ export type QuizAssignment = {
 };
 
 // =====================================================================
-// Plan-Admin types — see migration 25 + lib/features.ts.
+// Plan-Admin types — see migration 25 (initial), migration 32 (workflow
+// columns restored), and migration 43 (proposal-workflow side table).
 // =====================================================================
 
 export type PlanTier =
@@ -173,16 +174,31 @@ export type PlanTier =
 
 export type PlanPricingModel = "fixed" | "per_student";
 
+/** Plan lifecycle on the live `plans` table. Post-migration-43 only `active`
+ *  rows live in `plans` — drafts and pending reviews are held in
+ *  `plan_change_proposals`. The `pending_review` and `draft` values are
+ *  retained in the DB CHECK for legacy compatibility but the API never
+ *  writes them on `plans`. */
+export type PlanStatus = "draft" | "pending_review" | "active" | "archived";
+
 /**
- * A SKU in the catalogue. Post-migration-30 these are stable rows that
- * the platform admin edits IN PLACE — there's no draft/active workflow,
- * no version history, no audit log. The seeded set is 8 (Free + Premium
- * Monthly/Annual + Premium Plus Monthly/Annual + 3 school tiers).
+ * A SKU in the catalogue. Post-migration-43 every row is a live, purchasable
+ * SKU (status='active'). Drafts and approval workflow live in
+ * `plan_change_proposals`; on approval those are flattened into INSERT (for
+ * kind='create') or UPDATE (for kind='edit') against this table.
  *
- * When you edit a plan:
- *   - new signups + renewals see the new price + features
- *   - existing subscribers keep their locked price (subscriptions.price_paid_paise)
- *     until expires_at, but get the new features live
+ * When a proposal is approved:
+ *   - new signups + renewals see the new price + features immediately
+ *   - existing subscribers keep their locked price
+ *     (`subscriptions.price_paid_paise`) until `expires_at`, but get any
+ *     new features live
+ *
+ * Audit columns (`created_by`, `approved_by`, `approved_at`,
+ * `effective_from`, `effective_to`) are stamped from the approving
+ * proposal. In bootstrap mode (single platform admin), `approved_by` is
+ * NULL on the row — the proposal record carries the actual approver
+ * identity, since the `plans_two_eyes` CHECK forbids
+ * `approved_by = created_by` at the row level.
  */
 export type Plan = {
   id: string;
@@ -207,5 +223,81 @@ export type Plan = {
   per_student_price_paise: number;
   min_students: number;
   max_students: number | null;
+  // ---- Workflow / audit columns (migration 32 + 43) ----
+  status: PlanStatus;
+  created_by: string | null;
+  approved_by: string | null;          // null in bootstrap mode
+  approved_at: string | null;          // null in bootstrap mode
+  effective_from: string | null;
+  effective_to: string | null;
+  // ---- Razorpay sync (migration 43) ----
+  // Null until the deferred Razorpay-sync work lands. Null SKUs are
+  // admin-visible but not purchasable.
+  razorpay_plan_id: string | null;
+};
+
+// =====================================================================
+// Plan change proposals — migration 43.
+// =====================================================================
+
+/** 'edit' modifies an existing live plan; 'create' mints a new SKU. */
+export type PlanProposalKind = "edit" | "create";
+
+/** Lifecycle of a proposal. `open` is the only mutable state — once the
+ *  proposal lands in `approved`, `rejected`, or `withdrawn` it's frozen as
+ *  the audit record. */
+export type PlanProposalStatus = "open" | "approved" | "rejected" | "withdrawn";
+
+/** The proposal's `proposed` JSONB payload. Mirrors `Plan` minus the
+ *  identity / audit / timestamp fields (those are stamped at apply-time on
+ *  the live row, not chosen by the proposer). */
+export type PlanProposalPayload = {
+  // Identity for kind='create'; ignored for kind='edit' (slug is immutable
+  // post-creation, matches existing PUT route's behavior).
+  slug?: string;
+  tier?: PlanTier;
+  // Editable everywhere.
+  label: string;
+  blurb: string | null;
+  feature_summary: string[];
+  price_paise: number;
+  currency: string;
+  period_days: number;
+  features: string[];
+  pricing_model: PlanPricingModel;
+  per_student_price_paise: number;
+  min_students: number;
+  max_students: number | null;
+  // Optional — only set when an admin pasted in a Razorpay plan id during
+  // edit/create. Until the deferred Razorpay-sync work lands, this is
+  // typically null.
+  razorpay_plan_id?: string | null;
+};
+
+export type PlanChangeProposal = {
+  id: string;
+  kind: PlanProposalKind;
+  // Live plan being edited (kind='edit') or null (kind='create').
+  target_plan_id: string | null;
+  // Template the proposer cloned from. Informational only.
+  parent_plan_id: string | null;
+  proposed: PlanProposalPayload;
+  // Snapshot of `proposed` as the creator submitted it. Set only when the
+  // approver edited the payload before approving (in which case `proposed`
+  // is the approver's final version).
+  proposed_at_submit: PlanProposalPayload | null;
+  status: PlanProposalStatus;
+  created_by: string;
+  created_at: string;
+  approved_by: string | null;
+  approved_at: string | null;
+  approved_with_edits: boolean;
+  // True when self-approval was permitted because exactly one platform
+  // admin existed at approval time.
+  bootstrap_self_approve: boolean;
+  rejected_by: string | null;
+  rejected_at: string | null;
+  rejection_reason: string | null;
+  withdrawn_at: string | null;
 };
 

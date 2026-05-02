@@ -7,7 +7,7 @@ import { toast } from "@/lib/toast";
 import type { Question, Quiz } from "@/lib/types";
 import BloomBadge from "@/components/BloomBadge";
 import { formatSeconds } from "@/lib/utils";
-import { ChevronLeft, ChevronRight, AlarmClock } from "lucide-react";
+import { ChevronLeft, ChevronRight, AlarmClock, Clock, Play, AlertCircle } from "lucide-react";
 
 export default function TakeQuiz() {
   const router = useRouter();
@@ -23,13 +23,25 @@ export default function TakeQuiz() {
   const startedAtRef = useRef<number>(Date.now());
   const submittingRef = useRef(false);
 
-  // Per-question timing — gated by student consent. trackTime is the
-  // resolved opt-in state; null while we're still loading the profile,
-  // false until the student says yes (default-deny). showConsent flips
-  // true exactly once for students who haven't been asked yet.
-  const [trackTime, setTrackTime] = useState<boolean | null>(null);
-  const [showConsent, setShowConsent] = useState(false);
-  const [savingConsent, setSavingConsent] = useState(false);
+  // Per-question timing — gated by per-attempt opt-in. The student picks
+  // it on the pre-test screen via a checkbox; we used to ask via a
+  // mid-quiz modal but moved to a pre-test checkbox so the question is
+  // answered BEFORE the timer starts and is visible per-attempt rather
+  // than once-forever.
+  //
+  // trackTime is the LOCKED-IN state for this attempt — set when the
+  // student clicks "Begin test". trackTimeChoice is the live checkbox
+  // state on the pre-test screen, pre-filled from profile.
+  const [trackTime, setTrackTime] = useState<boolean>(false);
+  const [trackTimeChoice, setTrackTimeChoice] = useState<boolean>(false);
+
+  // Pre-test gating — `started` flips true only when the student clicks
+  // "Begin test" (or when we resume an in-progress attempt found in DB).
+  // Until then, the pre-test screen renders, no attempt row is created,
+  // and the timer is paused.
+  const [quizLoaded, setQuizLoaded] = useState(false);
+  const [started, setStarted] = useState(false);
+  const [beginning, setBeginning] = useState(false);
 
   // Per-question timing accumulators. We sum ms across ALL visits to a
   // question (back-button revisits count) so the final number reflects
@@ -58,7 +70,11 @@ export default function TakeQuiz() {
     currentQStartRef.current = null;
   }, []);
 
-  // Load quiz + questions + create attempt (runs ONCE per code)
+  // Load quiz + questions + check for existing in-progress attempt.
+  // Does NOT create a new attempt — that's deferred to the Begin button
+  // so the per-attempt timer doesn't start clocking the moment the page
+  // loads (a student who closes the tab without starting shouldn't burn
+  // a daily attempt slot or have a mismatched started_at).
   useEffect(() => {
     (async () => {
       const sb = supabaseBrowser();
@@ -90,27 +106,22 @@ export default function TakeQuiz() {
       }
       setQuestions(qs);
 
-      // Resolve the student's consent for per-question time tracking.
-      // null  → never asked → show one-time modal, default to NOT tracking
-      //         until they answer.
-      // true  → opted in.
-      // false → opted out (and we respect that — no nag, no modal).
+      // Pre-fill the pre-test checkbox from the student's profile default.
+      // NULL (never asked) and FALSE both default the checkbox to OFF;
+      // TRUE pre-checks it. The student can flip it for THIS attempt
+      // without affecting future attempts unless they keep it flipped.
       const { data: prof } = await sb
         .from("profiles")
         .select("track_question_time")
         .eq("id", user.id)
         .maybeSingle();
-      const consent = (prof as { track_question_time: boolean | null } | null)?.track_question_time;
-      if (consent === true) {
-        setTrackTime(true);
-      } else if (consent === false) {
-        setTrackTime(false);
-      } else {
-        setTrackTime(false);    // default-deny until answered
-        setShowConsent(true);   // ask once
-      }
+      const profileDefault = (prof as { track_question_time: boolean | null } | null)?.track_question_time;
+      setTrackTimeChoice(profileDefault === true);
 
-      // Reuse most recent unsubmitted attempt or create new
+      // Look for an in-progress attempt. If found → resume immediately
+      // (skip the pre-test screen — they already started; their consent
+      // was locked in at that time). If not → wait for the student to
+      // click Begin.
       const { data: existing } = await sb
         .from("quiz_attempts")
         .select("id, started_at")
@@ -121,28 +132,59 @@ export default function TakeQuiz() {
         .limit(1)
         .maybeSingle();
 
-      let aId: string;
       if (existing) {
-        aId = existing.id;
+        setAttemptId(existing.id);
         startedAtRef.current = new Date(existing.started_at).getTime();
+        setTrackTime(profileDefault === true);
+        const elapsed = Math.floor((Date.now() - startedAtRef.current) / 1000);
+        const total = q.time_limit_minutes * 60;
+        setSecondsLeft(Math.max(0, total - elapsed));
+        setStarted(true);
       } else {
-        const { data: created, error } = await sb
-          .from("quiz_attempts")
-          .insert({ quiz_id: q.id, student_id: user.id, total: qs.length })
-          .select()
-          .single();
-        if (error || !created) { setLoadErr(`Could not start attempt: ${error?.message || "unknown error"}`); return; }
-        aId = created.id;
-        startedAtRef.current = Date.now();
+        // New attempt path — render the pre-test screen.
+        setQuizLoaded(true);
       }
-      setAttemptId(aId);
-
-      const elapsed = Math.floor((Date.now() - startedAtRef.current) / 1000);
-      const total = q.time_limit_minutes * 60;
-      setSecondsLeft(Math.max(0, total - elapsed));
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [code]);
+
+  // Begin the test from the pre-test screen. Persists the checkbox state
+  // to the profile (so it pre-fills correctly next time) AND to local
+  // state for THIS attempt's recording behavior, then creates the
+  // attempt row and flips `started`.
+  const begin = useCallback(async () => {
+    if (!quiz || !questions.length) return;
+    setBeginning(true);
+    setLoadErr(null);
+    try {
+      const sb = supabaseBrowser();
+      const { data: { user } } = await sb.auth.getUser();
+      if (!user) { setLoadErr("Not signed in."); return; }
+
+      // Best-effort save of the default for next time. A failure here is
+      // not fatal — we still apply the choice for this attempt.
+      try {
+        await sb.from("profiles").update({ track_question_time: trackTimeChoice }).eq("id", user.id);
+      } catch { /* ignore */ }
+
+      const { data: created, error } = await sb
+        .from("quiz_attempts")
+        .insert({ quiz_id: quiz.id, student_id: user.id, total: questions.length })
+        .select()
+        .single();
+      if (error || !created) {
+        setLoadErr(`Could not start attempt: ${error?.message || "unknown error"}`);
+        return;
+      }
+      setAttemptId(created.id);
+      startedAtRef.current = Date.now();
+      setSecondsLeft(quiz.time_limit_minutes * 60);
+      setTrackTime(trackTimeChoice);
+      setStarted(true);
+    } finally {
+      setBeginning(false);
+    }
+  }, [quiz, questions, trackTimeChoice]);
 
   const submit = useCallback(async () => {
     if (submittingRef.current || !attemptId || !quiz) return;
@@ -185,24 +227,6 @@ export default function TakeQuiz() {
     toast.success("Quiz submitted successfully.");
     router.replace(`/student/results/${attemptId}`);
   }, [answers, attemptId, questions, quiz, router, flushCurrentQuestionTime, trackTime]);
-
-  // Persist the student's consent answer + apply it locally. Used by both
-  // buttons of the one-time modal. Failure to persist is non-fatal — we
-  // still apply the choice in this session; we'll just ask again next
-  // quiz, which is preferable to blocking them on a network blip.
-  const recordConsent = useCallback(async (allow: boolean) => {
-    setSavingConsent(true);
-    try {
-      const sb = supabaseBrowser();
-      const { data: { user } } = await sb.auth.getUser();
-      if (user) {
-        await sb.from("profiles").update({ track_question_time: allow }).eq("id", user.id);
-      }
-    } catch { /* ignore */ }
-    setTrackTime(allow);
-    setShowConsent(false);
-    setSavingConsent(false);
-  }, []);
 
   // Helper: start the timer for whichever question is currently visible.
   // Wrapped so the visibility-change handler and the idx-change effect
@@ -267,6 +291,80 @@ export default function TakeQuiz() {
       </div>
     );
   }
+
+  // Pre-test screen — rendered when the quiz is loaded but the student
+  // hasn't clicked Begin yet (and we haven't auto-resumed an in-progress
+  // attempt). Hosts the per-question-time-tracking checkbox plus a
+  // summary of what they're about to take. The timer doesn't start
+  // until they click Begin.
+  if (quiz && questions.length > 0 && !started && quizLoaded) {
+    return (
+      <div className="min-h-screen grid place-items-center bg-slate-50 px-4 py-8">
+        <div className="card max-w-md w-full">
+          <div className="text-[11px] uppercase tracking-wide font-bold text-emerald-700">Ready to start</div>
+          <h1 className="text-2xl font-bold mt-1">{quiz.name}</h1>
+          <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
+            <div className="flex items-center gap-2">
+              <Clock size={16} className="muted" />
+              <span><strong>{quiz.time_limit_minutes}</strong> min</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="muted text-xs">●</span>
+              <span><strong>{questions.length}</strong> question{questions.length === 1 ? "" : "s"}</span>
+            </div>
+          </div>
+
+          {/* Per-question time tracking checkbox.
+              Pre-filled from the student's saved default (profile.track_question_time)
+              and saved back on Begin so it pre-fills correctly next time too.
+              The student can flip it for THIS attempt without committing forever. */}
+          <label
+            className="mt-5 p-3 rounded-lg border flex items-start gap-3 cursor-pointer transition"
+            style={{
+              borderColor: trackTimeChoice ? "var(--brand-300, #6ee7b7)" : "var(--color-border, #e2e8f0)",
+              background: trackTimeChoice
+                ? "color-mix(in oklab, var(--brand-100, #d1fae5) 50%, transparent)"
+                : "var(--color-bg-soft, #f8fafc)",
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={trackTimeChoice}
+              onChange={(e) => setTrackTimeChoice(e.target.checked)}
+              className="mt-0.5 shrink-0 w-4 h-4 cursor-pointer"
+            />
+            <div className="text-sm">
+              <div className="font-semibold">Track my time per question</div>
+              <div className="muted text-xs mt-0.5 leading-relaxed">
+                See your pacing for each question after the test. On <strong>Premium Plus</strong>,
+                also see how you compare to other students. Times stay private — comparisons are
+                anonymized aggregates. You can change this any time from Settings.
+              </div>
+            </div>
+          </label>
+
+          <button
+            type="button"
+            className="btn btn-primary w-full mt-5"
+            disabled={beginning}
+            onClick={begin}
+          >
+            {beginning ? (
+              <><span className="spinner" /> Starting…</>
+            ) : (
+              <><Play size={14} /> Begin test</>
+            )}
+          </button>
+
+          <div className="mt-3 text-[11px] muted flex items-start gap-1.5">
+            <AlertCircle size={11} className="mt-0.5 shrink-0" />
+            <span>Once you click Begin, the {quiz.time_limit_minutes}-minute timer starts and cannot be paused.</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (!quiz || !questions.length || !attemptId) {
     return <div className="min-h-screen grid place-items-center"><div className="spinner" /></div>;
   }
@@ -277,43 +375,6 @@ export default function TakeQuiz() {
 
   return (
     <div className="min-h-screen bg-slate-50">
-      {/* One-time consent modal: shown only when the student has never
-          been asked. Both buttons persist their answer to profiles so we
-          don't ask again. Uses position: fixed so it overlays the quiz
-          and prevents accidental clicks on the questions behind. */}
-      {showConsent && (
-        <div className="fixed inset-0 z-50 grid place-items-center bg-slate-900/60 backdrop-blur-sm px-4">
-          <div className="card max-w-md w-full">
-            <h2 className="text-lg font-semibold mb-2">Track your time per question?</h2>
-            <p className="text-sm text-slate-700 leading-relaxed">
-              We can record how many seconds you spend on each question. After the test, you&apos;ll see your
-              own pacing — which questions you flew through and which slowed you down. On{" "}
-              <strong>Premium Plus</strong>, you can also see how your pace compares to other students.
-            </p>
-            <p className="text-xs text-slate-500 mt-2">
-              You can change this any time in Settings. We never share your data with other students —
-              comparisons are anonymized aggregates.
-            </p>
-            <div className="mt-4 flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
-              <button
-                className="btn btn-secondary"
-                onClick={() => recordConsent(false)}
-                disabled={savingConsent}
-              >
-                Not now
-              </button>
-              <button
-                className="btn btn-primary"
-                onClick={() => recordConsent(true)}
-                disabled={savingConsent}
-              >
-                Yes, track my time
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Top bar */}
       <header className="sticky top-0 bg-white border-b border-slate-200 z-10">
         <div className="max-w-3xl mx-auto px-6 py-4 flex items-center justify-between">

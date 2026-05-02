@@ -60,3 +60,5 @@ APIKey.txt
 
 # investor / business docs — keep out of source control
 *.docx
+
+.claude/

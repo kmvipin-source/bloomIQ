@@ -63,62 +63,24 @@ export async function GET(req: Request, ctx: RouteContext) {
   }
 }
 
-export async function PUT(req: Request, ctx: RouteContext) {
-  try {
-    const auth = await requireAdmin(req);
-    if ("err" in auth) return auth.err;
-    void auth;
-    const { id } = await ctx.params;
-    const body = await req.json().catch(() => ({}));
-
-    const admin = supabaseAdmin();
-    const { data: existing } = await admin
-      .from("plans")
-      .select("id, slug, label")
-      .eq("id", id)
-      .maybeSingle();
-    if (!existing) return NextResponse.json({ error: "Plan not found" }, { status: 404 });
-
-    // Whitelist editable fields. slug + tier are immutable — they're the
-    // SKU identity. Everything else is freely editable in place.
-    const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
-    if (typeof body.label === "string") updates.label = body.label.trim();
-    if (typeof body.blurb === "string" || body.blurb === null) updates.blurb = body.blurb;
-    if (Array.isArray(body.feature_summary)) updates.feature_summary = body.feature_summary;
-    if (typeof body.price_paise === "number" && body.price_paise >= 0) updates.price_paise = body.price_paise;
-    if (typeof body.currency === "string") updates.currency = body.currency.toUpperCase();
-    if (typeof body.period_days === "number" && body.period_days >= 0) updates.period_days = body.period_days;
-    if (Array.isArray(body.features)) updates.features = body.features;
-    if (body.pricing_model === "fixed" || body.pricing_model === "per_student") {
-      updates.pricing_model = body.pricing_model;
-    }
-    if (typeof body.per_student_price_paise === "number" && body.per_student_price_paise >= 0) {
-      updates.per_student_price_paise = body.per_student_price_paise;
-    }
-    if (typeof body.min_students === "number" && body.min_students >= 0) {
-      updates.min_students = body.min_students;
-    }
-    if (typeof body.max_students === "number" && body.max_students > 0) {
-      updates.max_students = body.max_students;
-    } else if (body.max_students === null) {
-      updates.max_students = null;
-    }
-
-    const { error: updErr, data: updated } = await admin
-      .from("plans")
-      .update(updates)
-      .eq("id", id)
-      .select()
-      .single();
-    if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 });
-
-    return NextResponse.json({ ok: true, plan: updated });
-  } catch (e) {
-    return NextResponse.json(
-      { error: e instanceof Error ? e.message : "Update failed" },
-      { status: 500 }
-    );
-  }
+/**
+ * PUT — DEPRECATED in migration 43.
+ *
+ * Direct in-place edits no longer happen here. Every plan change is born
+ * as a kind='edit' proposal at /api/admin/plan-proposals; on approval the
+ * proposal is flattened into an UPDATE here by the approve route's
+ * service-role client.
+ *
+ * Returns 410 Gone so any straggler client surfaces the change loudly.
+ */
+export async function PUT() {
+  return NextResponse.json(
+    {
+      error:
+        "Direct plan edits were removed in migration 43. Submit a proposal at POST /api/admin/plan-proposals with kind='edit' instead. The /admin/plans/[id]/edit UI handles this for you.",
+    },
+    { status: 410 }
+  );
 }
 
 export async function DELETE(req: Request, ctx: RouteContext) {
