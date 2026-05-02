@@ -267,15 +267,8 @@ export default function LoginPage() {
       }
       if (!allowed) {
         try { await sb.auth.signOut(); } catch { /* ignore */ }
-        const correctTab =
-          isPlatformAdmin ? "Admin Head (Principal)"
-          : role === "super_teacher" ? "Admin Head (Principal)"
-          : role === "teacher" ? "Teacher"
-          : role === "student" && isSchoolStudent ? "Student → School student"
-          : role === "student" ? "Student → Independent"
-          : "the correct tab";
         throw new Error(
-          `This account isn't a ${expectedTabLabel} account. Please sign in via "${correctTab}".`
+          `This sign-in is for ${expectedTabLabel} only. Other role logins are not accepted here.`
         );
       }
 
