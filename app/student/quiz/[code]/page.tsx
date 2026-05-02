@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { supabaseBrowser } from "@/lib/supabase/client";
+import { toast } from "@/lib/toast";
 import type { Question, Quiz } from "@/lib/types";
 import BloomBadge from "@/components/BloomBadge";
 import { formatSeconds } from "@/lib/utils";
@@ -181,6 +182,7 @@ export default function TakeQuiz() {
       total: questions.length,
       time_taken_seconds: seconds,
     }).eq("id", attemptId);
+    toast.success("Quiz submitted successfully.");
     router.replace(`/student/results/${attemptId}`);
   }, [answers, attemptId, questions, quiz, router, flushCurrentQuestionTime, trackTime]);
 

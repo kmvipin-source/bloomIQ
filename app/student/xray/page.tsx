@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabaseBrowser } from "@/lib/supabase/client";
+import { toast } from "@/lib/toast";
 import { BLOOM_LEVELS, BLOOM_META, type BloomLevel } from "@/lib/bloom";
 import {
   ScanSearch, ImageIcon, FileText, ArrowLeft, Loader2, Sparkles, History, ArrowRight,
@@ -68,6 +69,7 @@ export default function XrayPage() {
     const reader = new FileReader();
     reader.onload = () => setImageDataUrl(String(reader.result || ""));
     reader.readAsDataURL(f);
+    toast.success(`Past paper uploaded — ${f.name}`);
   }
 
   async function analyze() {
@@ -90,9 +92,12 @@ export default function XrayPage() {
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j?.error || "X-Ray failed");
+      toast.success("X-Ray analysis complete.");
       router.push(`/student/xray/${j.xray_id}`);
     } catch (e) {
-      setErr(e instanceof Error ? e.message : "X-Ray failed");
+      const msg = e instanceof Error ? e.message : "X-Ray failed";
+      setErr(msg);
+      toast.error(msg);
     } finally {
       setBusy(false);
     }

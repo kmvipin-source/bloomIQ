@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 /**
  * GET /api/pricing/active-plans
@@ -45,7 +47,10 @@ export async function GET() {
       return a.period_days - b.period_days;
     });
 
-    return NextResponse.json({ ok: true, plans: sorted });
+    return NextResponse.json(
+      { ok: true, plans: sorted },
+      { headers: { "Cache-Control": "no-store, max-age=0" } }
+    );
   } catch (e) {
     return NextResponse.json(
       { error: e instanceof Error ? e.message : "Failed" },

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { supabaseBrowser } from "@/lib/supabase/client";
+import { toast } from "@/lib/toast";
 import { Users, X, Download, Printer, Loader2, CheckCircle2, AlertTriangle, XCircle, RefreshCw, Copy } from "lucide-react";
 
 type PreviewMatch = {
@@ -169,14 +170,19 @@ export default function BulkAddStudents({
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
-      setOutcomes((j.outcomes as Outcome[]) || []);
+      const outcomes = (j.outcomes as Outcome[]) || [];
+      setOutcomes(outcomes);
       setStage("results");
+      const created = outcomes.filter((o) => o.status === "created").length;
+      toast.success(`${created} student${created === 1 ? "" : "s"} added successfully.`);
       // NOTE: do NOT call onCreated() here. The parent's load() flips a
       // loading flag that re-renders the page as a spinner, which unmounts
       // THIS dialog mid-flow and wipes the credential download buttons.
       // We defer the parent reload until the user clicks Done in results.
     } catch (e) {
-      setErr(e instanceof Error ? e.message : "Create failed");
+      const msg = e instanceof Error ? e.message : "Create failed";
+      setErr(msg);
+      toast.error(msg);
     } finally {
       setBusy(false);
     }

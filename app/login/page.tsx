@@ -236,10 +236,50 @@ export default function LoginPage() {
 
       const { data: prof } = await sb
         .from("profiles")
-        .select("is_school_student")
+        .select("role, is_school_student, platform_admin")
         .eq("id", user.id)
         .single();
-      const skipMfa = !!prof?.is_school_student;
+
+      // ===== Role-tab gate =====
+      // Each tab only authenticates accounts of its own role. The Admin
+      // Head tab additionally accepts platform_admin so a single ops
+      // login surface works for both school principals AND BloomIQ staff.
+      const role = prof?.role || "";
+      const isSchoolStudent = !!prof?.is_school_student;
+      const isPlatformAdmin = !!prof?.platform_admin;
+      let allowed = false;
+      let expectedTabLabel = "";
+      if (roleTab === "student" && studentMode === "independent") {
+        allowed = role === "student" && !isSchoolStudent;
+        expectedTabLabel = "Student → Independent";
+      } else if (roleTab === "student" && studentMode === "school") {
+        allowed = role === "student" && isSchoolStudent;
+        expectedTabLabel = "Student → School student";
+      } else if (roleTab === "teacher") {
+        allowed = role === "teacher";
+        expectedTabLabel = "Teacher";
+      } else if (roleTab === "school") {
+        allowed = role === "super_teacher" || isPlatformAdmin;
+        expectedTabLabel = "Admin Head (Principal)";
+      } else if (roleTab === "platform") {
+        allowed = isPlatformAdmin;
+        expectedTabLabel = "Platform Admin";
+      }
+      if (!allowed) {
+        try { await sb.auth.signOut(); } catch { /* ignore */ }
+        const correctTab =
+          isPlatformAdmin ? "Admin Head (Principal)"
+          : role === "super_teacher" ? "Admin Head (Principal)"
+          : role === "teacher" ? "Teacher"
+          : role === "student" && isSchoolStudent ? "Student → School student"
+          : role === "student" ? "Student → Independent"
+          : "the correct tab";
+        throw new Error(
+          `This account isn't a ${expectedTabLabel} account. Please sign in via "${correctTab}".`
+        );
+      }
+
+      const skipMfa = isSchoolStudent;
 
       if (!skipMfa) {
         try {
@@ -334,6 +374,7 @@ export default function LoginPage() {
                   type="button"
                   role="tab"
                   aria-selected={active}
+                  suppressHydrationWarning
                   onClick={() => setRoleTab(k)}
                   className="inline-flex flex-col items-center justify-center gap-1 text-[11px] sm:text-xs font-semibold py-2.5 px-2 rounded-lg transition whitespace-nowrap"
                   style={{
@@ -367,6 +408,7 @@ export default function LoginPage() {
                     type="button"
                     role="radio"
                     aria-checked={active}
+                    suppressHydrationWarning
                     onClick={() => setStudentMode(m)}
                     className="px-3 py-1.5 rounded-full transition"
                     style={{

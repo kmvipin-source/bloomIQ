@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { supabaseBrowser } from "@/lib/supabase/client";
+import { toast } from "@/lib/toast";
 import {
   ArrowLeft, Sparkles, Plus, Trash2, FileText, Tag, GraduationCap,
   Image as ImageIcon, ScrollText,
@@ -136,12 +137,13 @@ export default function NewPaperPage() {
     setImageFile(null);
     setImagePreview(null);
     if (!f) return;
-    if (f.size > MAX_IMAGE_BYTES) { setErr("Image > 6 MB. Pick a smaller one."); return; }
+    if (f.size > MAX_IMAGE_BYTES) { setErr("Image > 6 MB. Pick a smaller one."); toast.error("Image > 6 MB."); return; }
     setErr(null);
     setImageFile(f);
     const r = new FileReader();
     r.onload = () => setImagePreview(r.result as string);
     r.readAsDataURL(f);
+    toast.success(`Image uploaded — ${f.name}`);
   }
 
   async function generate() {
@@ -181,9 +183,12 @@ export default function NewPaperPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Generation failed");
+      toast.success("Paper generated successfully.");
       router.push(`/teacher/papers/${data.paperId}`);
     } catch (e) {
-      setErr(e instanceof Error ? e.message : "Failed");
+      const msg = e instanceof Error ? e.message : "Failed";
+      setErr(msg);
+      toast.error(msg);
     } finally {
       setBusy(false);
     }

@@ -3,6 +3,9 @@ import { Inter } from "next/font/google";
 import "./globals.css";
 import PWARegister from "@/components/PWARegister";
 import AuthHealer from "@/components/AuthHealer";
+import TwoFactorNudge from "@/components/TwoFactorNudge";
+import TierUpsellNudge from "@/components/TierUpsellNudge";
+import Toaster from "@/components/Toaster";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { THEME_INIT_SCRIPT } from "@/lib/theme";
 
@@ -60,6 +63,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <ThemeProvider>
           <AuthHealer />
           {children}
+          <TwoFactorNudge />
+          <TierUpsellNudge />
+          <Toaster />
           <PWARegister />
         </ThemeProvider>
       </body>
