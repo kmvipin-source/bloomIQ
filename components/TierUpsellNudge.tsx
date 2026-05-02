@@ -11,15 +11,22 @@ const DASHBOARD_PREFIXES = ["/student", "/teacher", "/school", "/admin", "/paren
 
 // Hierarchy lives client-side so the component can decide what to show
 // without an extra round-trip. Add a slug here when a new plan ships.
+//
+// Individual ladder ends at premium_annual — premium_plus_* are positioned
+// as a separate add-on tier in marketing, not the next step on the
+// price-up path, so they aren't pitched via this nudge.
 const INDIVIDUAL_LADDER = [
   null,                   // unsubscribed / free
   "free",
   "premium_monthly",
-  "premium_quarterly",    // shown if you happened to have it; rare
+  "premium_quarterly",
+  "premium_annual",       // top of the upsell ladder — no nudge beyond here
+];
+const INDIVIDUAL_TOP_TIER_SLUGS = new Set([
   "premium_annual",
   "premium_plus_monthly",
-  "premium_plus_annual",  // top — no nudge
-];
+  "premium_plus_annual",
+]);
 const SCHOOL_LADDER = [
   "school_pilot",
   "school_standard",
@@ -41,6 +48,7 @@ export default function TierUpsellNudge() {
   const pathname = usePathname() || "";
   const [next, setNext] = useState<Plan | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
+  const [sessionFp, setSessionFp] = useState<string | null>(null);
 
   const onDashboard = DASHBOARD_PREFIXES.some((p) => pathname === p || pathname.startsWith(p + "/"));
 
@@ -50,7 +58,8 @@ export default function TierUpsellNudge() {
     (async () => {
       try {
         const sb = supabaseBrowser();
-        const { data: { user } } = await sb.auth.getUser();
+        const { data: { session } } = await sb.auth.getSession();
+        const user = session?.user;
         if (!user || cancelled) return;
 
         const { data: prof } = await sb
@@ -64,10 +73,14 @@ export default function TierUpsellNudge() {
         if (prof.is_school_student) return;
         if (prof.role === "teacher") return; // regular teachers — only super_teacher gets school upsell
 
-        // Once-per-day cap.
-        const dayKey = `bloomiq_upsell_last_${user.id}`;
-        const today = new Date().toISOString().slice(0, 10);
-        if (localStorage.getItem(dayKey) === today) return;
+        // Once-per-login cap. Use the access-token's expires_at as a
+        // session fingerprint — it changes on every fresh sign-in, so
+        // logging out + back in re-arms the nudge automatically without a
+        // server-side "last shown" column.
+        const sessionFp = String(session?.expires_at ?? "");
+        if (!sessionFp) return;
+        const fpKey = `bloomiq_upsell_session_${user.id}`;
+        if (localStorage.getItem(fpKey) === sessionFp) return;
 
         // Current plan slug from subscriptions → plans.
         const { data: sub } = await sb
@@ -96,6 +109,8 @@ export default function TierUpsellNudge() {
           if (idx === -1) nextSlug = "school_pilot";
           else if (idx < SCHOOL_LADDER.length - 1) nextSlug = SCHOOL_LADDER[idx + 1];
         } else {
+          // Already at or above the upsell ceiling → no nudge.
+          if (currentSlug && INDIVIDUAL_TOP_TIER_SLUGS.has(currentSlug)) return;
           const idx = INDIVIDUAL_LADDER.indexOf(currentSlug);
           if (idx === -1) nextSlug = "premium_monthly"; // unrecognised → push monthly
           else if (idx < INDIVIDUAL_LADDER.length - 1) nextSlug = INDIVIDUAL_LADDER[idx + 1];
@@ -109,13 +124,14 @@ export default function TierUpsellNudge() {
         if (!plan || cancelled) return;
 
         setUserId(user.id);
+        setSessionFp(sessionFp);
         setNext(plan);
 
         // Auto-dismiss after a short window — long enough to read, short
         // enough not to annoy.
         setTimeout(() => {
           if (cancelled) return;
-          dismissInternal(user.id);
+          dismissInternal(user.id, sessionFp);
         }, AUTO_DISMISS_MS);
       } catch { /* silent */ }
     })();
@@ -124,16 +140,13 @@ export default function TierUpsellNudge() {
 
   if (!onDashboard) return null;
 
-  function dismissInternal(uid: string) {
-    localStorage.setItem(
-      `bloomiq_upsell_last_${uid}`,
-      new Date().toISOString().slice(0, 10),
-    );
+  function dismissInternal(uid: string, fp: string) {
+    localStorage.setItem(`bloomiq_upsell_session_${uid}`, fp);
     setNext(null);
   }
 
   function dismiss() {
-    if (userId) dismissInternal(userId);
+    if (userId && sessionFp) dismissInternal(userId, sessionFp);
     else setNext(null);
   }
 
