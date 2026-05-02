@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import Script from "next/script";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import PWARegister from "@/components/PWARegister";
@@ -55,9 +56,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <head>
         {/* The pre-hydration init script. Must run synchronously before
             paint to set data-theme + data-mode from localStorage and
-            avoid a flash of unthemed content. Inlined as a string to
-            avoid a network roundtrip. */}
-        <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
+            avoid a flash of unthemed content. next/script with
+            beforeInteractive runs before hydration, no React-tree
+            warning. */}
+        <Script id="theme-init" strategy="beforeInteractive">
+          {THEME_INIT_SCRIPT}
+        </Script>
       </head>
       <body suppressHydrationWarning>
         <ThemeProvider>

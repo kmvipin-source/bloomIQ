@@ -245,7 +245,10 @@ export default function LoginPage() {
         allowed = role === "teacher";
         expectedTabLabel = "Teacher";
       } else if (roleTab === "school") {
-        allowed = role === "super_teacher" || isPlatformAdmin;
+        // Admin Head tab is school principals only. Platform admins must
+        // use /staff so the public surface never authenticates a staff
+        // account.
+        allowed = role === "super_teacher";
         expectedTabLabel = "Admin Head (Principal)";
       } else if (roleTab === "platform") {
         allowed = isPlatformAdmin;
