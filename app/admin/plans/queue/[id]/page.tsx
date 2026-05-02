@@ -54,11 +54,15 @@ export default function PlanProposalDetailPage(props: PageProps) {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
-  // Approver-edit mode toggles into an inline form. The form starts
-  // pre-filled from `proposed`; on save we POST /approve with the override.
-  const [editing, setEditing] = useState(false);
+  // Inline edit-form state.
+  // - 'approver': non-creator approver editing before approving.
+  //   Save calls POST /approve with overrides.
+  // - 'creator-draft': creator iterating on their own open draft.
+  //   Save calls PATCH on the proposal record (does NOT approve).
+  // - null: not editing.
+  const [editing, setEditing] = useState<"approver" | "creator-draft" | null>(null);
   const [editPayload, setEditPayload] = useState<PlanProposalPayload | null>(null);
-  const [busy, setBusy] = useState<"approve" | "reject" | "withdraw" | null>(null);
+  const [busy, setBusy] = useState<"approve" | "reject" | "withdraw" | "save-draft" | null>(null);
 
   // Reject confirmation modal.
   const [showReject, setShowReject] = useState(false);
@@ -163,6 +167,32 @@ export default function PlanProposalDetailPage(props: PageProps) {
     }
   }
 
+  // Creator-only: save edits to the open draft via PATCH. Doesn't approve.
+  // Does NOT redirect — keeps the user on the detail page so they can keep
+  // iterating, withdraw, or hand off to the approver.
+  async function saveDraft() {
+    if (!proposal || !editPayload) return;
+    setBusy("save-draft");
+    setErr(null);
+    try {
+      const token = await bearer();
+      const r = await fetch(`/api/admin/plan-proposals/${proposal.id}`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ proposed: editPayload }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error || "Save failed.");
+      // Re-load so the diff reflects the saved values, then collapse the form.
+      await load();
+      setEditing(null);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Save failed.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
   if (loading) {
     return <div className="grid place-items-center py-20"><div className="spinner" /></div>;
   }
@@ -197,7 +227,10 @@ export default function PlanProposalDetailPage(props: PageProps) {
     ? `Template: ${proposal.parent_plan.label}`
     : "No template (from-scratch)";
 
-  const rightLabel = editing ? "Approver edits (will be applied)" : "Proposed";
+  const rightLabel =
+    editing === "approver" ? "Approver edits (will be applied)" :
+    editing === "creator-draft" ? "Your draft edits (will be saved, not approved)" :
+    "Proposed";
 
   return (
     <div className="fade-in">
@@ -236,7 +269,7 @@ export default function PlanProposalDetailPage(props: PageProps) {
       {/* Action bar (only for open proposals) */}
       {isOpen && (
         <div className="card mb-5 flex items-center gap-2 flex-wrap" style={{ background: "var(--color-bg-soft)" }}>
-          {canApprove && !editing && (
+          {canApprove && editing === null && (
             <button
               type="button"
               className="btn btn-primary text-sm"
@@ -246,17 +279,31 @@ export default function PlanProposalDetailPage(props: PageProps) {
               <CheckCircle2 size={14} /> Approve as-is
             </button>
           )}
-          {canApprove && !editing && (
+          {canApprove && editing === null && (
             <button
               type="button"
               className="btn btn-secondary text-sm"
               disabled={busy !== null}
-              onClick={() => setEditing(true)}
+              onClick={() => setEditing("approver")}
             >
               <Pencil size={14} /> Edit and approve
             </button>
           )}
-          {editing && (
+          {/* Creator-only: edit your own open draft. Visible regardless of
+              canApprove (so it shows in bootstrap mode too). Saves via PATCH;
+              does NOT approve. Replaces the previous 404-link Edit-draft
+              affordance. */}
+          {canEdit && editing === null && (
+            <button
+              type="button"
+              className="btn btn-secondary text-sm"
+              disabled={busy !== null}
+              onClick={() => setEditing("creator-draft")}
+            >
+              <Pencil size={14} /> Edit draft
+            </button>
+          )}
+          {editing === "approver" && (
             <>
               <button
                 type="button"
@@ -270,13 +317,33 @@ export default function PlanProposalDetailPage(props: PageProps) {
                 type="button"
                 className="btn btn-secondary text-sm"
                 disabled={busy !== null}
-                onClick={() => { setEditing(false); setEditPayload(proposal.proposed); }}
+                onClick={() => { setEditing(null); setEditPayload(proposal.proposed); }}
               >
                 <RotateCcw size={14} /> Discard edits
               </button>
             </>
           )}
-          {canApprove && !editing && (
+          {editing === "creator-draft" && (
+            <>
+              <button
+                type="button"
+                className="btn btn-primary text-sm"
+                disabled={busy !== null}
+                onClick={saveDraft}
+              >
+                {busy === "save-draft" ? <span className="spinner" /> : <Save size={14} />} Save draft
+              </button>
+              <button
+                type="button"
+                className="btn btn-secondary text-sm"
+                disabled={busy !== null}
+                onClick={() => { setEditing(null); setEditPayload(proposal.proposed); }}
+              >
+                <RotateCcw size={14} /> Discard edits
+              </button>
+            </>
+          )}
+          {canApprove && editing === null && (
             <button
               type="button"
               className="btn btn-secondary text-sm"
@@ -287,7 +354,7 @@ export default function PlanProposalDetailPage(props: PageProps) {
               <XCircle size={14} /> Reject…
             </button>
           )}
-          {canWithdraw && !editing && (
+          {canWithdraw && editing === null && (
             <button
               type="button"
               className="btn btn-secondary text-sm ml-auto"
@@ -297,14 +364,6 @@ export default function PlanProposalDetailPage(props: PageProps) {
             >
               <Trash2 size={14} /> Withdraw
             </button>
-          )}
-          {canEdit && !canApprove && !editing && (
-            <Link
-              href={`/admin/plans/queue/${proposal.id}/edit-draft`}
-              className="btn btn-secondary text-sm"
-            >
-              <Pencil size={14} /> Edit draft
-            </Link>
           )}
         </div>
       )}
@@ -322,6 +381,7 @@ export default function PlanProposalDetailPage(props: PageProps) {
           leftLabel={leftLabel}
           payload={editPayload}
           onChange={setEditPayload}
+          mode={editing}
         />
       ) : (
         <PlanDiff
@@ -468,12 +528,14 @@ function RejectModal({
 // =====================================================================
 
 function ApproverEditForm({
-  left, leftLabel, payload, onChange,
+  left, leftLabel, payload, onChange, mode,
 }: {
   left: Plan | null;
   leftLabel: string;
   payload: PlanProposalPayload;
   onChange: (p: PlanProposalPayload) => void;
+  // 'approver' or 'creator-draft' — only changes the right-column header.
+  mode: "approver" | "creator-draft";
 }) {
   function patch(updates: Partial<PlanProposalPayload>) {
     onChange({ ...payload, ...updates });
@@ -503,7 +565,7 @@ function ApproverEditForm({
       {/* Right side: editable form */}
       <div className="card">
         <h3 className="text-xs uppercase tracking-wide font-bold mb-3" style={{ color: "var(--brand-700)" }}>
-          Approver edits
+          {mode === "approver" ? "Approver edits" : "Your draft (will be saved, not approved)"}
         </h3>
 
         <div className="space-y-3">

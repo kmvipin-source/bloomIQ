@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { supabaseBrowser } from "@/lib/supabase/client";
-import { ArrowLeft, GitBranch, Pencil, Plus, Clock, CheckCircle2, XCircle, AlertCircle, ShieldAlert } from "lucide-react";
+import { ArrowLeft, GitBranch, Pencil, Plus, Clock, CheckCircle2, XCircle, AlertCircle, ShieldAlert, Trash2 } from "lucide-react";
 import type {
   PlanChangeProposal,
   PlanProposalKind,
@@ -31,7 +31,7 @@ import type {
  * feature counts), and the action affordance.
  */
 
-type Tab = "for_me" | "mine" | "all_open" | "approved" | "rejected";
+type Tab = "for_me" | "mine" | "all_open" | "approved" | "rejected" | "withdrawn";
 
 type HydratedProposal = PlanChangeProposal & {
   target_plan: { id: string; slug: string; label: string; tier: string } | null;
@@ -42,19 +42,21 @@ type HydratedProposal = PlanChangeProposal & {
 };
 
 const TAB_DEFS: Array<{ id: Tab; label: string; icon: React.ComponentType<{ size?: number }> }> = [
-  { id: "for_me",   label: "Awaiting my approval", icon: ShieldAlert },
-  { id: "mine",     label: "My drafts",            icon: Pencil },
-  { id: "all_open", label: "All open",             icon: Clock },
-  { id: "approved", label: "Recently approved",    icon: CheckCircle2 },
-  { id: "rejected", label: "Rejected",             icon: XCircle },
+  { id: "for_me",    label: "Awaiting my approval", icon: ShieldAlert },
+  { id: "mine",      label: "My drafts",            icon: Pencil },
+  { id: "all_open",  label: "All open",             icon: Clock },
+  { id: "approved",  label: "Recently approved",    icon: CheckCircle2 },
+  { id: "rejected",  label: "Rejected",             icon: XCircle },
+  { id: "withdrawn", label: "Withdrawn",            icon: Trash2 },
 ];
 
 function tabQuery(tab: Tab): string {
-  if (tab === "for_me")   return "?scope=for_me";
-  if (tab === "mine")     return "?scope=mine";
-  if (tab === "all_open") return "?status=open";
-  if (tab === "approved") return "?status=approved";
-  return "?status=rejected";
+  if (tab === "for_me")    return "?scope=for_me";
+  if (tab === "mine")      return "?scope=mine";
+  if (tab === "all_open")  return "?status=open";
+  if (tab === "approved")  return "?status=approved";
+  if (tab === "rejected")  return "?status=rejected";
+  return "?status=withdrawn";
 }
 
 function rupees(paise: number): string {
@@ -85,7 +87,7 @@ export default function PlanQueuePage() {
   // Per-tab counts for the tab-bar badges. Computed on each load by firing
   // small parallel HEAD-style fetches; cheap because the queue is small.
   const [counts, setCounts] = useState<Record<Tab, number>>({
-    for_me: 0, mine: 0, all_open: 0, approved: 0, rejected: 0,
+    for_me: 0, mine: 0, all_open: 0, approved: 0, rejected: 0, withdrawn: 0,
   });
 
   async function load(targetTab: Tab) {
@@ -115,7 +117,7 @@ export default function PlanQueuePage() {
       }
 
       // Tab counts in parallel (best-effort; failures don't block).
-      const tabsToCount: Tab[] = ["for_me", "mine", "all_open", "approved", "rejected"];
+      const tabsToCount: Tab[] = ["for_me", "mine", "all_open", "approved", "rejected", "withdrawn"];
       const countResults = await Promise.allSettled(
         tabsToCount.map((t) =>
           fetch(`/api/admin/plan-proposals${tabQuery(t)}`, { headers })
@@ -123,7 +125,7 @@ export default function PlanQueuePage() {
             .then((jj) => ({ t, n: (jj.proposals || []).length })),
         ),
       );
-      const next: Record<Tab, number> = { for_me: 0, mine: 0, all_open: 0, approved: 0, rejected: 0 };
+      const next: Record<Tab, number> = { for_me: 0, mine: 0, all_open: 0, approved: 0, rejected: 0, withdrawn: 0 };
       for (const cr of countResults) {
         if (cr.status === "fulfilled") next[cr.value.t] = cr.value.n;
       }
