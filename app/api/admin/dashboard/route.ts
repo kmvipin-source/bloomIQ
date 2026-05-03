@@ -107,7 +107,7 @@ export async function GET(req: Request) {
       // attached to a school). Teachers / school_admin / platform_admin
       // are excluded because counting them as "free users" would skew the
       // adoption story.
-      if (p.role === "student" && !p.is_school_student) {
+      if (p.role === "student" && !p.is_school_student && !p.platform_admin) {
         const s = subsByUser.get(p.id);
         if (!s) {
           unsubscribed += 1;
@@ -176,7 +176,10 @@ export async function GET(req: Request) {
     // ---- Teachers breakdown ----
     // Sub-role: 'super_teacher' (school admin), 'primary' (primary class
     // owner), 'co_teacher' (assistant). 'super_teacher' takes precedence.
-    const teacherProfiles = allProfiles.filter((p) => p.role === "teacher" || p.role === "super_teacher");
+    // Exclude platform admins from the teacher list — even if their
+    // legacy profile.role is 'teacher' or 'super_teacher' from a prior
+    // signup, they shouldn't show up in school-staff counts.
+    const teacherProfiles = allProfiles.filter((p) => (p.role === "teacher" || p.role === "super_teacher") && !p.platform_admin);
     const teacherIds = teacherProfiles.map((p) => p.id);
     const { data: teacherNames } = teacherIds.length
       ? await admin.from("profiles").select("id, full_name").in("id", teacherIds)
@@ -221,9 +224,9 @@ export async function GET(req: Request) {
 
     const totals = {
       total_users: allProfiles.length,
-      students: allProfiles.filter((p) => p.role === "student" && !p.is_school_student).length,
+      students: allProfiles.filter((p) => p.role === "student" && !p.is_school_student && !p.platform_admin).length,
       school_students: schoolStudents,
-      teachers: allProfiles.filter((p) => p.role === "teacher" || p.role === "super_teacher").length,
+      teachers: allProfiles.filter((p) => (p.role === "teacher" || p.role === "super_teacher") && !p.platform_admin).length,
       schools_onboarded: (schools || []).length,
       paying_subscribers: activeSubs.filter((s) => {
         const slug = planById.get(s.plan_id || "")?.slug;
