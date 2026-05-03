@@ -186,22 +186,31 @@ export default function LoginPage() {
       } catch { /* ignore */ }
     }
 
-    const { data: prof } = await sb
-      .from("profiles")
-      .select("role, is_school_student, platform_admin")
-      .eq("id", user.id)
-      .maybeSingle();
-
     const { data: { session } } = await sb.auth.getSession();
     if (session) audit(session.access_token);
 
-    // Fall back to user_metadata.role when the profile row isn't readable
-    // yet (RLS race after first signup, transient network blip on the
-    // Vercel edge). Without this, the user lands on /student by default
-    // even when their auth.users.user_metadata.role is 'teacher'.
-    const metaRole = String((user.user_metadata as { role?: string } | undefined)?.role || "");
-    const role = prof?.role || metaRole || "";
-    const isPlatformAdmin = !!prof?.platform_admin;
+    // Read role via /api/auth/me (service-role lookup, no RLS race).
+    // Falls back to user.user_metadata.role on failure.
+    let role = "";
+    let isPlatformAdmin = false;
+    let prof: { role: string | null; is_school_student: boolean | null; platform_admin: boolean | null } | null = null;
+    if (session) {
+      try {
+        const meRes = await fetch("/api/auth/me", {
+          headers: { Authorization: `Bearer ${session.access_token}` },
+          cache: "no-store",
+        });
+        if (meRes.ok) {
+          const me = await meRes.json();
+          role = String(me.role || "");
+          isPlatformAdmin = !!me.platform_admin;
+          prof = { role: me.role || null, is_school_student: !!me.is_school_student, platform_admin: !!me.platform_admin };
+        }
+      } catch { /* fall through */ }
+    }
+    if (!role) {
+      role = String((user.user_metadata as { role?: string } | undefined)?.role || "");
+    }
 
     const isIndependentStudent =
       role === "student" && !prof?.is_school_student;
@@ -246,27 +255,32 @@ export default function LoginPage() {
       const { data: { user } } = await sb.auth.getUser();
       if (!user) throw new Error("Signed in but session is empty.");
 
-      const { data: prof, error: profErr } = await sb
-        .from("profiles")
-        .select("role, is_school_student, platform_admin")
-        .eq("id", user.id)
-        .maybeSingle();
-
       // ===== Role-tab gate =====
-      // Each tab only authenticates accounts of its own role. The Admin
-      // Head tab additionally accepts platform_admin so a single ops
-      // login surface works for both school principals AND BloomIQ staff.
-      // If the profile row hasn't materialised yet (fresh signup whose
-      // on_auth_user_created trigger races the next sign-in), fall back
-      // to the role stamped into auth.users.user_metadata so the user
-      // doesn't get stuck on "This sign-in is for X only".
-      const metaRole = String((user.user_metadata as { role?: string } | undefined)?.role || "");
-      const role = prof?.role || metaRole || "";
-      const isSchoolStudent = !!prof?.is_school_student;
-      const isPlatformAdmin = !!prof?.platform_admin;
-      if (profErr && process.env.NODE_ENV !== "production") {
-        // eslint-disable-next-line no-console
-        console.warn("[login] profile lookup failed; falling back to user_metadata", profErr);
+      // Read role via /api/auth/me — that endpoint uses the service-role
+      // client to look up the profile, sidestepping the user-token RLS
+      // race that intermittently returned `null` for valid sessions on
+      // the Vercel edge (the same race that broke /admin/onboard-school).
+      // Falls back to user_metadata.role on any failure.
+      const { data: { session: gateSess } } = await sb.auth.getSession();
+      let role = "";
+      let isSchoolStudent = false;
+      let isPlatformAdmin = false;
+      if (gateSess) {
+        try {
+          const meRes = await fetch("/api/auth/me", {
+            headers: { Authorization: `Bearer ${gateSess.access_token}` },
+            cache: "no-store",
+          });
+          if (meRes.ok) {
+            const me = await meRes.json();
+            role = String(me.role || "");
+            isSchoolStudent = !!me.is_school_student;
+            isPlatformAdmin = !!me.platform_admin;
+          }
+        } catch { /* fall through to metadata fallback */ }
+      }
+      if (!role) {
+        role = String((user.user_metadata as { role?: string } | undefined)?.role || "");
       }
       // Platform admin accounts are blocked from the public login surface
       // entirely — they must sign in via /staff. This holds even if their
