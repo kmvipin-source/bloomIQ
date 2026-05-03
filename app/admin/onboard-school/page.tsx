@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { supabaseBrowser } from "@/lib/supabase/client";
-import { Building2, Mail, UserRound, Send, CheckCircle2, Clock, Copy } from "lucide-react";
+import { Building2, Mail, UserRound, Send, CheckCircle2, Clock, Copy, Trash2 } from "lucide-react";
 
 /**
  * /admin/onboard-school
@@ -61,6 +61,7 @@ export default function OnboardSchoolPage() {
   const [listLoading, setListLoading] = useState(true);
   const [listErr, setListErr] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState<string | null>(null);
   // Per-school "set plan" busy state, keyed by school id.
   const [planBusy, setPlanBusy] = useState<Record<string, boolean>>({});
   const [planErr, setPlanErr] = useState<string | null>(null);
@@ -83,6 +84,32 @@ export default function OnboardSchoolPage() {
       setListErr(e instanceof Error ? e.message : "Could not load onboardings.");
     } finally {
       setListLoading(false);
+    }
+  }
+
+  async function deleteSchool(schoolId: string, schoolName: string) {
+    if (!confirm(
+      `Permanently delete "${schoolName}"?\n\n` +
+      `This removes the school + every class + the school's subscription.\n` +
+      `Teacher and student accounts survive but get unlinked from the school.\n\n` +
+      `This cannot be undone.`,
+    )) return;
+    setDeleteBusy(schoolId);
+    try {
+      const sb = supabaseBrowser();
+      const { data: { session } } = await sb.auth.getSession();
+      if (!session) throw new Error("Not signed in");
+      const r = await fetch(`/api/admin/schools/${schoolId}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error || "Delete failed");
+      setList((curr) => curr.filter((s) => s.id !== schoolId));
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Delete failed");
+    } finally {
+      setDeleteBusy(null);
     }
   }
 
@@ -277,6 +304,7 @@ export default function OnboardSchoolPage() {
                 <th className="px-4 py-3 text-left">Plan</th>
                 <th className="px-4 py-3 text-left">Join code</th>
                 <th className="px-4 py-3 text-left">Invited</th>
+                <th className="px-4 py-3 text-right">Action</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -333,6 +361,17 @@ export default function OnboardSchoolPage() {
                   </td>
                   <td className="px-4 py-3 text-xs muted whitespace-nowrap">
                     {s.invited_at ? new Date(s.invited_at).toLocaleDateString() : "—"}
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    <button
+                      type="button"
+                      className="btn btn-ghost text-red-600 text-xs inline-flex items-center gap-1"
+                      onClick={() => deleteSchool(s.id, s.name)}
+                      disabled={deleteBusy === s.id}
+                      title="Delete school + cascade"
+                    >
+                      {deleteBusy === s.id ? <span className="spinner" /> : <Trash2 size={14} />} Delete
+                    </button>
                   </td>
                 </tr>
               ))}

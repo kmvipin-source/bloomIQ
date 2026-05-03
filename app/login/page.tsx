@@ -229,19 +229,28 @@ export default function LoginPage() {
       const { data: { user } } = await sb.auth.getUser();
       if (!user) throw new Error("Signed in but session is empty.");
 
-      const { data: prof } = await sb
+      const { data: prof, error: profErr } = await sb
         .from("profiles")
         .select("role, is_school_student, platform_admin")
         .eq("id", user.id)
-        .single();
+        .maybeSingle();
 
       // ===== Role-tab gate =====
       // Each tab only authenticates accounts of its own role. The Admin
       // Head tab additionally accepts platform_admin so a single ops
       // login surface works for both school principals AND BloomIQ staff.
-      const role = prof?.role || "";
+      // If the profile row hasn't materialised yet (fresh signup whose
+      // on_auth_user_created trigger races the next sign-in), fall back
+      // to the role stamped into auth.users.user_metadata so the user
+      // doesn't get stuck on "This sign-in is for X only".
+      const metaRole = String((user.user_metadata as { role?: string } | undefined)?.role || "");
+      const role = prof?.role || metaRole || "";
       const isSchoolStudent = !!prof?.is_school_student;
       const isPlatformAdmin = !!prof?.platform_admin;
+      if (profErr && process.env.NODE_ENV !== "production") {
+        // eslint-disable-next-line no-console
+        console.warn("[login] profile lookup failed; falling back to user_metadata", profErr);
+      }
       let allowed = false;
       let expectedTabLabel = "";
       if (roleTab === "student" && studentMode === "independent") {
