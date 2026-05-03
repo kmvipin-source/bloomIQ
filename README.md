@@ -92,7 +92,180 @@ admin-rostered. Same logic for password resets — teacher administers.
 
 ---
 
-## 🆕 Latest session — 2026-05-01 evening (Cohort pacing benchmarks + rank-prediction disclaimers + RLS recursion fix + test-user seed)
+## 🆕 Latest session — 2026-05-02 evening (Role-aware shells, scope separation, Quiz→Test rename, upgrade-extension billing, retake/extension flow)
+
+A long session. Touched almost every dashboard, every sidebar, the
+billing pipeline, RLS-adjacent admin queries, and added two new
+multi-role pages plus a major UI rename.
+
+### What shipped (high-level)
+
+1. **Role-aware Sidebar** for all five role surfaces — teacher / school
+   student / independent student / super-teacher / **platform admin** —
+   with grouped headers (Class / Live / Practice; Roster / Insights /
+   Assist; Classes / Content / Insights / Assist; Do / Look back).
+   Platform admin moved off its old top-bar layout onto the same
+   left-sidebar shell. Each role's home, profile, help, and security
+   are reachable identically.
+
+2. **`/help` page (role-aware)** — collapsible FAQ-style layout, native
+   `<details>` elements, role-tailored topics for teacher and
+   super-teacher, placeholder for student. Accessible via "Help" link
+   in every sidebar bottom nav.
+
+3. **`/settings/profile` page (role-aware)** — universal profile with
+   sections per role: name + exam goal (independent student); name +
+   classes-taught (teacher); school identity + join code copy + logo
+   upload (super-teacher); read-only roster (school student).
+   Back-to-dashboard link routes per role. Initial-letter avatar
+   replaced by school logo for super-teacher when one is uploaded.
+
+4. **Class scope vs personal practice — strictly separated**:
+   - `lib/studentScope.ts` (new): `loadClassQuizIds()` and
+     `loadClassQuizIdsForClasses()` are the single source of truth for
+     "what counts as class scope".
+   - School student dashboard: stats trio + BloomHero now class-only;
+     personal practice has its own home at `/student/tests`.
+   - `/student/progress`: school-student variant filters to class
+     attempts only. Title flips to "My Class Progress".
+   - **Five school admin queries patched** (`/school/page.tsx`,
+     `/school/students/page.tsx`, `/school/classes/page.tsx`,
+     `/school/reports/page.tsx`) — each now scopes attempts by
+     class-assigned quiz_ids, so personal-practice attempts no longer
+     inflate roll-ups.
+
+5. **Quiz → Test rename across UI** (URL slugs and DB unchanged):
+   teacher sidebar item, recent-tests card, stats labels, focus card
+   copy, `/teacher/quizzes` page title and buttons, `/teacher/quizzes/new`,
+   `/teacher/quizzes/[id]` (assign-test modal), analytics column
+   header, reports card titles + descriptions + button labels, school
+   admin column headers, school student "Class quizzes taken" stat,
+   school coach blurb. **Live Quiz / Live class quiz preserved** per
+   product call (it's quiz-flavoured by nature).
+
+6. **Lock-badge tier label leak fixed**: `findUnlockingTier(featureKey,
+   ladder?)` now takes a ladder filter so independent students never see
+   "School Pilot" labels and school students never see "Premium" labels.
+   Three call sites updated to pass `isSchool ? "school" : "personal"`.
+
+7. **Sidebar single-click bug fix**: replaced JS `onMouseEnter`/`onMouseLeave`
+   that mutated `e.currentTarget.style.background` with a pure CSS
+   `.sidebar-link` class in globals.css. Cleaner, faster, no double-click
+   needed.
+
+8. **Teacher feature gate behind school**: layout-level redirect — every
+   `/teacher/*` sub-route bounces back to `/teacher` until the teacher
+   joins a school. Home itself shows ONLY the welcome strip + Join card
+   when `school_id` is null.
+
+9. **Subscription upgrade — Model B (extension)**:
+   `app/api/checkout/verify/route.ts` now anchors the new term off
+   `max(now, oldExpiresAt)` instead of always `now`. Pay full new-plan
+   price, keep unused time. No schema change.
+
+10. **Pre-due-date extension request** (Scenario 2 of the missed-quiz
+    flow): new `<ExtensionRequestButton />` on each upcoming assigned
+    card on the school student dashboard. Reuses
+    `quiz_retake_requests` table. Teacher decides via existing
+    `<TeacherRetakeRequests />`.
+
+11. **Retake/extension approval — custom date+time**: decision endpoint
+    accepts optional `new_due_at`. Teacher's panel now has a
+    `<datetime-local>` input pre-filled with +7 days, fully editable
+    before approve.
+
+12. **Assign-test UX polish on `/teacher/quizzes/[id]`**: due date+time
+    is mandatory now (no more optional), duplicate-assignment guard
+    asks for confirmation before inserting a second `(quiz, class)` or
+    `(quiz, student)` row, modal is `max-h:calc(100vh-2rem)` with
+    `overflow-y-auto` so the date picker no longer hides the Assign
+    button.
+
+13. **Retake/extension surfacing in focus card**: `stats.retakePending`
+    now feeds the focus card priority (rose tone, top of list above
+    review queue). The TeacherRetakeRequests panel moved lower with
+    `id="retake-requests"` anchor for the focus-card scroll-to.
+
+14. **Live class quiz** moved out of the assignment dashboard into a
+    dedicated sidebar destination at `/student/live` for school
+    students; teacher live-host page got an "Engagement-only — does
+    NOT count toward class stats" notice.
+
+15. **School logo upload** for super-teachers — migration 46
+    (`schools.logo_url`, public `school-logos` bucket, RLS policies
+    scoped by school_id path prefix). Surfaces in profile hero now;
+    sidebar header / school home pending.
+
+16. **Per-teacher email column** on `/school/teachers` — new GET
+    handler on `/api/admin/school/teachers` resolves email via the
+    service-role admin client (auth.users), merged into the roster
+    table.
+
+### Migrations to apply (in order)
+
+| File | Purpose |
+|---|---|
+| `46_schools_logo_url.sql` | Adds `schools.logo_url` text column + creates public `school-logos` storage bucket + RLS policies (super-teacher of THIS school can write to `<school_id>/...` only) |
+
+(No other migrations from this session.)
+
+### Files added this session
+
+- `lib/studentScope.ts` — class-scope helpers
+- `app/help/page.tsx` — role-aware help center
+- `app/settings/profile/page.tsx` — universal profile with role-tailored sections
+- `app/student/live/page.tsx` — sidebar destination for Live Quiz join
+- `app/student/train/page.tsx` — Train index for independent students
+- `app/student/diagnose/page.tsx` — Diagnose index for independent students
+- `components/LiveJoinCard.tsx` — 6-char code entry card
+- `components/ExtensionRequestButton.tsx` — pre-due-date extension request UI
+- `supabase/migrations/46_schools_logo_url.sql`
+- `docs/QA_SCENARIOS_PENDING.md` — extension/upgrade test scenarios for next session
+
+### Files heavily modified
+
+- `components/Sidebar.tsx` — five-role union, role→home + role→label maps, grouped nav for all roles, CSS hover, Profile/Help/Security/Sign out bottom nav
+- `app/teacher/page.tsx` — friendly first-name helper, focus card with retake-priority, stats include retakePending, school-gate render
+- `app/teacher/layout.tsx` — school-membership gate redirects sub-routes
+- `app/admin/layout.tsx` — slimmed down to use Sidebar component
+- `app/teacher/quizzes/[id]/page.tsx` — mandatory due, duplicate confirm, scrollable modal
+- `app/teacher/reports/page.tsx` — Quiz→Test labels (including the StatCard `label="Tests"` prop fix)
+- `app/student/page.tsx` — class-scope filter, BloomHero compute path, AssignedRow extension state, pre-due extension button render
+- `app/student/progress/page.tsx` — class-scope filter, "My Class Progress" title
+- `app/student/tests/page.tsx` — practice stats trio + BloomHero header, no class-quiz mixing
+- `app/settings/profile/page.tsx` — extended with logo upload + back link
+- `app/school/page.tsx`, `/school/students/page.tsx`, `/school/classes/page.tsx`, `/school/teachers/page.tsx`, `/school/reports/page.tsx` — class-quiz scope filter on five attempts queries
+- `app/api/admin/school/teachers/route.ts` — added GET handler for emails
+- `app/api/checkout/verify/route.ts` — Model B extension expiry
+- `app/api/teacher/retake-requests/[id]/decision/route.ts` — accepts custom `new_due_at`
+- `components/TeacherRetakeRequests.tsx` — date+time picker per request
+- `lib/featureAccess.ts` — `findUnlockingTier(key, ladder?)` filter
+- `app/globals.css` — added `.sidebar-link` / `.sidebar-link--active` rules
+- `README.md` — added "First-time account creation & login — by role" section
+
+### Resume tomorrow — pickup checklist
+
+1. **Run migration 46** on Supabase (`supabase/migrations/46_schools_logo_url.sql`) — schools.logo_url column + storage bucket + RLS policies.
+2. **Run `npm install`** locally — `package.json` had to be restored from git after a truncation; `exceljs` and other deps are listed but might not be in `node_modules` until install.
+3. **Open `docs/QA_SCENARIOS_PENDING.md`** — five scenarios queued for testing: subscription upgrade extension (U + 3 variants), teacher gate (T), lock-badge ladder (L), school admin scope (S), plus smoke checks. Includes a SQL quick-seed for skipping Razorpay if you want to test just the upgrade math.
+4. **Open `app/teacher/page.tsx.tmp` and `*.tsx.__rewrite` files**: 0-byte residue from the safe_write helper. Filesystem won't let me unlink them inside the sandbox, but on Windows you can `Remove-Item *.tsx.__rewrite, *.tsx.tmp` to clean the tree.
+5. **Future enhancements parked but not started**:
+   - Email-notification (option C) for retake/extension requests — needs SMTP/Resend wiring
+   - School logo on sidebar branding row + parent-share pages (currently only renders in profile hero)
+   - Auto-detect active live session for student's class (currently manual code entry only)
+   - `/help` topics for student / platform admin (placeholders today)
+   - Plan badge with "Renews in N days" copy
+6. **Pending before this session that's still pending**: Phase 4b (parent-email monthly digest cron) — deferred from much earlier; needs email-infra decision.
+
+### Patterns documented for future maintainers
+
+- **File-tool / Python `open(p,"w").write()` truncation in this workspace**: silent data loss on large writes. Workarounds that consistently work: (a) bash heredoc for fresh files, (b) `sed -i` for surgical in-place edits, (c) Python `safe_write(path, content)` helper that stages to `path.__rewrite` then `cat tmp > path` and verifies the read-back matches. The helper is reproduced inline in any session that needs it.
+- **Verification step**: `tail -c 5 file | od -c` after every write — confirms file ends with `}` / `);` rather than mid-content. Caught multiple truncations this session.
+- **Class-scope rule** (codified across the app now): a school student's official numbers live in `quiz_attempts` filtered by `loadClassQuizIds()`. Personal practice is everything else. Teachers and school admins see only the class side; students see both, kept in physically separate UI surfaces.
+
+---
+
+## 🕘 Earlier session — 2026-05-01 evening (Cohort pacing benchmarks + rank-prediction disclaimers + RLS recursion fix + test-user seed)
 
 A wide-ranging session covering one student-facing feature (Premium Plus only),
 one product-honesty pass, one production bug fix, and one developer tool.
