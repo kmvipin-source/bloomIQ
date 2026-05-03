@@ -46,7 +46,7 @@ export async function GET(req: Request) {
     // -- Profiles minimal — used for free-tier count + role mix.
     const { data: profiles } = await admin
       .from("profiles")
-      .select("id, role, is_school_student, school_id");
+      .select("id, role, is_school_student, school_id, platform_admin");
 
     const { data: schools } = await admin.from("schools").select("id, created_at");
 
