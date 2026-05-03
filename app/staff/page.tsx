@@ -70,6 +70,9 @@ export default function StaffLoginPage() {
         data: { tos_accepted_at: new Date().toISOString(), tos_version: TOS_VERSION },
       });
     } catch { /* non-fatal */ }
+    // Single-session policy — invalidate any other session this user
+    // has open on other devices.
+    try { await sb.auth.signOut({ scope: "others" }); } catch { /* ignore */ }
     router.push("/admin/onboard-school");
   }
 

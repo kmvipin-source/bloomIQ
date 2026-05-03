@@ -212,11 +212,12 @@ export default function LoginPage() {
       role = String((user.user_metadata as { role?: string } | undefined)?.role || "");
     }
 
-    const isIndependentStudent =
-      role === "student" && !prof?.is_school_student;
-    if (isIndependentStudent) {
-      try { await sb.auth.signOut({ scope: "others" }); } catch { /* ignore */ }
-    }
+    // Single-session policy — every successful login on this device
+    // invalidates the same user's session on every other device. The
+    // other devices stay on screen until their next API call, then 401
+    // and bounce to /login. Applies to all roles, not just independent
+    // students.
+    try { await sb.auth.signOut({ scope: "others" }); } catch { /* ignore */ }
 
     const next = readNextParam();
     const home =
