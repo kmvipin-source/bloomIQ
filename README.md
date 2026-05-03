@@ -284,6 +284,53 @@ is becoming the routine fallback. Files repaired this way today:
 `school/classes/page.tsx`. New files (`deputy/route.ts`,
 `migration 47`) landed cleanly via `Write`.
 
+### Polish + follow-ups (shipped same session, after main push)
+
+Small refinements that surfaced from manual exercise of the just-shipped
+Deputy + acting-cover features:
+
+- **`/api/admin/school/transfer` tightened** — was previously satisfied by
+  any super_teacher, which meant a Deputy could curl-bypass the hidden UI
+  and seize the Head role. Now does a second check against
+  `schools.super_teacher_id === user.id` in addition to
+  `role === 'super_teacher'`, with a Deputy-specific 403 message.
+  Closes the gap parked at first ship of A1.
+
+- **Login page Admin Head footer fixed** — the "New here? Create an
+  account" link previously pointed every tab at `/signup`, but `/signup`
+  intentionally hides the Admin Head role (provisioned by BloomIQ via
+  `/admin/onboard-school`). Replaced with a "Talk to us" mailto on the
+  Admin Head tab, "Platform admin accounts are invite-only" line on the
+  platform tab, and the original signup link kept on Teacher / Student
+  tabs. Removes the dead-end click that was confusing test users.
+
+- **`/school/classes` action button — state-aware copy** — "Change" was
+  vague; admins didn't know it could either add an acting cover or
+  initiate a permanent replacement. Now the button reads:
+  - **Assign primary** (no primary, no invite)
+  - **Re-invite** (pending invite outstanding)
+  - **Cover** (primary set, no acting cover)
+  - **Change cover** (acting cover already in place; paired with a red
+    "End cover" button on the same row)
+
+- **`scripts/seed-test-users.js` extended** — was producing 6 test users
+  (school admin, primary, co, 3 students, indie students). Now seeds
+  10 users covering every role surface added today:
+  - Platform admin (`ops@bloomiq.example.com`) — logs in at `/staff`
+  - Admin Head + pre-promoted Deputy (`deputy@testacademy.example.com`)
+    so the user can log in as a Deputy out of the gate without first
+    clicking through the promote flow
+  - The seed script's credentials table at the end now lists all 10 with
+    role, login surface, and landing page. `--reset` wipes everything
+    cleanly for repeat runs.
+
+- **Bootstrapping a test Admin Head** — added a "First-time account
+  creation & login — by role" subsection with two SQL blocks for dev:
+  one that promotes any user to super_teacher of a fresh school
+  (confirms email, generates a join code, sets `school_id` + role), one
+  that resets a forgotten password via `crypt(...)`. Production path
+  (the platform-admin invite flow) is unchanged.
+
 ### Test plan (manual, next session)
 
 1. **Promote / demote happy path** — Head promotes T1; T1 sees the
@@ -296,12 +343,17 @@ is becoming the routine fallback. Files repaired this way today:
    server-side check now verifies `schools.super_teacher_id === auth.uid()`
    in addition to `role === 'super_teacher'`. A Deputy who curl-POSTs the
    transfer endpoint gets a 403 with a Deputy-specific message.
-5. **Immediate primary reassign** — Head picks Ms Patel from dropdown
-   on a Mr Sharma class; confirm dialog appears with mention of
-   unplanned leave; Ms Patel is primary, Mr Sharma is co-teacher,
-   `quiz_assignments` queries still find the class.
-6. **Email path still invite-based** — typing a non-school email still
+5. **Acting cover (Option B)** — Head clicks **Cover** on Ms Patel's row
+   on a Mr Sharma class; confirm dialog explains canonical primary stays
+   primary; Ms Patel appears with the "🛡 Acting cover" pill below Mr
+   Sharma's name; both can act (RLS via widened `is_class_primary`).
+6. **End acting cover** — Head clicks **End cover**; the acting pill
+   vanishes; Mr Sharma is the only entry, unchanged from before the cover.
+7. **Email path still invite-based** — typing a non-school email still
    creates a pending invite; confirm copy explains the gentler path.
+8. **Login Admin Head footer** — on the Admin Head login tab, the footer
+   reads "Setting up a new school? Talk to us..." with a mailto, not a
+   "Create an account" link to `/signup`.
 
 ---
 
@@ -1760,36 +1812,4 @@ app/
     teacher/                teacher RPCs (classes, coach, digest)
     student/                student RPCs (adaptive-practice, daily-drill, srs-due, coach, digest, quick-test)
     school/                 super_teacher RPCs (join, coach, digest)
-    generate/, papers/generate/      AI question generation
-    flashcards/, calibration/log/, recommendations/, commentary/, alerts/
-    teach-back/, misconception/, climber/, xray/                 ★ killer endpoints
-    speed/, traps/, rank/, tutor/, sprint/                       ★ competitive-exam
-    visualizer/, srs/, graph/, parent/                           ★ retention + parent
-    qbank/[id]/{solution,variants,variants/save}, qbank/calibrate
-    quizzes/[id]/classify/  topic-family classifier endpoint
-    live/{start, [code]/{state,join,start-running,next,answer,leaderboard}}
-    checkout/, checkout/verify/      Razorpay flow
-    pricing/active-plans/   public DB-driven plan list
-    cron/expire-subscriptions/       guarded by CRON_SECRET
-    login-audit/, report/[attemptId]/, digest/
-
-components/
-  Sidebar.tsx               role-aware nav incl. Platform Admin section
-  PublicNav.tsx             auth-aware top nav for / and /pricing
-  AuthHealer.tsx            clears stale tokens on app boot
-  PWARegister.tsx           SW registration (prod) / unregister (dev)
-  BloomBadge.tsx, BloomChart.tsx, BloomHero.tsx
-  StudentFeatureTile.tsx, StudentGoalPicker.tsx, PaywallModal.tsx, RenewBanner.tsx
-  BulkAddStudents.tsx
-  AtRiskWatchlist.tsx, ClassComparisonHeatmap.tsx, EngagementTrends.tsx
-  Empty.tsx
-
-lib/
-  supabase/{client,server}.ts       Supabase clients (incl. service-role admin)
-  groq.ts                           Groq SDK + JSON + vision wrappers
-  qgen.ts                           misconception-aware distractors + verify
-  calibration.ts, calibrationView.ts   light-IRT (≥20 attempts)
-  bloom.ts, bloomReports.ts, bloomScore.ts
-  classifier.ts                     topic-family classifier
-  features.ts, featureAccess.ts     gating registry + hook + server check
- 
+    generate/, papers/generate/      AI que
