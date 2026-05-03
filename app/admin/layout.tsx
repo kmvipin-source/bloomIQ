@@ -25,15 +25,23 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   useEffect(() => {
     (async () => {
       const sb = supabaseBrowser();
-      const { data: { user } } = await sb.auth.getUser();
-      if (!user) { router.replace("/login?next=/admin/onboard-school"); return; }
+      const { data: { session } } = await sb.auth.getSession();
+      if (!session) { router.replace("/login?next=/admin/onboard-school"); return; }
 
-      const { data: prof } = await sb
-        .from("profiles")
-        .select("platform_admin")
-        .eq("id", user.id)
-        .single();
-      if (!prof?.platform_admin) { router.replace("/"); return; }
+      // /api/auth/me uses the service-role client, so RLS lag on the
+      // edge can't accidentally redirect a real platform admin to /.
+      let platformAdmin = false;
+      try {
+        const r = await fetch("/api/auth/me", {
+          headers: { Authorization: `Bearer ${session.access_token}` },
+          cache: "no-store",
+        });
+        if (r.ok) {
+          const j = await r.json();
+          platformAdmin = !!j.platform_admin;
+        }
+      } catch { /* fall through to redirect */ }
+      if (!platformAdmin) { router.replace("/"); return; }
       setOk(true);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps

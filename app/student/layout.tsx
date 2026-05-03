@@ -17,28 +17,33 @@ export default function StudentLayout({ children }: { children: React.ReactNode 
     (async () => {
       try {
         const sb = supabaseBrowser();
-        const { data: { user } } = await sb.auth.getUser();
-        if (!user) { router.replace("/login?next=/student"); return; }
+        const { data: { session } } = await sb.auth.getSession();
+        if (!session) { router.replace("/login?next=/student"); return; }
 
-        const { data: prof, error: profErr } = await sb
-          .from("profiles")
-          .select("role, platform_admin")
-          .eq("id", user.id)
-          .maybeSingle();
-        if (profErr) {
-          // RLS or connectivity hiccup — don't trap the user on a spinner.
-          // eslint-disable-next-line no-console
-          console.error("[student layout] profile lookup failed", profErr);
-          setOk(true);
-          return;
+        let role = "";
+        let platformAdmin = false;
+        try {
+          const r = await fetch("/api/auth/me", {
+            headers: { Authorization: `Bearer ${session.access_token}` },
+            cache: "no-store",
+          });
+          if (r.ok) {
+            const j = await r.json();
+            role = String(j.role || "");
+            platformAdmin = !!j.platform_admin;
+          }
+        } catch { /* fall through */ }
+        if (!role) {
+          const { data: { user } } = await sb.auth.getUser();
+          role = String((user?.user_metadata as { role?: string } | undefined)?.role || "");
         }
 
         // platform_admin is exclusive — no hybrid display. Force them to /admin.
-        if (prof?.platform_admin)           { router.replace("/admin/onboard-school"); return; }
+        if (platformAdmin)             { router.replace("/admin/onboard-school"); return; }
         // Send each role to its own home — never bounce a non-student back to /student
-        if (prof?.role === "teacher")       { router.replace("/teacher"); return; }
-        if (prof?.role === "super_teacher") { router.replace("/school");  return; }
-        if (prof && prof.role !== "student") { router.replace("/login");   return; }
+        if (role === "teacher")        { router.replace("/teacher"); return; }
+        if (role === "super_teacher")  { router.replace("/school");  return; }
+        if (role && role !== "student") { router.replace("/login");   return; }
 
         setOk(true);
       } catch (e) {

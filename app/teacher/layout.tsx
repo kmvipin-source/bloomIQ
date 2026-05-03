@@ -30,22 +30,33 @@ export default function TeacherLayout({ children }: { children: React.ReactNode 
   useEffect(() => {
     (async () => {
       const sb = supabaseBrowser();
-      const { data: { user } } = await sb.auth.getUser();
-      if (!user) { router.replace("/login?next=/teacher"); return; }
+      const { data: { session } } = await sb.auth.getSession();
+      if (!session) { router.replace("/login?next=/teacher"); return; }
 
-      const { data: prof } = await sb
-        .from("profiles")
-        .select("role, platform_admin, school_id")
-        .eq("id", user.id)
-        .maybeSingle();
-
-      // Profile RLS race fallback — read role from auth metadata so a
-      // transient null doesn't bounce a teacher off their own dashboard.
-      const metaRole = String((user.user_metadata as { role?: string } | undefined)?.role || "");
-      const role = prof?.role || metaRole;
+      // Service-role lookup — sidesteps the user-token RLS race that
+      // wrongly redirected real teachers to /student or /admin.
+      let role = "";
+      let platformAdmin = false;
+      let schoolId: string | null = null;
+      try {
+        const r = await fetch("/api/auth/me", {
+          headers: { Authorization: `Bearer ${session.access_token}` },
+          cache: "no-store",
+        });
+        if (r.ok) {
+          const j = await r.json();
+          role = String(j.role || "");
+          platformAdmin = !!j.platform_admin;
+          schoolId = j.school_id || null;
+        }
+      } catch { /* fall through to metadata */ }
+      if (!role) {
+        const { data: { user } } = await sb.auth.getUser();
+        role = String((user?.user_metadata as { role?: string } | undefined)?.role || "");
+      }
 
       // platform_admin is exclusive — no hybrid display. Force them to /admin.
-      if (prof?.platform_admin)           { router.replace("/admin/onboard-school"); return; }
+      if (platformAdmin)            { router.replace("/admin/onboard-school"); return; }
       // Each role has exactly one home — no ping-pong between layouts.
       if (role === "student")       { router.replace("/student"); return; }
       if (role === "super_teacher") { router.replace("/school");  return; }
@@ -54,7 +65,7 @@ export default function TeacherLayout({ children }: { children: React.ReactNode 
       // School-membership gate: any sub-route is blocked until they join.
       // The home page itself shows the join card, so we let it through.
       const isHome = pathname === "/teacher" || pathname === "/teacher/";
-      if (!prof?.school_id && !isHome) {
+      if (!schoolId && !isHome) {
         router.replace("/teacher");
         return;
       }
