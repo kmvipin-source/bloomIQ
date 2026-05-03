@@ -632,10 +632,35 @@ export default function LoginPage() {
             )}
           </form>
 
-          <div className="mt-6 text-sm text-center text-slate-600">
-            New here?{" "}
-            <Link href="/signup" className="text-emerald-700 font-semibold">Create an account</Link>
-          </div>
+          {/* Footer CTA — role-aware. Self-serve roles (Teacher,
+              Independent / School student) point at /signup. Admin Head
+              (Principal) accounts are NOT self-serve in production —
+              they're provisioned via /admin/onboard-school by BloomIQ
+              staff after the school's payment lands — so we surface a
+              "Talk to us" mailto instead. Platform admin doesn't appear
+              here at all (its own /staff route handles that). */}
+          {roleTab === "school" ? (
+            <div className="mt-6 text-sm text-center text-slate-600">
+              Setting up a new school?{" "}
+              <a
+                href="mailto:hello@bloomiq.app?subject=BloomIQ%20school%20onboarding"
+                className="text-emerald-700 font-semibold"
+              >
+                Talk to us
+              </a>{" "}
+              and we&apos;ll send you an invite. Admin Head accounts are
+              provisioned by BloomIQ — there is no self-serve sign-up.
+            </div>
+          ) : roleTab === "platform" ? (
+            <div className="mt-6 text-xs text-center text-slate-500">
+              Platform admin accounts are invite-only.
+            </div>
+          ) : (
+            <div className="mt-6 text-sm text-center text-slate-600">
+              New here?{" "}
+              <Link href="/signup" className="text-emerald-700 font-semibold">Create an account</Link>
+            </div>
+          )}
         </div>
 
         <p className="text-xs text-slate-500 text-center mt-4">

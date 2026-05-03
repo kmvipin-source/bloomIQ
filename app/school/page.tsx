@@ -6,6 +6,8 @@ import { supabaseBrowser } from "@/lib/supabase/client";
 import type { School } from "@/lib/types";
 import { Building2, UserRound, ListChecks, ClipboardList, TrendingUp, Settings, Copy, Pencil, UserCog, BarChart3, MessageCircle, Sparkles } from "lucide-react";
 import CurrentPlanBadge from "@/components/CurrentPlanBadge";
+import RenewBanner from "@/components/RenewBanner";
+import { useFeatureAccess } from "@/lib/featureAccess";
 import { generateQuizCode } from "@/lib/utils";
 import { loadClassQuizIdsForClasses } from "@/lib/studentScope";
 
@@ -42,17 +44,26 @@ export default function SchoolHome() {
   const [classes, setClasses] = useState<ClassRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [needsSetup, setNeedsSetup] = useState(false);
+
+  // Feature access — used to drive the school-plan renewal banner that
+  // shows the super-teacher when their school plan is within the 7-day
+  // warning window or already expired.
+  const access = useFeatureAccess();
+
+  // The Head is the profile referenced by schools.super_teacher_id.
+  // Deputies (other super_teachers in the school) see almost everything
+  // the Head sees, but the Transfer Admin Head action is reserved for
+  // the Head themselves.
+  const [callerIsHead, setCallerIsHead] = useState(false);
   const [schoolName, setSchoolName] = useState("");
   const [creating, setCreating] = useState(false);
   const [setupErr, setSetupErr] = useState<string | null>(null);
 
-  // Rename school: inline edit, opens when the user clicks the pencil.
   const [editingName, setEditingName] = useState(false);
   const [draftName, setDraftName] = useState("");
   const [savingName, setSavingName] = useState(false);
   const [renameErr, setRenameErr] = useState<string | null>(null);
 
-  // Transfer Admin Head: collapsed by default; expands to show the email input.
   const [transferOpen, setTransferOpen] = useState(false);
   const [transferEmail, setTransferEmail] = useState("");
   const [transferring, setTransferring] = useState(false);
@@ -65,7 +76,6 @@ export default function SchoolHome() {
     const { data: { user } } = await sb.auth.getUser();
     if (!user) return;
 
-    // Locate the super_teacher's school
     const { data: prof } = await sb.from("profiles").select("school_id").eq("id", user.id).single();
     if (!prof?.school_id) {
       setNeedsSetup(true);
@@ -73,7 +83,6 @@ export default function SchoolHome() {
       return;
     }
     let { data: sch } = await sb.from("schools").select("*").eq("id", prof.school_id).single();
-    // Auto-generate join_code if it's missing (legacy schools created before migration 07)
     if (sch && !sch.join_code) {
       let code = generateQuizCode();
       for (let i = 0; i < 4; i++) {
@@ -85,8 +94,8 @@ export default function SchoolHome() {
       if (updated) sch = updated;
     }
     setSchool(sch as School);
+    setCallerIsHead((sch as School)?.super_teacher_id === user.id);
 
-    // Pull all profiles in this school
     const { data: members } = await sb
       .from("profiles")
       .select("id, role, full_name")
@@ -96,7 +105,6 @@ export default function SchoolHome() {
     const teacherMembers = memberList.filter((m) => m.role === "teacher");
     const studentMembers = memberList.filter((m) => m.role === "student");
 
-    // Per-teacher: classes + quizzes
     const teacherStats: TeacherRow[] = await Promise.all(
       teacherMembers.map(async (t) => {
         const [{ count: classCt }, { count: quizCt }, quizIds] = await Promise.all([
@@ -122,9 +130,6 @@ export default function SchoolHome() {
     teacherStats.sort((a, b) => (b.quizCount + b.classCount) - (a.quizCount + a.classCount));
     setTeachers(teacherStats);
 
-    // All classes in this school. Owner_id may be null for unassigned classes
-    // (the principal creates the class first; the primary teacher is assigned later),
-    // so we query by school_id, not by the owner_id IN list.
     let classRows: ClassRow[] = [];
     {
       const { data: cs } = await sb
@@ -136,11 +141,6 @@ export default function SchoolHome() {
       classRows = await Promise.all(
         list.map(async (c) => {
           const owner = c.owner_id ? teacherMembers.find((t) => t.id === c.owner_id) : null;
-
-          // Class-scoped quiz_ids: only quizzes that were actually
-          // assigned to THIS class. Personal practice attempts by
-          // members would otherwise inflate avgScore / attemptCount
-          // with non-class-quiz data.
           const classAssignedQuizIds = await loadClassQuizIdsForClasses(sb, [c.id]);
           const assignedIdsArr = Array.from(classAssignedQuizIds);
 
@@ -157,7 +157,6 @@ export default function SchoolHome() {
           ]);
           type CtRow = { teacher_id: string; profile: { full_name: string | null } | null };
           const primaryName = (ct as unknown as CtRow | null)?.profile?.full_name || owner?.full_name || null;
-          // simple class-wide score using all submitted attempts (close enough)
           const scoreAtts = (atts as Array<{ score: number; total: number }> | null) || [];
           const ratios = scoreAtts.filter((a) => a.total > 0).map((a) => (a.score / a.total) * 100);
           const avg = ratios.length ? Math.round(ratios.reduce((s, x) => s + x, 0) / ratios.length) : null;
@@ -175,8 +174,6 @@ export default function SchoolHome() {
     }
     setClasses(classRows);
 
-    // School-wide aggregate stats — scoped to class-assigned
-    // quizzes only. Personal practice never enters these numbers.
     const studentIds = studentMembers.map((s) => s.id);
     let attCount = 0, avgScore = 0;
     if (studentIds.length > 0) {
@@ -216,7 +213,7 @@ export default function SchoolHome() {
   async function saveSchoolName() {
     setRenameErr(null);
     const next = draftName.trim();
-    if (!next) return setRenameErr("School name can’t be empty.");
+    if (!next) return setRenameErr("School name can't be empty.");
     if (!school) return;
     setSavingName(true);
     try {
@@ -242,7 +239,7 @@ export default function SchoolHome() {
     setTransferErr(null);
     setTransferOk(null);
     const email = transferEmail.trim().toLowerCase();
-    if (!email) return setTransferErr("Enter the new Admin Head’s email.");
+    if (!email) return setTransferErr("Enter the new Admin Head's email.");
     if (!confirm(
       `Transfer the Admin Head role to ${email}?\n\n` +
       `You will be demoted to a regular teacher in this school. ` +
@@ -264,12 +261,10 @@ export default function SchoolHome() {
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json?.error || "Transfer failed.");
       setTransferOk(
-        `Done. ${email} is now Admin Head. You’ll be redirected to the teacher dashboard.`
+        `Done. ${email} is now Admin Head. You'll be redirected to the teacher dashboard.`
       );
       setTransferEmail("");
       setTransferOpen(false);
-      // Give the user a moment to read the success, then bounce them out
-      // since they are no longer a super_teacher.
       setTimeout(() => { window.location.href = "/teacher"; }, 2000);
     } catch (e) {
       setTransferErr(e instanceof Error ? e.message : "Transfer failed.");
@@ -286,7 +281,6 @@ export default function SchoolHome() {
       const sb = supabaseBrowser();
       const { data: { user } } = await sb.auth.getUser();
       if (!user) throw new Error("Not signed in.");
-      // Generate a unique join code teachers can use to self-join
       let join_code = generateQuizCode();
       for (let i = 0; i < 4; i++) {
         const { data: existing } = await sb.from("schools").select("id").eq("join_code", join_code).maybeSingle();
@@ -303,7 +297,6 @@ export default function SchoolHome() {
       setNeedsSetup(false);
       await load();
     } catch (e) {
-      // Supabase errors come back as plain objects with a `message` field, not Error instances
       const err = e as { message?: string; code?: string; details?: string };
       const msg = err?.message || "Could not create school.";
       const hint = err?.code === "PGRST204" || /column .* (does not exist|join_code)/i.test(msg)
@@ -386,9 +379,12 @@ export default function SchoolHome() {
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <Link href="/school/reports" className="btn btn-primary"><BarChart3 size={14} /> Bloom Pulse</Link>
-          <button className="btn btn-secondary" onClick={() => setTransferOpen((v) => !v)}>
-            <UserCog size={14} /> Transfer Admin Head
-          </button>
+          {/* Transfer Admin Head is reserved for the Head — Deputies don't see this. */}
+          {callerIsHead && (
+            <button className="btn btn-secondary" onClick={() => setTransferOpen((v) => !v)}>
+              <UserCog size={14} /> Transfer Admin Head
+            </button>
+          )}
           <Link href="/school/teachers" className="btn btn-secondary"><Settings size={14} /> Manage teachers</Link>
         </div>
       </div>
@@ -398,7 +394,7 @@ export default function SchoolHome() {
           <h3 className="font-semibold mb-2 flex items-center gap-2"><UserCog size={16} /> Transfer Admin Head role</h3>
           <p className="text-sm muted mb-3">
             Hand the school over to another teacher. They must already have a BloomIQ account.
-            You’ll keep your account but be demoted to a regular teacher in this school.
+            You&apos;ll keep your account but be demoted to a regular teacher in this school.
           </p>
           <div className="flex flex-wrap gap-2">
             <input
@@ -425,7 +421,18 @@ export default function SchoolHome() {
         </div>
       )}
 
-      {/* School join code — share this with teachers */}
+      {/* Renewal banner — only visible to super-teachers whose school
+          plan is within the 7-day warning window or already expired. */}
+      {!access.isLoading && (
+        <RenewBanner
+          expiresAt={access.expiresAt}
+          isExpired={access.isExpired}
+          planSlug={access.planSlug}
+          source={access.source}
+          schoolName={school?.name || null}
+        />
+      )}
+
       {school?.join_code && (
         <div className="card mt-4 flex items-center justify-between gap-4 flex-wrap">
           <div>
@@ -445,14 +452,9 @@ export default function SchoolHome() {
       <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 mt-6">
         <Stat label="Teachers"     value={stats?.teachers}  icon={UserRound}     color="from-emerald-500 to-emerald-600" />
         <Stat label="Classes"      value={stats?.classes}   icon={Building2}     color="from-sky-500 to-sky-600" />
-        <Stat label="Tests made" value={stats?.quizzes}   icon={ListChecks}    color="from-amber-500 to-amber-600" />
+        <Stat label="Tests made"   value={stats?.quizzes}   icon={ListChecks}    color="from-amber-500 to-amber-600" />
         <Stat label="Attempts"     value={stats?.attempts}  icon={ClipboardList} color="from-violet-500 to-violet-600" sub={stats && stats.attempts > 0 ? `Avg ${stats.avgScore}%` : undefined} />
       </div>
-
-      {/* Principal AI tile row used to live here (Principal Coach,
-          This Week). Both are now first-class sidebar destinations
-          under the ASSIST group, so the tile row was just duplicate
-          navigation and has been removed to declutter the home page. */}
 
       <h2 className="h2 mt-8 mb-3 flex items-center gap-2"><UserRound size={20} /> Teacher activity</h2>
       {teachers.length === 0 ? (

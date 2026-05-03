@@ -33,7 +33,13 @@ export async function POST(req: Request) {
     const { data: { user } } = await sb.auth.getUser();
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-    // 1) Caller must be a super_teacher with a school.
+    // 1) Caller must be the school's Admin HEAD specifically — not just any
+    //    super_teacher. After the Deputy Admin Head feature shipped (migration
+    //    47), Deputies are also super_teachers, but they are NOT allowed to
+    //    transfer the Head role: only the Head can name a successor (otherwise
+    //    a Deputy could side-step the Head and seize the school). We verify by
+    //    checking schools.super_teacher_id against the caller's user id; the
+    //    role check stays as a fast pre-filter.
     const { data: me } = await sb
       .from("profiles")
       .select("role, school_id")
@@ -44,6 +50,23 @@ export async function POST(req: Request) {
         { error: "Only the current Admin Head can transfer the role." },
         { status: 403 }
       );
+    }
+    {
+      // Use the service-role client because schools select RLS would let a
+      // Deputy read the row anyway, but we want the same answer regardless of
+      // RLS evolution. supabaseAdmin() is initialised below; promote here.
+      const adminPre = supabaseAdmin();
+      const { data: schoolRow } = await adminPre
+        .from("schools")
+        .select("super_teacher_id")
+        .eq("id", me.school_id)
+        .maybeSingle();
+      if (!schoolRow || schoolRow.super_teacher_id !== user.id) {
+        return NextResponse.json(
+          { error: "Only the Admin Head can transfer the role. Deputies cannot." },
+          { status: 403 }
+        );
+      }
     }
 
     const body = await req.json().catch(() => ({}));

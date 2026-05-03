@@ -82,6 +82,60 @@ admin-rostered. Same logic for password resets — teacher administers.
 | Granting more admins | `/admin/team` → invite by email. Recipient signs up normally; the invite-claim mechanism flips `platform_admin` on first auth. Two-eyes rule for plan-proposal approval kicks in once a second admin exists. |
 | Plan / school | Platform admins are exclusive — no school, no plan badge, no role-based dashboard ping-pong. They live in `/admin/*` only. |
 
+### Bootstrapping a test Admin Head (dev only)
+
+`/signup` intentionally does NOT expose the Admin Head role — production
+Admin Heads are provisioned by platform admins via `/admin/onboard-school`
+after the school's payment lands (which sends a Supabase invite email).
+That's the right design for prod, but it makes local testing painful when
+SMTP isn't wired up and the invite email never arrives.
+
+For dev / staging only, use this SQL block in the Supabase SQL editor.
+It (1) confirms the email so login works without clicking a link,
+(2) creates a fresh school with a random join code, (3) promotes the user
+to `super_teacher` and points `profiles.school_id` at the new school.
+Idempotent on the email-confirm step; not idempotent on the school
+creation (running twice creates two schools — clean up if needed).
+
+```sql
+-- Substitute the email and school name. The user must already exist in
+-- auth.users (sign up first via /signup?role=teacher, or via Supabase
+-- dashboard "Add user").
+do $$
+declare uid uuid; sid uuid;
+begin
+  select id into uid from auth.users where email = 'principal@test.com';
+  if uid is null then
+    raise exception 'No auth.users row for principal@test.com — sign up first.';
+  end if;
+  insert into public.schools (name, super_teacher_id, join_code)
+    values ('Test School', uid, upper(substr(md5(random()::text), 1, 6)))
+    returning id into sid;
+  update public.profiles set role = 'super_teacher', school_id = sid where id = uid;
+  update auth.users set email_confirmed_at = coalesce(email_confirmed_at, now()),
+                        confirmed_at       = coalesce(confirmed_at,       now())
+   where id = uid;
+end $$;
+```
+
+After this, the user can sign in on the **Admin Head (Principal)** tab at
+`/login` with their original password, lands on `/school`, and sees the
+school admin sidebar. From there the same flows apply: invite teachers,
+promote up to 2 deputies, set acting covers, etc.
+
+**Forgot your test password?** One more SQL block, run in Supabase SQL
+editor (the `crypt`/`gen_salt` extensions ship with Supabase):
+
+```sql
+update auth.users
+   set encrypted_password = crypt('NewTempPassword123!', gen_salt('bf')),
+       email_confirmed_at = coalesce(email_confirmed_at, now())
+ where email = 'principal@test.com';
+```
+
+For prod, do not use either of these directly — go through the
+platform-admin invite flow at `/admin/onboard-school` instead.
+
 ### Common edge cases to keep in mind
 
 - **A user upgrading from teacher → super_teacher** keeps the same auth user and profile row; only `role` flips. Their school_id stays.
@@ -92,7 +146,211 @@ admin-rostered. Same logic for password resets — teacher administers.
 
 ---
 
-## 🆕 Latest session — 2026-05-02 evening (Role-aware shells, scope separation, Quiz→Test rename, upgrade-extension billing, retake/extension flow)
+## 🆕 Latest session — 2026-05-03 (Business continuity: Deputy Admin Heads + immediate primary reassignment)
+
+The first hour of the session shipped Option 1 (school-plan renewal banner
+for super-teachers — see the section below). The rest tackled a real
+operational gap surfaced by the user: every school had exactly one Admin
+Head and every class had exactly one primary teacher. If either went on
+unplanned leave, that school or class was effectively frozen.
+
+The fix is two complementary mechanisms — A1 + B3 — chosen over the heavier
+options because they preserve the single-Head accountability model while
+adding redundancy where it actually matters.
+
+### A1: Deputy Admin Head
+
+- **Migration `47_deputy_admin_head.sql`**:
+  - Loosens `schools update` RLS so any super_teacher whose `school_id`
+    matches the row can update — Deputies can now rename the school,
+    upload the logo, edit settings.
+  - Adds two SECURITY DEFINER helpers: `count_school_deputies(sid)` and
+    `is_school_admin(sid)` for use by API and future RLS rules.
+- **API `POST /api/admin/school/deputy`**:
+  - Body `{ teacher_id, action: "promote" | "demote" }`.
+  - Auth: caller must be the Head (the profile referenced by
+    `schools.super_teacher_id`). Deputies cannot promote/demote each
+    other — by design, to keep accountability clean.
+  - Promote: target must currently be `role='teacher'` in the same
+    school. Cap is 2 deputies per school, enforced in API.
+  - Demote: target must currently be a Deputy (super_teacher in school
+    AND not the Head). Reverts to `role='teacher'`; classes/quizzes
+    intact.
+- **API `GET /api/admin/school/deputy`**: returns Head + Deputies for
+  any super_teacher in the school. Used by future UI surfaces.
+- **`/school/teachers` UI rewrite**:
+  - Lists Head + Deputies + regular teachers in one table with
+    "Admin Head" / "Deputy" / "Primary" / "Co-teacher" badges.
+  - Head sees "Make deputy" / "Step down" buttons (gated client-side
+    too); Deputies don't.
+  - "Business continuity" explainer card at the top with the cap
+    (currently {N} of 2 deputies appointed).
+  - Confirmation modal explains the implications of each action.
+- **`/school` home**: hides the "Transfer Admin Head" button for
+  Deputies (only the Head can name a successor; this isn't gating
+  Deputy reach, just preventing a no-op flow). The `RenewBanner` and
+  every other surface continues to render identically.
+
+Permissions matrix:
+- **Head**: full powers, including promote/demote deputies, transfer Head.
+- **Deputy**: full powers EXCEPT promote/demote deputies and transfer Head.
+
+Cap of 2 was a deliberate choice — more deputies dilute accountability,
+and 2 is enough redundancy in any normally-staffed school. Easy to bump
+later if needed.
+
+### B3: Immediate primary-teacher reassignment
+
+The `/school/classes` page already had primary-reassign UI, but it always
+ran through the invite/accept flow — fine for normal onboarding, broken
+for "Mr Sharma is unreachable for 6 weeks, I need Ms Patel running 9-A
+right now."
+
+- **API `POST /api/admin/classes/[id]/primary`** gained an `immediate: true`
+  flag. When set:
+  - Caller must be the Admin Head or a Deputy (super_teacher in the same
+    school).
+  - `teacher_id` is required (not email — the target must already be
+    in-school for safety).
+  - Demotes any existing primary to `role='co'` so they keep class
+    access for when they return.
+  - Upserts target into `class_teachers` with `role='primary'`.
+  - Mirrors `classes.owner_id` to target.
+  - Clears any pending primary invite.
+- **`/school/classes` UI**: picking from the in-school dropdown now uses
+  `immediate: true` automatically and triggers a confirm dialog with
+  copy that explicitly mentions unplanned-leave coverage. Typing an
+  email of someone outside the school still uses the gentler invite
+  flow. Helper text spells out the difference.
+
+Effect on a continuity scenario:
+
+> Friday afternoon: primary teacher Mr Sharma calls in for an
+> indefinite medical leave. Admin Head opens `/school/classes`,
+> clicks **Change** on each of Mr Sharma's classes, picks Ms Patel
+> from the in-school dropdown, confirms. Ms Patel is the primary on
+> Monday morning; Mr Sharma is auto-demoted to co-teacher and keeps
+> his data when he returns.
+
+### Option B follow-up: Acting primary cover (migration 48)
+
+User pushback on the original immediate-reassign behavior was sharp:
+*"shouldn't the previous primary remain with primary privileges, he might
+be back very soon within a week or so… it becomes administrative overhead
+to keep reassigning."* Right call — demoting the canonical primary all the
+way to co-teacher on every leave was too heavy.
+
+Replaced the demote-to-co semantics with a third role on `class_teachers`:
+**`'acting'`**. Migration 48 widens the role enum, adds a `ct_one_acting_per_class`
+unique partial index, and updates `is_class_primary()` /
+`is_primary_for_student()` to accept both `'primary'` and `'acting'` —
+which means the 30+ RLS policies that gate class-management actions Just
+Work for acting cover with zero per-policy edits. A new
+`is_class_canonical_primary()` helper is available for the rare UI cases
+that need to distinguish title-holder from cover.
+
+API shape on `POST /api/admin/classes/[id]/primary`:
+- `{ teacher_id, immediate: true }` now sets up an **acting cover** rather
+  than a hard reassign. Canonical primary stays untouched (keeps title +
+  `owner_id`); the picked teacher gets `role='acting'`.
+- New `{ end_acting: true }` mode deletes any acting row for the class.
+  Idempotent. Reserved to school admins (Head + Deputies).
+
+UI on `/school/classes`:
+- The primary-teacher cell now stacks the canonical primary on top and the
+  "🛡 Acting cover" pill below when one is active.
+- The picker confirm dialog explains the cover semantics: *"Mr Sharma stays
+  as the primary teacher and keeps full access. Ms Patel gets equivalent
+  privileges as a temporary cover. When Mr Sharma returns, click 'End
+  acting cover' — no need to re-assign anyone."*
+- An **End cover** button appears next to the row when an acting row exists.
+  One click ends the cover; the canonical primary is unaffected.
+
+Net effect on the leave scenario: Mr Sharma → leave → admin picks Ms Patel
+from dropdown (one click per class, sets acting cover) → Ms Patel runs the
+class with full primary-level powers → Mr Sharma returns → admin clicks
+**End cover** (one click per class) → state restored to exactly what it was
+before. No demotion, no re-promotion, no privilege churn for Mr Sharma
+between leave and return.
+
+### File-tool divergence regression
+
+Same disk-vs-cache issue as 2026-05-02 evening reappeared: several
+`Edit` calls succeeded according to the tool but truncated the file
+on disk halfway through. The recovery pattern (read full intended
+state via `Read`, rewrite the disk file in one shot via bash heredoc)
+is becoming the routine fallback. Files repaired this way today:
+`primary/route.ts`, `school/page.tsx`, `school/teachers/page.tsx`,
+`school/classes/page.tsx`. New files (`deputy/route.ts`,
+`migration 47`) landed cleanly via `Write`.
+
+### Test plan (manual, next session)
+
+1. **Promote / demote happy path** — Head promotes T1; T1 sees the
+   Admin sidebar; T1 cannot see "Transfer Admin Head" or "Make
+   deputy" controls; Head demotes T1; T1's classes intact.
+2. **Cap enforcement** — Head promotes T1, T2; "Make deputy" disabled
+   on row T3 with the title tooltip explaining the cap.
+3. **Deputy can rename school + upload logo** — RLS loosening verified.
+4. **Deputy cannot transfer Head** — the button is hidden, AND the
+   server-side check now verifies `schools.super_teacher_id === auth.uid()`
+   in addition to `role === 'super_teacher'`. A Deputy who curl-POSTs the
+   transfer endpoint gets a 403 with a Deputy-specific message.
+5. **Immediate primary reassign** — Head picks Ms Patel from dropdown
+   on a Mr Sharma class; confirm dialog appears with mention of
+   unplanned leave; Ms Patel is primary, Mr Sharma is co-teacher,
+   `quiz_assignments` queries still find the class.
+6. **Email path still invite-based** — typing a non-school email still
+   creates a pending invite; confirm copy explains the gentler path.
+
+---
+
+## 🆕 Earlier session — 2026-05-03 morning (School-plan renewal banner for super-teachers)
+
+Small but important follow-up to yesterday's billing pipeline work.
+Independent paying students already saw a 7-day-warning + post-expiry
+banner on `/student` (driven by `RenewBanner` and `useFeatureAccess`).
+Super-teachers had no equivalent surface, which meant a school plan
+could lapse silently while the admin head sat on the dashboard.
+
+### What changed
+
+- **`components/RenewBanner.tsx`** — added an optional `schoolName?: string | null`
+  prop that flips the banner into "school-admin mode":
+  - Copy switches to "Your school's plan expires/expired …" instead of
+    "Your subscription …".
+  - The Razorpay "Renew now" button is replaced by a `mailto:support@bloomiq.app`
+    link with subject `Renew school plan — {schoolName}` and a pre-filled
+    body containing the plan slug + expiry date. School plans are billed
+    offline so this is the renewal path that actually works.
+  - Without `schoolName`, a `source === "school"` subscription is still
+    suppressed (school students never see the banner — they have nothing
+    to do about renewal).
+- **`app/school/page.tsx`** — imports `RenewBanner` and `useFeatureAccess`,
+  renders the banner immediately under the school header (above the join
+  code card) once `access` finishes loading, passing `schoolName={school?.name}`.
+
+### Why a banner and not an email cron (Options 2/3 deferred)
+
+Option 1 (this banner) was the cheapest and most visible surface — every
+super-teacher visit to `/school` either sees it or doesn't, which is enough
+to prevent silent lapses. Two heavier options were considered and parked:
+
+- **Option 2** — reminder email cron (T-7 / T-1 / T+0). Requires an
+  outbound email lane we don't have wired yet.
+- **Option 3** — mid-session expiry toast for users whose plan crosses
+  `expires_at` while they're on a page. Needs a global listener that
+  re-runs the real-time expiry check on a timer; not worth it until we
+  see a real complaint.
+
+Real-time expiry gating already happens in `useFeatureAccess` (compares
+`expires_at` to `Date.now()` on every load) and in `requireFeature()`
+server-side, so feature access flips off the moment a plan expires —
+the new banner only adds visibility, not enforcement.
+
+---
+
+## 🆕 Earlier session — 2026-05-02 evening (Role-aware shells, scope separation, Quiz→Test rename, upgrade-extension billing, retake/extension flow)
 
 A long session. Touched almost every dashboard, every sidebar, the
 billing pipeline, RLS-adjacent admin queries, and added two new
@@ -1534,108 +1792,4 @@ lib/
   bloom.ts, bloomReports.ts, bloomScore.ts
   classifier.ts                     topic-family classifier
   features.ts, featureAccess.ts     gating registry + hook + server check
-  studentGoalTiles.ts               goal-driven tile prioritisation
-  schoolContext.ts, teacherContext.ts, studentContext.ts   coach/brief snapshots
-  exam/{scoring,code}.ts            exam scoring + join-code helpers
-  types.ts, utils.ts
-
-supabase/
-  schema.sql                        original schema (run first)
-  migrations/01-28                  additive migrations (run in order; no 19)
-  RESET_AND_REBUILD.sql             stale (only ≤11) — regenerate before trusting
-
-scripts/
-  create-test-account.js
-  create-super-teacher.js
-
-tests/e2e/                          Playwright tests (auth helpers + per-role specs)
-```
-
----
-
-## 🔮 Backlog
-
-### Critical pre-deployment
-1. **Fix the 4 HIGH-severity RLS findings** (see RLS audit section). Currently any authenticated user can read every profile, every quiz, every quiz_question, and every approved question-bank item across the platform.
-2. Apply migrations 18, 20, 21, 22, 23, 24, 25, 26, 27, 28 to Supabase if not already.
-3. Wire `/api/cron/expire-subscriptions` to Supabase pg_cron / Vercel Cron / GitHub Actions.
-
-### Open follow-ups
-- Server-side `requireFeature(userId, key)` enforcement on feature route handlers — closes curl-bypass on dashboard's paywall
-- Per-subscription `extra_features` (give Alice a feature without raising her price)
-- Email reminders before/at/after expiry (plug into cron once SMTP wired — Resend recommended)
-- True auto-renewal via Razorpay Subscriptions API (Path B; Path A is buy-each-cycle)
-- Audit-log UI on `/admin/plans/[id]` (data already captured)
-- "Add only, never remove" enforcement on plan version transitions
-- Subscription cancel / manage UI for the student
-- School-plan purchase UI (today: "Talk to us" only on `/pricing`)
-- Razorpay webhook at `/api/checkout/webhook` for resilience (same SELECT → UPDATE/INSERT rule, never `onConflict`)
-- Branded receipt email via nodemailer in verify endpoint
-- Live class quiz: Supabase realtime channels instead of 2s polling
-- Worked-solution cache → DB persistence (currently in-memory per Node process)
-- Variants generator: feed misconception seeds (today it doesn't)
-- Empirical-difficulty: re-calibrate on schedule rather than only on-demand
-- Voice mode for Teach-Back (record audio → Whisper-style transcribe → same grading endpoint)
-- Auto-diagnose on quiz submit (background `/api/misconception/diagnose` after submit)
-- Climber: weekly leaderboard for siblings/study buddies (cohort-scoped)
-- X-Ray: multi-page PDF upload (current image path is one-image-at-a-time)
-- Per-attempt IP capture on quiz submissions (schema ready: `quiz_attempts.ip` + `.user_agent`)
-- Parent reports for independent students (`profiles.parent_email` ready)
-- Cron-scheduled weekly digest (Vercel Cron)
-- PDF export for exam papers (currently browser print only)
-- Inline question edit from question bank (today: edit in Review only)
-- Razorpay live-mode cutover (env-var swap; code is mode-agnostic)
-- Re-invite button on `/admin/onboard-school` for stuck pending invites
-- ToS acceptance backfill prompt for users created before 2026-04-30
-- Regenerate `RESET_AND_REBUILD.sql` from current schema + migrations 1-28
-- Clean up 7 legacy `.js` page stubs (`app/student/{myresults,practice,test}/page.js`, `app/teacher/{dashboard,myquizzes,quiz,upload}/page.js`)
-- Extract a shared `lib/api.ts` helper (`req.json().catch()` + auth + error responses) across ~50 routes
-- Tests for AI-heavy routes (currently page-render smoke only)
-- Fix 4 JSX errors in `Sidebar.tsx` so `tsc --noEmit -p tsconfig.check.json` is green
-
----
-
-## 🚨 Recovery — start here if dev is broken
-
-### 1. Reset dev environment
-```powershell
-Get-Process node -ErrorAction SilentlyContinue | Stop-Process -Force
-Remove-Item -Recurse -Force .next -ErrorAction SilentlyContinue
-Remove-Item -Recurse -Force node_modules\.cache -ErrorAction SilentlyContinue
-npm run dev
-```
-
-### 2. Clear browser auth tokens
-Open `http://localhost:3000` in incognito. Or normal window: F12 → Console → `localStorage.clear(); sessionStorage.clear(); location.reload();`. AuthHealer should also do this on app boot when it detects a stale refresh token.
-
-### 3. Recreate test accounts (bypasses email confirmation)
-```powershell
-node scripts/create-test-account.js teacher    test.teacher@example.com    TestPass123! "Test Teacher"    --reset
-node scripts/create-test-account.js student    test.student@example.com    TestPass123! "Test Student"    --reset
-node scripts/create-super-teacher.js           test.principal@example.com  TestPass123! "Test Principal"  --reset
-```
-
-### 4. Diagnostic order if still broken
-1. **Browser DevTools → Console** — look for red errors:
-   - `Refresh Token Not Found` → run the localStorage snippet from step 2
-   - `Could not find the 'X' column of 'Y' in the schema cache` → migration X not applied; run it + `notify pgrst, 'reload schema';`
-2. **Dev-server terminal** — compile errors live here.
-3. **Supabase → Authentication → Providers → Email** — make sure `Confirm email` is **OFF**.
-
----
-
-## 🤝 Contributing
-
-Private project. Follow the Sidebar policy + Edit-tool truncation rule + partial-index ON CONFLICT trap above when extending.
-
-Naming convention is **mandatory** for user-facing copy (Test/Quiz/Practice section). Database column names stay; only UI labels follow the rule.
-
-When adding a new gateable feature:
-1. Add a key + metadata to `lib/features.ts`.
-2. Use `useFeatureAccess()` (client) or `requireFeature()` (server) to gate.
-3. Wire `StudentFeatureTile` so locked tiles render dimmed and open `PaywallModal`.
-
-When adding a new table with per-user data:
-1. Always `enable row level security`.
-2. Scope SELECT to `auth.uid() = user_id` (or `is_super_for_user()` / `is_class_teacher()` helpers). Never `using (true)`.
-3. If you need a partial unique index, write it as `where user_id is not null` and never use `.upsert(...)` / `onConflict` against it — use SELECT → UPDATE/INSERT.
+ 

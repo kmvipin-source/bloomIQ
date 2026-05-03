@@ -7,14 +7,6 @@ import { Building2, ArrowLeft, Search, Plus } from "lucide-react";
 import { pct } from "@/lib/utils";
 import { loadClassQuizIdsForClasses } from "@/lib/studentScope";
 
-// === Class-naming standard ===========================================
-// Every class follows the canonical format:   Grade {N} · Section {X}
-// - Common grades 1..12 in the dropdown; "Other (specify)" lets the user
-//   type Pre-K, LKG, UKG, "11+12", or any school-specific label.
-// - Common sections A..H in the dropdown; "Other (specify)" lets the user
-//   type house names like "Saraswati", numbered sections, etc.
-// Class creation is INDEPENDENT of teacher assignment — the Admin Head sets
-// up class structure first, then assigns a primary teacher later.
 const GRADE_OPTIONS = Array.from({ length: 12 }, (_, i) => String(i + 1));
 const SECTION_OPTIONS = ["A", "B", "C", "D", "E", "F", "G", "H"];
 const OTHER = "__other__";
@@ -33,11 +25,16 @@ type ClassRow = {
   section: string | null;
   primaryId: string | null;
   primaryName: string | null;
-  primaryEmail: string | null;       // email of the linked primary, if known
-  pendingPrimaryEmail: string | null; // email of a pending invite (no account yet)
-  inviteStatus: "pending" | "accepted" | "declined" | null; // status of the latest invite for this class
-  inviteEmail: string | null; // email used in the latest invite (any status)
-  coTeacherCount: number;            // active (non-primary) co-teachers
+  primaryEmail: string | null;
+  pendingPrimaryEmail: string | null;
+  inviteStatus: "pending" | "accepted" | "declined" | null;
+  inviteEmail: string | null;
+  coTeacherCount: number;
+  // Acting cover (Option B / migration 48): the canonical primary stays
+  // primary while a fill-in is added as 'acting' for temporary leave cover.
+  // Both columns null when no cover is active.
+  actingId: string | null;
+  actingName: string | null;
   memberCount: number;
   quizCount: number;
   avgScore: number | null;
@@ -52,10 +49,6 @@ export default function SchoolClassesPage() {
   const [teacherFilter, setTeacherFilter] = useState<string>("all");
   const [gradeFilter, setGradeFilter] = useState<string>("all");
 
-  // New-class form state.
-  // gradeChoice/sectionChoice are the dropdown selection ("9", "A", or "__other__").
-  // gradeOther/sectionOther hold the free-text input when "Other" is picked.
-  // The effective value submitted is one or the other, depending on the choice.
   const [gradeChoice, setGradeChoice] = useState("");
   const [gradeOther, setGradeOther] = useState("");
   const [sectionChoice, setSectionChoice] = useState("");
@@ -63,12 +56,8 @@ export default function SchoolClassesPage() {
   const [creating, setCreating] = useState(false);
   const [createErr, setCreateErr] = useState<string | null>(null);
 
-  // Teachers in this school — used to populate the "Set primary teacher" picker.
   const [teachersInSchool, setTeachersInSchool] = useState<Teacher[]>([]);
 
-  // Per-class assign-primary UI: which class is being edited, the typed
-  // email, busy/error state, and (after save) a status message that says
-  // whether the teacher was linked directly or stored as a pending invite.
   const [assignFor, setAssignFor] = useState<string | null>(null);
   const [assignEmail, setAssignEmail] = useState("");
   const [assignBusy, setAssignBusy] = useState(false);
@@ -91,7 +80,6 @@ export default function SchoolClassesPage() {
     const { data: prof } = await sb.from("profiles").select("school_id").eq("id", user.id).single();
     if (!prof?.school_id) { setLoading(false); return; }
 
-    // Teachers-in-school for the assign-primary picker.
     const { data: teachers } = await sb
       .from("profiles")
       .select("id, full_name")
@@ -110,12 +98,17 @@ export default function SchoolClassesPage() {
 
     const hydrated: ClassRow[] = await Promise.all(
       classList.map(async (c) => {
-        const [{ data: ct }, { count: mCt }, { data: invite }, { count: coCount }] = await Promise.all([
+        const [{ data: ct }, { count: mCt }, { data: invite }, { count: coCount }, { data: acting }] = await Promise.all([
           sb.from("class_teachers").select("teacher_id, profile:profiles!class_teachers_teacher_id_fkey(full_name)").eq("class_id", c.id).eq("role", "primary").maybeSingle(),
           sb.from("class_members").select("student_id", { count: "exact", head: true }).eq("class_id", c.id),
           sb.from("class_teacher_invites").select("email, status, responded_at").eq("class_id", c.id).eq("role", "primary").order("responded_at", { ascending: false, nullsFirst: false }).maybeSingle(),
           sb.from("class_teachers").select("teacher_id", { count: "exact", head: true }).eq("class_id", c.id).eq("role", "co"),
+          sb.from("class_teachers").select("teacher_id, profile:profiles!class_teachers_teacher_id_fkey(full_name)").eq("class_id", c.id).eq("role", "acting").maybeSingle(),
         ]);
+        type ActingRow = { teacher_id: string; profile: { full_name: string | null } | null };
+        const actingRow = acting as unknown as ActingRow | null;
+        const actingId = actingRow?.teacher_id || null;
+        const actingName = actingRow?.profile?.full_name || null;
         type CtRow = { teacher_id: string; profile: { full_name: string | null } | null };
         const ctRow = ct as unknown as CtRow | null;
         const primaryId = ctRow?.teacher_id || null;
@@ -130,9 +123,6 @@ export default function SchoolClassesPage() {
 
         const { data: members } = await sb.from("class_members").select("student_id").eq("class_id", c.id);
         const studentIds = ((members as Array<{ student_id: string }>) || []).map((m) => m.student_id);
-        // Per-class avgScore is scoped to attempts on quizzes
-        // assigned to THIS class. Personal practice would otherwise
-        // distort the class-level metric.
         const classAssignedQuizIds = await loadClassQuizIdsForClasses(sb, [c.id]);
         const assignedIdsArr = Array.from(classAssignedQuizIds);
         let avgScore: number | null = null;
@@ -155,11 +145,13 @@ export default function SchoolClassesPage() {
           section: c.section,
           primaryId,
           primaryName,
-          primaryEmail: null,  // not surfaced for now; we already have the name
+          primaryEmail: null,
           pendingPrimaryEmail,
           inviteStatus,
           inviteEmail,
           coTeacherCount: coCount || 0,
+          actingId,
+          actingName,
           memberCount: mCt || 0,
           quizCount: qCt || 0,
           avgScore,
@@ -170,6 +162,40 @@ export default function SchoolClassesPage() {
     setLoading(false);
   }
   useEffect(() => { load(); }, []);
+
+  // End acting cover — used when the canonical primary returns from leave
+  // and the temporary cover should go away. One click per class; no
+  // re-reassign of primary required (that's the whole point of Option B).
+  async function endActingCover(classId: string, primaryName: string | null, actingName: string | null) {
+    if (!confirm(
+      `End the acting cover on this class?
+
+` +
+      (actingName ? `${actingName} will lose acting privileges and revert to a regular co-teacher relationship (if they had one), or be removed from the class. ` : "") +
+      (primaryName ? `${primaryName} stays as the primary teacher.` : "")
+    )) return;
+    setAssignErr(null);
+    setAssignStatus(null);
+    setAssignBusy(true);
+    try {
+      const sb = supabaseBrowser();
+      const { data: { session } } = await sb.auth.getSession();
+      if (!session) throw new Error("Not signed in");
+      const r = await fetch(`/api/admin/classes/${classId}/primary`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ end_acting: true }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error || "Failed");
+      setAssignStatus("✅ Acting cover ended.");
+      await load();
+    } catch (e) {
+      setAssignErr(e instanceof Error ? e.message : "Could not end acting cover");
+    } finally {
+      setAssignBusy(false);
+    }
+  }
 
   async function assignPrimary(classId: string, email: string | null) {
     setAssignErr(null);
@@ -191,8 +217,8 @@ export default function SchoolClassesPage() {
       let raw = "";
       try { raw = await res.text(); json = raw ? JSON.parse(raw) : {}; } catch {}
       if (!res.ok) throw new Error(json?.error || `HTTP ${res.status}: ${raw.slice(0,200)}`);
-      if (json.status === "linked") setAssignStatus("\u2705 Linked — that teacher is now the primary.");
-      else if (json.status === "pending") setAssignStatus("\u23f3 No account yet for that email. The class will auto-link when they sign up. Use \u201cCopy invite\u201d to share the message.");
+      if (json.status === "linked") setAssignStatus("✅ Linked — that teacher is now the primary.");
+      else if (json.status === "pending") setAssignStatus("⏳ No account yet for that email. The class will auto-link when they sign up. Use “Copy invite” to share the message.");
       else if (json.status === "unassigned") setAssignStatus("Class is now unassigned.");
       setAssignFor(null);
       setAssignEmail("");
@@ -207,7 +233,7 @@ export default function SchoolClassesPage() {
   function copyInvite(c: ClassRow, email: string) {
     const origin = typeof window !== "undefined" ? window.location.origin : "";
     const msg =
-      `Hi! I\u2019ve set you as the primary teacher of ${c.name} on BloomIQ. ` +
+      `Hi! I’ve set you as the primary teacher of ${c.name} on BloomIQ. ` +
       `Sign up at ${origin}/signup using this email (${email}) and pick the Teacher role. ` +
       `The class will appear on your dashboard automatically once you sign in.`;
     if (typeof navigator !== "undefined" && navigator.clipboard) {
@@ -238,16 +264,12 @@ export default function SchoolClassesPage() {
         },
         body: JSON.stringify({ grade, section }),
       });
-      // If the server returns non-JSON (rare — usually only when something
-      // crashes before the route handler), keep the raw text around so we
-      // can surface it instead of the generic "Could not create class".
       let json: { error?: string; ok?: boolean } = {};
       let rawText = "";
       try {
         rawText = await res.text();
         json = rawText ? JSON.parse(rawText) : {};
       } catch {
-        // not JSON
       }
       if (!res.ok) {
         const detail = json?.error || (rawText ? rawText.slice(0, 200) : "");
@@ -275,7 +297,6 @@ export default function SchoolClassesPage() {
   const grades = useMemo(() => {
     const set = new Set<string>();
     rows.forEach((r) => r.grade && set.add(r.grade));
-    // Numeric grades sort numerically; non-numeric (Pre-K, LKG) drop to the end alphabetically.
     return Array.from(set).sort((a, b) => {
       const an = Number(a), bn = Number(b);
       if (!isNaN(an) && !isNaN(bn)) return an - bn;
@@ -322,7 +343,6 @@ export default function SchoolClassesPage() {
         <div className="card"><div className="text-xs muted uppercase font-semibold">Avg score across classes</div><div className="text-3xl font-bold">{overall.avg ? `${overall.avg}%` : "—"}</div></div>
       </div>
 
-      {/* New class — independent of teacher assignment. Just structure. */}
       <div className="card mt-6">
         <h3 className="font-semibold mb-3 flex items-center gap-2"><Plus size={16} /> New class</h3>
 
@@ -407,7 +427,6 @@ export default function SchoolClassesPage() {
         </div>
       )}
 
-      {/* Filters */}
       <div className="card mt-6 flex flex-wrap gap-3 items-center">
         <div className="relative flex-1 min-w-[200px]">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -448,26 +467,34 @@ export default function SchoolClassesPage() {
                     <div className="font-medium">{c.name}</div>
                   </td>
                   <td className="px-4 py-3">
-                    {c.primaryName ? (
-                      <span className="inline-flex items-center gap-1.5 flex-wrap">
-                        <span className="text-[10px] uppercase tracking-wide font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5">✅ Accepted</span>
-                        <span>{c.primaryName}</span>
-                      </span>
-                    ) : c.inviteStatus === "pending" && c.pendingPrimaryEmail ? (
-                      <span className="inline-flex items-center gap-1.5 italic flex-wrap">
-                        <span className="text-[10px] uppercase tracking-wide font-bold text-sky-800 bg-sky-50 border border-sky-200 rounded-full px-2 py-0.5">⏳ Pending</span>
-                        <span className="text-slate-700">{c.pendingPrimaryEmail}</span>
-                      </span>
-                    ) : c.inviteStatus === "declined" ? (
-                      <span className="inline-flex items-center gap-1.5 italic flex-wrap">
-                        <span className="text-[10px] uppercase tracking-wide font-bold text-red-800 bg-red-50 border border-red-200 rounded-full px-2 py-0.5">❌ Rejected</span>
-                        <span className="text-slate-700">{c.inviteEmail}</span>
-                      </span>
-                    ) : (
-                      <span className="text-[10px] uppercase tracking-wide font-bold text-amber-800 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5">
-                        Unassigned
-                      </span>
-                    )}
+                    <div className="flex flex-col gap-1">
+                      {c.primaryName ? (
+                        <span className="inline-flex items-center gap-1.5 flex-wrap">
+                          <span className="text-[10px] uppercase tracking-wide font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5">✅ Accepted</span>
+                          <span>{c.primaryName}</span>
+                        </span>
+                      ) : c.inviteStatus === "pending" && c.pendingPrimaryEmail ? (
+                        <span className="inline-flex items-center gap-1.5 italic flex-wrap">
+                          <span className="text-[10px] uppercase tracking-wide font-bold text-sky-800 bg-sky-50 border border-sky-200 rounded-full px-2 py-0.5">⏳ Pending</span>
+                          <span className="text-slate-700">{c.pendingPrimaryEmail}</span>
+                        </span>
+                      ) : c.inviteStatus === "declined" ? (
+                        <span className="inline-flex items-center gap-1.5 italic flex-wrap">
+                          <span className="text-[10px] uppercase tracking-wide font-bold text-red-800 bg-red-50 border border-red-200 rounded-full px-2 py-0.5">❌ Rejected</span>
+                          <span className="text-slate-700">{c.inviteEmail}</span>
+                        </span>
+                      ) : (
+                        <span className="text-[10px] uppercase tracking-wide font-bold text-amber-800 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5">
+                          Unassigned
+                        </span>
+                      )}
+                      {c.actingName && (
+                        <span className="inline-flex items-center gap-1.5 flex-wrap">
+                          <span className="text-[10px] uppercase tracking-wide font-bold text-violet-800 bg-violet-50 border border-violet-200 rounded-full px-2 py-0.5">🛡 Acting cover</span>
+                          <span className="text-slate-700">{c.actingName}</span>
+                        </span>
+                      )}
+                    </div>
                   </td>
                   <td className="px-4 py-3 text-right">{c.memberCount}</td>
                   <td className="px-4 py-3 text-right">{c.quizCount}</td>
@@ -497,8 +524,24 @@ export default function SchoolClassesPage() {
                         setAssignStatus(null);
                       }}
                     >
-                      {c.primaryName || c.pendingPrimaryEmail ? "Change" : "Set primary"}
+                      {c.actingName
+                        ? "Change cover"
+                        : c.primaryName
+                          ? "Cover"
+                          : c.pendingPrimaryEmail
+                            ? "Re-invite"
+                            : "Assign primary"}
                     </button>
+                    {c.actingName && (
+                      <button
+                        className="btn btn-ghost text-xs ml-1"
+                        onClick={() => endActingCover(c.id, c.primaryName, c.actingName)}
+                        disabled={assignBusy}
+                        title="Remove the acting cover. The canonical primary stays primary."
+                      >
+                        End cover
+                      </button>
+                    )}
                   </td>
                 </tr>
                 {assignFor === c.id && (
@@ -515,21 +558,35 @@ export default function SchoolClassesPage() {
                               onChange={async (e) => {
                                 const tid = e.target.value;
                                 if (!tid) return;
+                                const targetName = teachersInSchool.find((t) => t.id === tid)?.full_name || "this teacher";
+                                const hasPrimary = !!c.primaryName;
+                                const confirmMsg = hasPrimary
+                                  ? `Add ${targetName} as the ACTING COVER on ${c.name}?\n\n` +
+                                    `${c.primaryName} stays as the primary teacher and keeps full access. ` +
+                                    `${targetName} gets equivalent privileges as a temporary cover. ` +
+                                    `When ${c.primaryName} returns, click "End acting cover" — no need to re-assign anyone.`
+                                  : `Make ${targetName} the primary teacher of ${c.name}?`;
+                                if (!confirm(confirmMsg)) {
+                                  e.target.value = "";
+                                  return;
+                                }
                                 const sb = supabaseBrowser();
                                 const { data: { session } } = await sb.auth.getSession();
                                 if (!session) return;
-                                // Use teacher_id directly so we don't need to look up email client-side.
                                 setAssignBusy(true);
                                 try {
                                   const r = await fetch(`/api/admin/classes/${c.id}/primary`, {
                                     method: "POST",
                                     headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
-                                    body: JSON.stringify({ teacher_id: tid }),
+                                    body: JSON.stringify({ teacher_id: tid, immediate: true }),
                                   });
                                   const j = await r.json();
                                   if (!r.ok) throw new Error(j?.error || "Failed");
                                   setAssignFor(null);
                                   setAssignEmail("");
+                                  setAssignStatus(c.primaryName
+                                    ? `✅ ${targetName} is now the acting cover on ${c.name}. ${c.primaryName} stays as primary.`
+                                    : `✅ ${targetName} is now the primary teacher of ${c.name}.`);
                                   await load();
                                 } catch (err) {
                                   setAssignErr(err instanceof Error ? err.message : "Failed");
@@ -582,8 +639,14 @@ export default function SchoolClassesPage() {
                         </button>
                       </div>
                       <p className="text-xs muted mt-2">
-                        If the teacher already has a BloomIQ account with this email, they’ll be linked instantly.
-                        Otherwise we’ll save a pending invite and link them automatically when they sign up.
+                        <strong>Picking from the dropdown</strong> adds an <em>acting cover</em> — the
+                        canonical primary keeps the role and full access; the cover gets equivalent
+                        privileges temporarily. When the primary returns, click <strong>End acting cover</strong>
+                        on the row. No re-assignment needed.
+                        <br />
+                        <strong>Typing an email</strong> sends an invite the new teacher must accept —
+                        the gentler path for permanent onboarding (currently this still goes through
+                        the legacy primary-transfer flow; tightened in a follow-up).
                       </p>
                       {assignErr && (
                         <div className="mt-2 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{assignErr}</div>

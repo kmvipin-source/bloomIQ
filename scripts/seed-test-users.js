@@ -61,9 +61,27 @@ const SCHOOL_DOMAIN = "bloomiq.invalid"; // synthetic domain for school-student 
 
 // All emails the script will manage — listed here so --reset knows what to wipe.
 const TEST_USERS = {
+  // BloomIQ internal staff. Logs in at /staff (the hidden platform-admin
+  // route), not the public /login. profile.platform_admin = true.
+  platformAdmin: {
+    email: "ops@bloomiq.example.com",
+    fullName: "Ops Anand",
+    role: "teacher",          // role is irrelevant for platform_admin gating;
+    isSchoolStudent: false,   //   we just need any non-null role for the trigger.
+  },
   schoolAdmin: {
     email: "principal@testacademy.example.com",
     fullName: "Principal Patel",
+    role: "super_teacher",
+    isSchoolStudent: false,
+  },
+  // Pre-promoted Deputy Admin Head (added after migration 47). Same school
+  // as the primary admin; role flips to super_teacher post-seed so the user
+  // can immediately log in as a Deputy and exercise the promote/demote +
+  // acting-cover flows without having to click through the UI first.
+  deputyAdmin: {
+    email: "deputy@testacademy.example.com",
+    fullName: "Deputy Devika",
     role: "super_teacher",
     isSchoolStudent: false,
   },
@@ -182,7 +200,9 @@ async function main() {
 
   // Collect every email this script manages, for --reset.
   const allEmails = [
+    TEST_USERS.platformAdmin.email,
     TEST_USERS.schoolAdmin.email,
+    TEST_USERS.deputyAdmin.email,
     TEST_USERS.primaryTeacher.email,
     TEST_USERS.coTeacher.email,
     ...TEST_USERS.schoolStudents.map((s) => s.email),
@@ -208,8 +228,32 @@ async function main() {
 
   console.log(`🌱 Seeding "${SCHOOL_NAME}" + test users...`);
 
+  // 0) Platform admin — BloomIQ internal staff. Must exist before anything
+  //    else in production (this is the user who runs /admin/onboard-school
+  //    to invite the Admin Head). For seed purposes we create it standalone:
+  //    no school, no class, no plan.
+  console.log("\n[0/8] Platform admin (BloomIQ staff)...");
+  const pa = TEST_USERS.platformAdmin;
+  const paUser = await createAuthUser(sb, { ...pa, password: PASSWORD });
+  await upsertProfile(sb, paUser.id, {
+    role: pa.role,
+    fullName: pa.fullName,
+    isSchoolStudent: pa.isSchoolStudent,
+  });
+  // Flip the platform_admin bit. The /staff login route gates on this,
+  // not on profiles.role. Profiles.role stays whatever it was (typically
+  // "teacher") — platform admins have an exclusive surface at /admin/*.
+  {
+    const { error: paErr } = await sb
+      .from("profiles")
+      .update({ platform_admin: true })
+      .eq("id", paUser.id);
+    if (paErr) throw new Error(`set platform_admin for ${pa.email}: ${paErr.message}`);
+  }
+  console.log(`   ✓ ${pa.email} (logs in at /staff, not /login)`);
+
   // 1) School admin (super_teacher) — created BEFORE the school so we have an admin ID to bind.
-  console.log("\n[1/6] School admin (super_teacher)...");
+  console.log("[1/8] School admin (super_teacher) — the Admin HEAD...");
   const sa = TEST_USERS.schoolAdmin;
   const saUser = await createAuthUser(sb, { ...sa, password: PASSWORD });
   await upsertProfile(sb, saUser.id, {
@@ -235,8 +279,22 @@ async function main() {
   // Link admin's profile to the school.
   await sb.from("profiles").update({ school_id: school.id }).eq("id", saUser.id);
 
+  // 2.5) Deputy Admin Head — pre-promoted to super_teacher on the same
+  //      school. They appear as "Deputy" on /school/teachers because
+  //      schools.super_teacher_id != them but their role IS super_teacher.
+  console.log("[2.5/8] Deputy Admin Head (pre-promoted)...");
+  const da = TEST_USERS.deputyAdmin;
+  const daUser = await createAuthUser(sb, { ...da, password: PASSWORD });
+  await upsertProfile(sb, daUser.id, {
+    role: da.role,
+    fullName: da.fullName,
+    isSchoolStudent: da.isSchoolStudent,
+    schoolId: school.id,
+  });
+  console.log(`   ✓ ${da.email} (logs in same as Admin Head, sees same dashboard, can\'t transfer the Head role)`);
+
   // 3) Primary + co teachers.
-  console.log("[3/6] Primary + co-teacher accounts...");
+  console.log("[3/8] Primary + co-teacher accounts...");
   const pt = TEST_USERS.primaryTeacher;
   const ct = TEST_USERS.coTeacher;
   const ptUser = await createAuthUser(sb, { ...pt, password: PASSWORD });
@@ -257,7 +315,7 @@ async function main() {
   console.log(`   ✓ ${ct.email} (will be CO)`);
 
   // 4) Class, owned by the primary teacher.
-  console.log("[4/6] Class + teacher assignments...");
+  console.log("[4/8] Class + teacher assignments...");
   const { data: klass, error: classErr } = await sb
     .from("classes")
     .insert({
@@ -286,7 +344,7 @@ async function main() {
   console.log(`   ✓ class_teachers: 1 primary + 1 co`);
 
   // 5) School students enrolled in the class.
-  console.log("[5/6] School students (enrolled in the class)...");
+  console.log("[5/8] School students (enrolled in the class)...");
   for (const s of TEST_USERS.schoolStudents) {
     const u = await createAuthUser(sb, { ...s, password: PASSWORD });
     await upsertProfile(sb, u.id, {
@@ -304,7 +362,7 @@ async function main() {
 
   // 6) Independent students (no school, no class). Paid-tier ones get their
   //    auto-created free subscription upgraded to the requested plan.
-  console.log("[6/6] Independent students (no school)...");
+  console.log("[6/8] Independent students (no school)...");
 
   // Pre-fetch the active plan rows for any planSlug we'll need, so we fail
   // fast with a clear error if the plans seed never ran.
@@ -390,8 +448,10 @@ async function main() {
   console.log("✅ Seed complete. All accounts use password:  " + PASSWORD);
   console.log("═".repeat(78));
   const rows = [
-    ["Role",              "Login",                                    "Goes to"],
-    ["School Admin",      TEST_USERS.schoolAdmin.email,               "/school"],
+    ["Role",              "Login (sign-in surface)",                  "Goes to"],
+    ["Platform Admin",    TEST_USERS.platformAdmin.email + "  → /staff",  "/admin/onboard-school"],
+    ["Admin Head",        TEST_USERS.schoolAdmin.email,               "/school"],
+    ["Deputy Admin",      TEST_USERS.deputyAdmin.email,               "/school"],
     ["Primary Teacher",   TEST_USERS.primaryTeacher.email,            "/teacher"],
     ["Co-Teacher",        TEST_USERS.coTeacher.email,                 "/teacher"],
     ...TEST_USERS.schoolStudents.map((s, i) => [

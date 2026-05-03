@@ -6,17 +6,37 @@ export const runtime = "nodejs";
 /**
  * POST /api/admin/classes/[id]/primary
  *
- * Set or change the primary teacher of a class. Body:
- *   { email: string | null, school_only?: boolean }
+ * Set or change the primary teacher of a class. Body shapes:
  *
- *   email = null  -> remove primary (class becomes unassigned, any pending invite cleared)
- *   email = "..."  -> assign primary by email. Two cases:
- *     a) email matches an existing user account in this school -> link directly,
- *        demote any current primary to co, mirror owner_id.
- *     b) email has no account yet -> store a pending invite. The current primary
- *        is left alone until the new person actually signs up.
+ *   { email: null }
+ *     -> remove primary entirely (class becomes unassigned, any pending
+ *        invite cleared, owner_id null). The previous primary is demoted
+ *        to co-teacher so they keep class access.
  *
- * Auth: Admin Head of the same school.
+ *   { email: "..." }
+ *     -> upsert a PENDING INVITE on class_teacher_invites. The new teacher
+ *        must accept via their dashboard before class_teachers /
+ *        classes.owner_id are touched. This is the right path for normal
+ *        onboarding where the school admin doesn't want to forcibly move
+ *        a teacher into the role.
+ *
+ *   { teacher_id, immediate: true }   <-- BUSINESS-CONTINUITY (Option B)
+ *     -> add `teacher_id` as ACTING COVER on this class. The canonical
+ *        primary stays primary (keeps title + ownership). The acting cover
+ *        gets primary-equivalent privileges via RLS (is_class_primary now
+ *        accepts both roles after migration 48). Used when the canonical
+ *        primary is on unplanned leave; when they return, the admin clicks
+ *        "End acting cover" (mode end_acting below) to remove the acting
+ *        row — no re-reassign required.
+ *
+ *   { end_acting: true }
+ *     -> remove any acting cover from this class. Idempotent: returns ok
+ *        even if no acting row existed. Used when the canonical primary
+ *        returns from leave.
+ *
+ * Auth: Admin Head OR Deputy (super_teacher in same school) for immediate /
+ * end_acting. Email-invite path additionally allows the class's current
+ * primary teacher.
  */
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -32,17 +52,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
     const body = await req.json().catch(() => ({}));
     const rawEmail = body?.email;
-    // Coerce missing / undefined / empty to null. Without this, `String(undefined)`
-    // ends up as the literal "undefined" string and gets stored as a pending
-    // invite email — then renders as "⏳ Pending undefined" on /school/classes.
     let email: string | null =
       rawEmail == null || rawEmail === ""
         ? null
         : String(rawEmail).trim().toLowerCase() || null;
     const teacherIdInput: string | null = body?.teacher_id ? String(body.teacher_id).trim() : null;
+    const immediate: boolean = !!body?.immediate;
+    const endActing: boolean = !!body?.end_acting;
 
-    // Allow either the school\u2019s Admin Head OR the class\u2019s current primary
-    // teacher. The current primary can hand the role off to another teacher.
     const admin = supabaseAdmin();
     const { data: cls } = await admin
       .from("classes")
@@ -73,10 +90,30 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       );
     }
 
-    // If caller passed teacher_id (instead of email), resolve to email via
-    // auth.users. This is what powers the "Make primary" button on co-teacher
-    // rows where the page only has the teacher_id at hand.
-    if (!email && teacherIdInput) {
+    // === END ACTING COVER ===
+    // Remove any 'acting' row on this class. Idempotent; nothing to do if
+    // there's no cover. Reserved to school admins (Head + Deputies).
+    if (endActing) {
+      if (!isAdminOfSchool) {
+        return NextResponse.json(
+          { error: "Only the Admin Head or a Deputy can end an acting cover." },
+          { status: 403 }
+        );
+      }
+      const { error: delErr } = await admin
+        .from("class_teachers")
+        .delete()
+        .eq("class_id", classId)
+        .eq("role", "acting");
+      if (delErr) {
+        return NextResponse.json({ error: delErr.message }, { status: 500 });
+      }
+      return NextResponse.json({ ok: true, status: "acting_ended" });
+    }
+
+    // If caller passed teacher_id (instead of email) and is NOT in immediate
+    // mode, resolve to email so the invite flow can target a real address.
+    if (!email && teacherIdInput && !immediate) {
       const { data: targetUser } = await admin.auth.admin.getUserById(teacherIdInput);
       if (!targetUser?.user?.email) {
         return NextResponse.json({ error: "Teacher account not found." }, { status: 404 });
@@ -84,8 +121,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       email = targetUser.user.email.toLowerCase();
     }
 
-    // === Case: email is null -> unassign primary (and any pending invite) ===
-    if (!email) {
+    // === Case: email is null and not immediate -> unassign primary ===
+    if (!email && !immediate) {
       const { data: currentPrimary } = await admin
         .from("class_teachers")
         .select("teacher_id")
@@ -99,6 +136,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           .eq("class_id", classId)
           .eq("teacher_id", currentPrimary.teacher_id);
       }
+      // Also clear any acting cover — the class is being fully unassigned.
+      await admin
+        .from("class_teachers")
+        .delete()
+        .eq("class_id", classId)
+        .eq("role", "acting");
       await admin
         .from("class_teacher_invites")
         .delete()
@@ -108,7 +151,100 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       return NextResponse.json({ ok: true, status: "unassigned" });
     }
 
-    if (email.endsWith("@bloomiq.invalid")) {
+    // === BUSINESS-CONTINUITY PATH: immediate ACTING COVER (Option B) ===
+    // The canonical primary stays untouched. The picked teacher is added
+    // as 'acting' — primary-level privileges via RLS, but distinct from
+    // the title-holder. When the original primary returns, the admin
+    // clicks "End acting cover" and the acting row vanishes.
+    //
+    // owner_id is intentionally NOT mirrored here (acting is a temporary
+    // cover, not an ownership transfer). owner_id stays on the canonical
+    // primary so legacy queries that key off owner_id still resolve to
+    // the title-holder.
+    if (immediate) {
+      if (!isAdminOfSchool) {
+        return NextResponse.json(
+          { error: "Only the Admin Head or a Deputy can set an acting cover." },
+          { status: 403 }
+        );
+      }
+      if (!teacherIdInput) {
+        return NextResponse.json(
+          { error: "Acting cover requires an in-school teacher_id." },
+          { status: 400 }
+        );
+      }
+      const { data: targetProf } = await admin
+        .from("profiles")
+        .select("id, school_id, role, full_name")
+        .eq("id", teacherIdInput)
+        .maybeSingle();
+      if (!targetProf) {
+        return NextResponse.json({ error: "Teacher not found." }, { status: 404 });
+      }
+      if (targetProf.school_id !== cls.school_id) {
+        return NextResponse.json(
+          { error: "That teacher is not in this school. Use the email path to invite them." },
+          { status: 400 }
+        );
+      }
+      if (targetProf.role !== "teacher" && targetProf.role !== "super_teacher") {
+        return NextResponse.json(
+          { error: "Target must be a teacher or school admin." },
+          { status: 400 }
+        );
+      }
+
+      // Don't let someone be both primary and acting on the same class —
+      // that's nonsensical. If they're already primary, the admin doesn't
+      // need a cover; just say so.
+      const { data: existingRow } = await admin
+        .from("class_teachers")
+        .select("role")
+        .eq("class_id", classId)
+        .eq("teacher_id", teacherIdInput)
+        .maybeSingle();
+      if (existingRow?.role === "primary") {
+        return NextResponse.json(
+          { error: "That teacher is already the primary of this class." },
+          { status: 400 }
+        );
+      }
+
+      // Replace any existing acting cover (only one acting per class —
+      // enforced by ct_one_acting_per_class).
+      await admin
+        .from("class_teachers")
+        .delete()
+        .eq("class_id", classId)
+        .eq("role", "acting");
+
+      // Upsert target as 'acting'. If they were already a 'co' on this
+      // class we update the role; otherwise we insert.
+      const { error: upErr } = await admin
+        .from("class_teachers")
+        .upsert(
+          { class_id: classId, teacher_id: teacherIdInput, role: "acting" },
+          { onConflict: "class_id,teacher_id" }
+        );
+      if (upErr) {
+        return NextResponse.json(
+          { error: `Could not set acting cover: ${upErr.message}` },
+          { status: 500 }
+        );
+      }
+      // Don't touch classes.owner_id — acting is a cover, not a transfer.
+      // Don't clear the pending invite either (it's about the canonical
+      // primary slot, not the acting cover).
+      return NextResponse.json({
+        ok: true,
+        status: "acting_set",
+        teacher_id: teacherIdInput,
+        full_name: targetProf.full_name,
+      });
+    }
+
+    if (email && email.endsWith("@bloomiq.invalid")) {
       return NextResponse.json(
         { error: "That email belongs to a school student account, not a teacher." },
         { status: 400 }
@@ -116,14 +252,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }
 
     // === Email path — always create a PENDING INVITE. ===
-    // The teacher must accept via their dashboard before class_teachers /
-    // classes.owner_id are touched. This makes "primary teacher of a class"
-    // a two-sided agreement, not a unilateral assignment by the school
-    // admin. Status reflects on /school/classes as Pending → Accepted /
-    // Rejected once the teacher responds.
-    //
-    // Sanity guard: if the email belongs to the super_teacher of ANOTHER
-    // school, refuse. Doesn't matter if their account exists or not.
     if (email) {
       const { data: usersList, error: listErr } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 });
       if (listErr) return NextResponse.json({ error: listErr.message }, { status: 500 });
@@ -143,8 +271,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       }
     }
 
-    // Re-invite resets status back to pending so the prior "declined" or
-    // "accepted" historical row doesn't keep its old verdict.
     const { error: invErr } = await admin
       .from("class_teacher_invites")
       .upsert(

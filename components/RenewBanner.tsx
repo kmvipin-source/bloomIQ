@@ -13,25 +13,28 @@ import { AlertCircle, Clock, ArrowRight } from "lucide-react";
  *   1. Hidden — when more than 7 days remain, when no paid subscription
  *      exists, or while still loading.
  *   2. Amber "expires in N days" — when within the 7-day warning window
- *      but not yet expired. Includes a Renew now button.
- *   3. Red "expired N days ago" — past expires_at. Same Renew now button,
- *      but the empty allowed-features set means everything paid is
- *      already locked.
+ *      but not yet expired.
+ *   3. Red "expired N days ago" — past expires_at.
  *
- * Renew button calls the existing /api/checkout flow with the user's
- * current plan_slug. On success, /api/checkout/verify writes a fresh
- * started_at + expires_at and useFeatureAccess re-reads on next mount,
- * so this banner disappears.
+ * Two render modes, picked by the `schoolName` prop:
+ *
+ *   - Personal mode (default; schoolName not passed): a Renew now button
+ *     that opens the Razorpay flow via /api/checkout. On verify success
+ *     the page reloads, useFeatureAccess re-reads, and the banner
+ *     disappears. This is what an independent paying student sees.
+ *
+ *   - School-admin mode (schoolName passed): no Razorpay button — school
+ *     plans are billed offline by the BloomIQ team — instead a mailto:
+ *     CTA pre-filled with the school name so the super-teacher can ask
+ *     us to renew. School STUDENTS still don't see the banner (they
+ *     have nothing to do about it); only the super_teacher does, and
+ *     only on the /school home page.
  *
  * School students don't see this banner — their school renews via the
- * platform admin (offline contract). Hidden by passing source !== "personal".
+ * platform admin (offline contract). Hidden by passing source !== "personal"
+ * AND schoolName not provided.
  */
 
-declare global {
-  interface Window {
-    Razorpay?: new (opts: Record<string, unknown>) => { open: () => void };
-  }
-}
 
 function loadRazorpaySdk(): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -51,19 +54,31 @@ export default function RenewBanner({
   isExpired,
   planSlug,
   source,
+  schoolName,
 }: {
   expiresAt: string | null;
   isExpired: boolean;
   planSlug: string | null;
-  // From useFeatureAccess. Banner only renders for personal subscriptions.
+  // From useFeatureAccess. Banner renders for personal subscriptions
+  // by default; the super-teacher /school home opts into school-admin
+  // mode by also passing `schoolName`.
   source: "personal" | "school" | "none";
+  // Pass the school's display name on the super-teacher /school page
+  // to enable school-admin mode (mailto CTA, "your school's plan" copy).
+  // Leave undefined elsewhere to suppress the banner for school plans.
+  schoolName?: string | null;
 }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  // Hide for school subscriptions (the school admin handles renewal),
-  // for users with no paid plan, and while data is incomplete.
-  if (source !== "personal" || !expiresAt || !planSlug) return null;
+  const isSchoolAdminMode = source === "school" && !!schoolName;
+
+  // Hide when there's no relevant paid subscription, no plan slug, or
+  // we're in school mode without an opt-in (school students never see
+  // this — only the super-teacher does, by passing schoolName).
+  if (!expiresAt || !planSlug) return null;
+  if (source === "school" && !isSchoolAdminMode) return null;
+  if (source === "none") return null;
 
   const expiresAtMs = Date.parse(expiresAt);
   const daysLeft = Math.ceil((expiresAtMs - Date.now()) / 86400000);
@@ -134,61 +149,98 @@ export default function RenewBanner({
     }
   }
 
+  // School-admin mode uses an offline contact CTA instead of Razorpay.
+  // The mailto subject embeds the school name so support can route fast.
+  const mailtoSubject = isSchoolAdminMode
+    ? `Renew school plan — ${schoolName}`
+    : "";
+  const mailtoBody = isSchoolAdminMode
+    ? `Hi BloomIQ team,\n\nPlease renew our school plan for ${schoolName}.\nOur current plan: ${planSlug}\nExpires: ${new Date(expiresAt).toLocaleDateString()}\n\nThanks!`
+    : "";
+  const mailtoHref = isSchoolAdminMode
+    ? `mailto:support@bloomiq.app?subject=${encodeURIComponent(mailtoSubject)}&body=${encodeURIComponent(mailtoBody)}`
+    : "";
+
   // ---------- Expired (red) ----------
   if (isExpired) {
     const daysAgo = Math.abs(daysLeft);
+    const headline = isSchoolAdminMode
+      ? `Your school's plan expired ${daysAgo === 0 ? "today" : `${daysAgo} day${daysAgo === 1 ? "" : "s"} ago`}.`
+      : `Your subscription expired ${daysAgo === 0 ? "today" : `${daysAgo} day${daysAgo === 1 ? "" : "s"} ago`}.`;
+    const subline = isSchoolAdminMode
+      ? "Premium features for your teachers and students are paused until renewal. Email us to reactivate — your data is safe."
+      : "Premium features are paused until you renew. Your data is safe — nothing is deleted.";
     return (
       <div className="card border-red-300 bg-red-50 mt-3 flex items-start gap-3 flex-wrap">
         <AlertCircle size={20} className="text-red-700 mt-0.5 shrink-0" />
         <div className="flex-1 min-w-[240px]">
-          <div className="font-semibold text-red-900">
-            Your subscription expired {daysAgo === 0 ? "today" : `${daysAgo} day${daysAgo === 1 ? "" : "s"} ago`}.
-          </div>
-          <div className="text-xs text-red-800/80 mt-0.5">
-            Premium features are paused until you renew. Your data is safe — nothing is deleted.
-          </div>
+          <div className="font-semibold text-red-900">{headline}</div>
+          <div className="text-xs text-red-800/80 mt-0.5">{subline}</div>
           {err && <div className="text-xs text-red-900 mt-2">{err}</div>}
         </div>
-        <button
-          type="button"
-          onClick={renew}
-          disabled={busy}
-          className="btn btn-primary text-sm shrink-0"
-        >
-          {busy ? <><span className="spinner" /> Opening checkout…</> : <>Renew now <ArrowRight size={14} /></>}
-        </button>
-        <Link href="/pricing" className="text-xs text-red-700 hover:underline shrink-0 self-center">
-          Switch plan
-        </Link>
+        {isSchoolAdminMode ? (
+          <a
+            href={mailtoHref}
+            className="btn btn-primary text-sm shrink-0"
+          >
+            Email support to renew <ArrowRight size={14} />
+          </a>
+        ) : (
+          <>
+            <button
+              type="button"
+              onClick={renew}
+              disabled={busy}
+              className="btn btn-primary text-sm shrink-0"
+            >
+              {busy ? <><span className="spinner" /> Opening checkout…</> : <>Renew now <ArrowRight size={14} /></>}
+            </button>
+            <Link href="/pricing" className="text-xs text-red-700 hover:underline shrink-0 self-center">
+              Switch plan
+            </Link>
+          </>
+        )}
       </div>
     );
   }
 
   // ---------- Expiring soon (amber, within 7 days) ----------
+  const amberHeadline = isSchoolAdminMode
+    ? `Your school's plan expires in ${daysLeft} day${daysLeft === 1 ? "" : "s"}.`
+    : `Your subscription expires in ${daysLeft} day${daysLeft === 1 ? "" : "s"}.`;
+  const amberSubline = isSchoolAdminMode
+    ? `Email us to renew before ${new Date(expiresAt).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })} so your teachers and students stay covered.`
+    : `Renew now to avoid any break in access on ${new Date(expiresAt).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}.`;
   return (
     <div className="card border-amber-300 bg-amber-50 mt-3 flex items-start gap-3 flex-wrap">
       <Clock size={20} className="text-amber-700 mt-0.5 shrink-0" />
       <div className="flex-1 min-w-[240px]">
-        <div className="font-semibold text-amber-900">
-          Your subscription expires in {daysLeft} day{daysLeft === 1 ? "" : "s"}.
-        </div>
-        <div className="text-xs text-amber-800/80 mt-0.5">
-          Renew now to avoid any break in access on{" "}
-          {new Date(expiresAt).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}.
-        </div>
+        <div className="font-semibold text-amber-900">{amberHeadline}</div>
+        <div className="text-xs text-amber-800/80 mt-0.5">{amberSubline}</div>
         {err && <div className="text-xs text-red-900 mt-2">{err}</div>}
       </div>
-      <button
-        type="button"
-        onClick={renew}
-        disabled={busy}
-        className="btn btn-primary text-sm shrink-0"
-      >
-        {busy ? <><span className="spinner" /> Opening checkout…</> : <>Renew now <ArrowRight size={14} /></>}
-      </button>
-      <Link href="/pricing" className="text-xs text-amber-800 hover:underline shrink-0 self-center">
-        Switch plan
-      </Link>
+      {isSchoolAdminMode ? (
+        <a
+          href={mailtoHref}
+          className="btn btn-primary text-sm shrink-0"
+        >
+          Email support to renew <ArrowRight size={14} />
+        </a>
+      ) : (
+        <>
+          <button
+            type="button"
+            onClick={renew}
+            disabled={busy}
+            className="btn btn-primary text-sm shrink-0"
+          >
+            {busy ? <><span className="spinner" /> Opening checkout…</> : <>Renew now <ArrowRight size={14} /></>}
+          </button>
+          <Link href="/pricing" className="text-xs text-amber-800 hover:underline shrink-0 self-center">
+            Switch plan
+          </Link>
+        </>
+      )}
     </div>
   );
 }
