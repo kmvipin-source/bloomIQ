@@ -216,20 +216,13 @@ export async function GET(req: Request) {
     // see the just-created profile row from the Vercel edge) doesn't
     // 403 a real platform admin off their own page.
     const admin = supabaseAdmin();
-    const { data: me, error: meErr } = await admin
+    const { data: me } = await admin
       .from("profiles")
       .select("platform_admin")
       .eq("id", user.id)
       .maybeSingle();
-    if (meErr) {
-      // eslint-disable-next-line no-console
-      console.error("[onboard-school GET] profiles lookup failed", { uid: user.id, err: meErr });
-      return NextResponse.json({ error: `Profile lookup failed: ${meErr.message}` }, { status: 500 });
-    }
     if (!me?.platform_admin) {
-      // eslint-disable-next-line no-console
-      console.error("[onboard-school GET] not platform_admin", { uid: user.id, email: user.email, me });
-      return NextResponse.json({ error: "Forbidden", debug: { uid: user.id, found: !!me, platform_admin: me?.platform_admin } }, { status: 403 });
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
     const { data: schools, error } = await admin
       .from("schools")
