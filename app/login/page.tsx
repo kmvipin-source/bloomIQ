@@ -42,8 +42,8 @@ const ROLE_TABS: Record<RoleTab, TabMeta> = {
     Icon: BookOpen,
   },
   school: {
-    label: "Admin",
-    heading: "Admin Head (Principal) sign in",
+    label: "School Admin",
+    heading: "School Admin (Principal) sign in",
     identifierLabel: "Work email",
     identifierPlaceholder: "principal@school.edu",
     hint: "School Admin Heads / Principals — sign in with the email BloomIQ invited.",
@@ -267,7 +267,7 @@ export default function LoginPage() {
         // use /staff so the public surface never authenticates a staff
         // account.
         allowed = role === "super_teacher";
-        expectedTabLabel = "Admin Head (Principal)";
+        expectedTabLabel = "School Admin (Principal)";
       } else if (roleTab === "platform") {
         allowed = isPlatformAdmin;
         expectedTabLabel = "Platform Admin";
