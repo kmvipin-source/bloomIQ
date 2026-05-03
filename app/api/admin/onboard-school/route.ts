@@ -20,11 +20,14 @@ export async function POST(req: Request) {
     const { data: { user } } = await sb.auth.getUser();
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-    const { data: me } = await sb
+    // Service-role read avoids the RLS race that 403'd legit platform
+    // admins on the Vercel edge.
+    const adminClient = supabaseAdmin();
+    const { data: me } = await adminClient
       .from("profiles")
       .select("platform_admin")
       .eq("id", user.id)
-      .single();
+      .maybeSingle();
     if (!me?.platform_admin) {
       return NextResponse.json(
         { error: "Only platform admins can onboard schools." },
@@ -208,16 +211,19 @@ export async function GET(req: Request) {
     const { data: { user } } = await sb.auth.getUser();
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-    const { data: me } = await sb
+    // Read platform_admin via the service-role client so a transient
+    // RLS race on profiles (the user-token client occasionally can't
+    // see the just-created profile row from the Vercel edge) doesn't
+    // 403 a real platform admin off their own page.
+    const admin = supabaseAdmin();
+    const { data: me } = await admin
       .from("profiles")
       .select("platform_admin")
       .eq("id", user.id)
-      .single();
+      .maybeSingle();
     if (!me?.platform_admin) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
-
-    const admin = supabaseAdmin();
     const { data: schools, error } = await admin
       .from("schools")
       .select("id, name, join_code, invited_admin_email, invited_at, super_teacher_id, created_at, onboarded_by")
