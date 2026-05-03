@@ -299,6 +299,10 @@ function PricingInner() {
       setErr("Password must be at least 8 characters.");
       return;
     }
+    if (!/[a-z]/.test(guestPwd) || !/[A-Z]/.test(guestPwd) || !/\d/.test(guestPwd)) {
+      setErr("Password needs at least one lowercase letter, one uppercase letter, and one number.");
+      return;
+    }
     setBusy(guestPlan.slug);
     try {
       const r = await fetch("/api/signup-and-pay", {
@@ -896,7 +900,7 @@ function PricingInner() {
                   <input className="input" type="email" required value={guestEmail} onChange={(e) => setGuestEmail(e.target.value)} />
                 </div>
                 <div>
-                  <label className="label">Password <span className="muted text-xs">(min 8 chars)</span></label>
+                  <label className="label">Password <span className="muted text-xs">(8+ chars, one lower + upper + number)</span></label>
                   <input className="input" type="password" required minLength={8} value={guestPwd} onChange={(e) => setGuestPwd(e.target.value)} />
                 </div>
                 <label className="flex items-start gap-2 text-xs text-slate-700 select-none">

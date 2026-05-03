@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
+import MobileNav from "@/components/MobileNav";
 import { supabaseBrowser } from "@/lib/supabase/client";
 
 export default function StudentLayout({ children }: { children: React.ReactNode }) {
@@ -54,9 +55,10 @@ export default function StudentLayout({ children }: { children: React.ReactNode 
   }
   if (taking) return <main className="min-h-screen">{children}</main>;
   return (
-    <div className="flex min-h-screen">
+    <div className="md:flex min-h-screen">
       <Sidebar role="student" />
-      <main className="flex-1 p-8 overflow-auto">{children}</main>
+      <MobileNav role="student" />
+      <main className="flex-1 p-4 md:p-8 overflow-auto">{children}</main>
     </div>
   );
 }

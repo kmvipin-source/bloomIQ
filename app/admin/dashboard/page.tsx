@@ -216,7 +216,7 @@ export default function AdminDashboardPage() {
         </div>
 
         {/* Per-school grouping */}
-        <div className="card p-0 overflow-hidden">
+        <div className="card p-0 overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="text-left" style={{ background: "var(--color-bg-soft)" }}>
@@ -246,7 +246,7 @@ export default function AdminDashboardPage() {
       {/* Top schools */}
       <section>
         <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-500 mb-3">Top schools by student count</h2>
-        <div className="card p-0 overflow-hidden">
+        <div className="card p-0 overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="text-left" style={{ background: "var(--color-bg-soft)" }}>

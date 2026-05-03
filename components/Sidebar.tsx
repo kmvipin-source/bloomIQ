@@ -158,7 +158,7 @@ export default function Sidebar({ role }: { role: SidebarRole }) {
   }
 
   return (
-    <aside className="w-60 min-h-screen flex flex-col" style={{ background: "var(--color-card)", borderRight: "1px solid var(--color-border)" }}>
+    <aside className="w-60 min-h-screen hidden md:flex flex-col shrink-0" style={{ background: "var(--color-card)", borderRight: "1px solid var(--color-border)" }}>
       <div className="p-5" style={{ borderBottom: "1px solid var(--color-border)" }}>
         <Link href={ROLE_HOME[role]} className="flex items-center gap-2">
           <span className="text-2xl">&#x1F331;</span>

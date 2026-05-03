@@ -53,6 +53,10 @@ function SetPasswordInner() {
 
   const strength = scorePassword(password);
   const tooShort = password.length > 0 && password.length < 8;
+  const hasLower = /[a-z]/.test(password);
+  const hasUpper = /[A-Z]/.test(password);
+  const hasDigit = /\d/.test(password);
+  const passwordOk = password.length >= 8 && hasLower && hasUpper && hasDigit;
 
   useEffect(() => {
     (async () => {
@@ -86,6 +90,9 @@ function SetPasswordInner() {
     e.preventDefault();
     setErr(null);
     if (password.length < 8) return setErr("Use a password with at least 8 characters.");
+    if (!hasLower || !hasUpper || !hasDigit) {
+      return setErr("Password needs at least one lowercase letter, one uppercase letter, and one number.");
+    }
     setBusy(true);
     try {
       const sb = supabaseBrowser();
@@ -223,12 +230,23 @@ function SetPasswordInner() {
                       />
                     ))}
                   </div>
-                  <p className={`text-xs mt-1 ${tooShort ? "text-red-700" : "text-slate-500"}`}>
-                    {tooShort ? "Use at least 8 characters." : `${STRENGTH_LABELS[strength]} characters.`}
-                  </p>
+                  <ul className="text-[11px] mt-1.5 space-y-0.5">
+                    <li className={password.length >= 8 ? "text-emerald-700" : "text-slate-500"}>
+                      {password.length >= 8 ? "✓" : "•"} At least 8 characters
+                    </li>
+                    <li className={hasLower ? "text-emerald-700" : "text-slate-500"}>
+                      {hasLower ? "✓" : "•"} A lowercase letter (a–z)
+                    </li>
+                    <li className={hasUpper ? "text-emerald-700" : "text-slate-500"}>
+                      {hasUpper ? "✓" : "•"} An uppercase letter (A–Z)
+                    </li>
+                    <li className={hasDigit ? "text-emerald-700" : "text-slate-500"}>
+                      {hasDigit ? "✓" : "•"} A number (0–9)
+                    </li>
+                  </ul>
                 </div>
               ) : (
-                <p className="text-xs muted mt-1">At least 8 characters.</p>
+                <p className="text-xs muted mt-1">8+ characters with a lowercase, uppercase, and a number.</p>
               )}
             </div>
 
@@ -245,7 +263,7 @@ function SetPasswordInner() {
               <Link href="/privacy" target="_blank" className="text-emerald-700 hover:underline">Privacy Policy</Link>.
             </p>
 
-            <button className="btn btn-primary w-full" disabled={busy || password.length < 8}>
+            <button className="btn btn-primary w-full" disabled={busy || !passwordOk}>
               {busy ? <><span className="spinner" /> Saving…</> : <>Set password <ArrowRight size={14} /></>}
             </button>
           </form>

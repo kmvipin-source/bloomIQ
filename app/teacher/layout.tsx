@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
+import MobileNav from "@/components/MobileNav";
 import { supabaseBrowser } from "@/lib/supabase/client";
 
 /**
@@ -62,9 +63,10 @@ export default function TeacherLayout({ children }: { children: React.ReactNode 
     return <div className="min-h-screen grid place-items-center"><div className="spinner" /></div>;
   }
   return (
-    <div className="flex min-h-screen">
+    <div className="md:flex min-h-screen">
       <Sidebar role="teacher" />
-      <main className="flex-1 p-8 overflow-auto">{children}</main>
+      <MobileNav role="teacher" />
+      <main className="flex-1 p-4 md:p-8 overflow-auto">{children}</main>
     </div>
   );
 }

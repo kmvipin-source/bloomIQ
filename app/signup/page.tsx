@@ -165,6 +165,14 @@ function SignupForm({ role }: { role: Role }) {
 
   const strength = scorePassword(password);
   const tooShort = password.length > 0 && password.length < 8;
+  // Supabase project policy requires lower + upper + digit. Mirror it
+  // client-side so users see the requirement BEFORE submit, instead of a
+  // raw "Password should contain ..." server error.
+  const hasLower = /[a-z]/.test(password);
+  const hasUpper = /[A-Z]/.test(password);
+  const hasDigit = /\d/.test(password);
+  const missingChecks = password.length > 0 && (!hasLower || !hasUpper || !hasDigit);
+  const passwordOk = password.length >= 8 && hasLower && hasUpper && hasDigit;
 
   function landingPageFor(r: Role): string {
     if (r === "teacher") return "/teacher";
@@ -176,6 +184,10 @@ function SignupForm({ role }: { role: Role }) {
     setErr(null); setInfo(null);
     if (password.length < 8) {
       setErr("Use a password with at least 8 characters.");
+      return;
+    }
+    if (!hasLower || !hasUpper || !hasDigit) {
+      setErr("Password needs at least one lowercase letter, one uppercase letter, and one number.");
       return;
     }
     if (!acceptedTerms) {
@@ -300,12 +312,23 @@ function SignupForm({ role }: { role: Role }) {
                     />
                   ))}
                 </div>
-                <p className={`text-xs mt-1 ${tooShort ? "text-red-700" : "text-slate-500"}`}>
-                  {tooShort ? "Use at least 8 characters." : `${STRENGTH_LABELS[strength]} — ${password.length} characters.`}
-                </p>
+                <ul className="text-[11px] mt-1.5 space-y-0.5">
+                  <li className={password.length >= 8 ? "text-emerald-700" : "text-slate-500"}>
+                    {password.length >= 8 ? "✓" : "•"} At least 8 characters
+                  </li>
+                  <li className={hasLower ? "text-emerald-700" : "text-slate-500"}>
+                    {hasLower ? "✓" : "•"} A lowercase letter (a–z)
+                  </li>
+                  <li className={hasUpper ? "text-emerald-700" : "text-slate-500"}>
+                    {hasUpper ? "✓" : "•"} An uppercase letter (A–Z)
+                  </li>
+                  <li className={hasDigit ? "text-emerald-700" : "text-slate-500"}>
+                    {hasDigit ? "✓" : "•"} A number (0–9)
+                  </li>
+                </ul>
               </div>
             ) : (
-              <p className="text-xs muted mt-1">At least 8 characters.</p>
+              <p className="text-xs muted mt-1">8+ characters with a lowercase, uppercase, and a number.</p>
             )}
           </div>
 
@@ -333,7 +356,7 @@ function SignupForm({ role }: { role: Role }) {
 
           <button
             className="btn btn-primary w-full"
-            disabled={busy || password.length < 8 || !acceptedTerms}
+            disabled={busy || !passwordOk || !acceptedTerms}
           >
             {busy && <span className="spinner" />} Create {tile.label.toLowerCase()} account
           </button>
