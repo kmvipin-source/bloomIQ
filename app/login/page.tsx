@@ -87,6 +87,15 @@ function readNextParam(): string | null {
   }
 }
 
+function readReasonParam(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return new URLSearchParams(window.location.search).get("reason");
+  } catch {
+    return null;
+  }
+}
+
 export default function LoginPage() {
   const router = useRouter();
 
@@ -402,6 +411,12 @@ export default function LoginPage() {
           <h1 className="text-2xl font-bold mb-6 flex items-center gap-2">
             <tab.Icon size={22} /> {tab.heading}
           </h1>
+
+          {readReasonParam() === "idle" && (
+            <div className="mb-4 text-xs px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-900">
+              You were signed out automatically after 30 minutes of inactivity. Please sign in again.
+            </div>
+          )}
 
           <form onSubmit={submit} className="space-y-4">
             <div>

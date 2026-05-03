@@ -134,7 +134,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           .select("role, school_id")
           .eq("id", target.id)
           .maybeSingle();
-        if (tProf?.role === "super_teacher" && tProf.school_id && tProf.school_id !== me.school_id) {
+        if (tProf?.role === "super_teacher" && tProf.school_id && tProf.school_id !== me?.school_id) {
           return NextResponse.json(
             { error: "That email belongs to the Admin Head of another school." },
             { status: 409 }
