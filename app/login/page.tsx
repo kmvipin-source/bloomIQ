@@ -212,12 +212,22 @@ export default function LoginPage() {
       role = String((user.user_metadata as { role?: string } | undefined)?.role || "");
     }
 
-    // Single-session policy — every successful login on this device
-    // invalidates the same user's session on every other device. The
-    // other devices stay on screen until their next API call, then 401
-    // and bounce to /login. Applies to all roles, not just independent
-    // students.
+    // Single-session policy — revoke other refresh tokens AND stamp
+    // this JWT's iat into profiles.session_iat so any older access
+    // token on another device gets 401'd by /api/auth/me on its next
+    // request. signOut(scope:'others') alone isn't enough because the
+    // access JWT survives until expiry.
     try { await sb.auth.signOut({ scope: "others" }); } catch { /* ignore */ }
+    try {
+      const fresh = await sb.auth.getSession();
+      const tk = fresh.data.session?.access_token;
+      if (tk) {
+        await fetch("/api/auth/claim-session", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${tk}` },
+        });
+      }
+    } catch { /* ignore */ }
 
     const next = readNextParam();
     const home =
@@ -467,6 +477,11 @@ export default function LoginPage() {
           {readReasonParam() === "idle" && (
             <div className="mb-4 text-xs px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-900">
               You were signed out automatically after 30 minutes of inactivity. Please sign in again.
+            </div>
+          )}
+          {readReasonParam() === "elsewhere" && (
+            <div className="mb-4 text-xs px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-900">
+              Your session was signed out because this account signed in on another device.
             </div>
           )}
           {readSignedupParam() === "1" && (

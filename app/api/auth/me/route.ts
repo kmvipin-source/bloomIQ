@@ -18,6 +18,18 @@ export const dynamic = "force-dynamic";
  * Caller must pass the bearer access token in the Authorization
  * header. Returns 401 if the token doesn't resolve to a user.
  */
+function decodeIat(token: string): number | null {
+  try {
+    const [, payload] = token.split(".");
+    if (!payload) return null;
+    const json = Buffer.from(payload.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8");
+    const obj = JSON.parse(json) as { iat?: number };
+    return typeof obj.iat === "number" ? obj.iat : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function GET(req: Request) {
   try {
     const token = getBearer(req);
@@ -29,9 +41,17 @@ export async function GET(req: Request) {
     const admin = supabaseAdmin();
     const { data: prof } = await admin
       .from("profiles")
-      .select("role, is_school_student, platform_admin, school_id")
+      .select("role, is_school_student, platform_admin, school_id, session_iat")
       .eq("id", user.id)
       .maybeSingle();
+
+    // Single-session enforcement: reject if this JWT was issued before
+    // the user's most recently claimed session (i.e. they signed in
+    // somewhere else after this token was minted).
+    const iat = decodeIat(token);
+    if (prof?.session_iat && iat && iat < prof.session_iat) {
+      return NextResponse.json({ error: "session_superseded" }, { status: 401 });
+    }
 
     const metaRole = String((user.user_metadata as { role?: string } | undefined)?.role || "");
     return NextResponse.json({

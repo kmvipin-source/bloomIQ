@@ -70,9 +70,20 @@ export default function StaffLoginPage() {
         data: { tos_accepted_at: new Date().toISOString(), tos_version: TOS_VERSION },
       });
     } catch { /* non-fatal */ }
-    // Single-session policy — invalidate any other session this user
-    // has open on other devices.
+    // Single-session policy — revoke other refresh tokens AND stamp
+    // current JWT iat so older access tokens on other devices fail
+    // /api/auth/me's iat check.
     try { await sb.auth.signOut({ scope: "others" }); } catch { /* ignore */ }
+    try {
+      const fresh = await sb.auth.getSession();
+      const tk = fresh.data.session?.access_token;
+      if (tk) {
+        await fetch("/api/auth/claim-session", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${tk}` },
+        });
+      }
+    } catch { /* ignore */ }
     router.push("/admin/onboard-school");
   }
 

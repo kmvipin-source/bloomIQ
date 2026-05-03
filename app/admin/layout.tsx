@@ -36,6 +36,14 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           headers: { Authorization: `Bearer ${session.access_token}` },
           cache: "no-store",
         });
+        if (r.status === 401) {
+          const j = await r.json().catch(() => ({}));
+          if (j?.error === "session_superseded") {
+            try { await sb.auth.signOut(); } catch { /* ignore */ }
+            router.replace("/login?reason=elsewhere");
+            return;
+          }
+        }
         if (r.ok) {
           const j = await r.json();
           platformAdmin = !!j.platform_admin;
