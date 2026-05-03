@@ -96,6 +96,15 @@ function readReasonParam(): string | null {
   }
 }
 
+function readSignedupParam(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return new URLSearchParams(window.location.search).get("signedup");
+  } catch {
+    return null;
+  }
+}
+
 export default function LoginPage() {
   const router = useRouter();
 
@@ -424,6 +433,11 @@ export default function LoginPage() {
           {readReasonParam() === "idle" && (
             <div className="mb-4 text-xs px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-900">
               You were signed out automatically after 30 minutes of inactivity. Please sign in again.
+            </div>
+          )}
+          {readSignedupParam() === "1" && (
+            <div className="mb-4 text-xs px-3 py-2 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-900">
+              Account created. Please sign in to continue.
             </div>
           )}
 

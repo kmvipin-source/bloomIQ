@@ -239,7 +239,13 @@ function SignupForm({ role }: { role: Role }) {
       router.push(`/pricing?autostart=${planParam}`);
       return;
     }
-    router.push(landingPageFor(role));
+    // After signup, sign the just-created session out and send the user
+    // to /login with a friendly notice. Two reasons:
+    //   1. Confirms the password they picked actually works.
+    //   2. Forces a clean role-tab + ToS acceptance flow on first login,
+    //      which the dashboard auth gate expects.
+    try { await sb.auth.signOut(); } catch { /* ignore */ }
+    router.push(`/login?signedup=1`);
   }
 
   return (
