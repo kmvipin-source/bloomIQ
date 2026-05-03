@@ -268,6 +268,17 @@ export default function LoginPage() {
         // eslint-disable-next-line no-console
         console.warn("[login] profile lookup failed; falling back to user_metadata", profErr);
       }
+      // Platform admin accounts are blocked from the public login surface
+      // entirely — they must sign in via /staff. This holds even if their
+      // profile.role is 'teacher' / 'student' / 'super_teacher' from a
+      // legacy signup.
+      if (isPlatformAdmin) {
+        try { await sb.auth.signOut(); } catch { /* ignore */ }
+        throw new Error(
+          "This account belongs to BloomIQ staff. Please sign in via /staff."
+        );
+      }
+
       let allowed = false;
       let expectedTabLabel = "";
       if (roleTab === "student" && studentMode === "independent") {
