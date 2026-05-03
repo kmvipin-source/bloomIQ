@@ -37,14 +37,19 @@ export default function TeacherLayout({ children }: { children: React.ReactNode 
         .from("profiles")
         .select("role, platform_admin, school_id")
         .eq("id", user.id)
-        .single();
+        .maybeSingle();
+
+      // Profile RLS race fallback — read role from auth metadata so a
+      // transient null doesn't bounce a teacher off their own dashboard.
+      const metaRole = String((user.user_metadata as { role?: string } | undefined)?.role || "");
+      const role = prof?.role || metaRole;
 
       // platform_admin is exclusive — no hybrid display. Force them to /admin.
       if (prof?.platform_admin)           { router.replace("/admin/onboard-school"); return; }
       // Each role has exactly one home — no ping-pong between layouts.
-      if (prof?.role === "student")       { router.replace("/student"); return; }
-      if (prof?.role === "super_teacher") { router.replace("/school");  return; }
-      if (prof?.role !== "teacher")       { router.replace("/login");   return; }
+      if (role === "student")       { router.replace("/student"); return; }
+      if (role === "super_teacher") { router.replace("/school");  return; }
+      if (role !== "teacher")       { router.replace("/login");   return; }
 
       // School-membership gate: any sub-route is blocked until they join.
       // The home page itself shows the join card, so we let it through.

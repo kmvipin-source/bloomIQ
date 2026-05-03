@@ -190,22 +190,30 @@ export default function LoginPage() {
       .from("profiles")
       .select("role, is_school_student, platform_admin")
       .eq("id", user.id)
-      .single();
+      .maybeSingle();
 
     const { data: { session } } = await sb.auth.getSession();
     if (session) audit(session.access_token);
 
+    // Fall back to user_metadata.role when the profile row isn't readable
+    // yet (RLS race after first signup, transient network blip on the
+    // Vercel edge). Without this, the user lands on /student by default
+    // even when their auth.users.user_metadata.role is 'teacher'.
+    const metaRole = String((user.user_metadata as { role?: string } | undefined)?.role || "");
+    const role = prof?.role || metaRole || "";
+    const isPlatformAdmin = !!prof?.platform_admin;
+
     const isIndependentStudent =
-      prof?.role === "student" && !prof?.is_school_student;
+      role === "student" && !prof?.is_school_student;
     if (isIndependentStudent) {
       try { await sb.auth.signOut({ scope: "others" }); } catch { /* ignore */ }
     }
 
     const next = readNextParam();
     const home =
-      prof?.platform_admin ? "/admin/onboard-school" :
-      prof?.role === "teacher" ? "/teacher" :
-      prof?.role === "super_teacher" ? "/school" :
+      isPlatformAdmin ? "/admin/onboard-school" :
+      role === "teacher" ? "/teacher" :
+      role === "super_teacher" ? "/school" :
       "/student";
     router.push(next || home);
   }

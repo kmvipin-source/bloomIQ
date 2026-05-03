@@ -19,13 +19,16 @@ export default function SchoolLayout({ children }: { children: React.ReactNode }
         .from("profiles")
         .select("role, platform_admin")
         .eq("id", user.id)
-        .single();
+        .maybeSingle();
+
+      const metaRole = String((user.user_metadata as { role?: string } | undefined)?.role || "");
+      const role = prof?.role || metaRole;
 
       // platform_admin is exclusive — no hybrid display. Force them to /admin.
-      if (prof?.platform_admin)           { router.replace("/admin/onboard-school"); return; }
-      if (prof?.role === "teacher")       { router.replace("/teacher"); return; }
-      if (prof?.role === "student")       { router.replace("/student"); return; }
-      if (prof?.role !== "super_teacher") { router.replace("/login");   return; }
+      if (prof?.platform_admin)     { router.replace("/admin/onboard-school"); return; }
+      if (role === "teacher")       { router.replace("/teacher"); return; }
+      if (role === "student")       { router.replace("/student"); return; }
+      if (role !== "super_teacher") { router.replace("/login");   return; }
 
       setOk(true);
     })();
