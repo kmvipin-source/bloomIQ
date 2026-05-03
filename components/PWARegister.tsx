@@ -25,7 +25,27 @@ export default function PWARegister() {
     }
 
     const onLoad = () => {
-      navigator.serviceWorker.register("/sw.js", { scope: "/" }).catch(() => {});
+      navigator.serviceWorker.register("/sw.js", { scope: "/" })
+        .then((reg) => {
+          // Poll for a new service worker every 30s. The /sw.js content
+          // changes per-deploy (cache name embeds VERCEL_DEPLOYMENT_ID),
+          // so any production push is detected here.
+          const intervalId = setInterval(() => { reg.update().catch(() => {}); }, 30000);
+          reg.addEventListener("updatefound", () => {
+            const sw = reg.installing;
+            if (!sw) return;
+            sw.addEventListener("statechange", () => {
+              // When a new SW reaches "installed" and an existing
+              // controller is running, a deploy shipped — reload to
+              // pick up the fresh HTML + chunks.
+              if (sw.state === "installed" && navigator.serviceWorker.controller) {
+                clearInterval(intervalId);
+                window.location.reload();
+              }
+            });
+          });
+        })
+        .catch(() => {});
     };
     if (document.readyState === "complete") onLoad();
     else window.addEventListener("load", onLoad);
