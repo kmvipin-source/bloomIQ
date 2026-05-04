@@ -164,22 +164,20 @@ function PricingInner() {
     })();
   }, []);
 
-  // Load current user (if any)
+  // Load current user (if any). profile + subscription run in parallel so
+  // the CTA copy resolves in one round-trip instead of two sequential ones.
+  // Note: getSession() reads the locally-stored token (no network); only
+  // the two DB selects after it touch the network.
   useEffect(() => {
     (async () => {
       const sb = supabaseBrowser();
-      const { data: { user } } = await sb.auth.getUser();
+      const { data: { session } } = await sb.auth.getSession();
+      const user = session?.user;
       if (!user) { setLoading(false); return; }
-      const { data: prof } = await sb
-        .from("profiles")
-        .select("full_name")
-        .eq("id", user.id)
-        .single();
-      const { data: sub } = await sb
-        .from("subscriptions")
-        .select("tier, status, expires_at")
-        .eq("user_id", user.id)
-        .maybeSingle();
+      const [{ data: prof }, { data: sub }] = await Promise.all([
+        sb.from("profiles").select("full_name").eq("id", user.id).single(),
+        sb.from("subscriptions").select("tier, status, expires_at").eq("user_id", user.id).maybeSingle(),
+      ]);
       setMe({
         id: user.id,
         email: user.email || null,
