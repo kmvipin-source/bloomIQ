@@ -106,17 +106,27 @@ export default function StudentHome() {
   useEffect(() => {
     (async () => {
       const sb = supabaseBrowser();
-      const { data: { user } } = await sb.auth.getUser();
-      if (!user) return;
-
-      const { data: prof } = await sb
-        .from("profiles")
-        .select("full_name, is_school_student, exam_goal")
-        .eq("id", user.id)
-        .single();
-      setName(prof?.full_name || "");
-      setIsSchool(!!prof?.is_school_student);
-      setExamGoal((prof as { exam_goal?: string | null } | null)?.exam_goal || null);
+      const { data: { session } } = await sb.auth.getSession();
+      if (!session) return;
+      // Identity via service-role /api/auth/me. The previous direct
+      // profiles read raced RLS, which made the onboarding goal-picker
+      // re-appear after every reload because exam_goal came back null
+      // even when it was set in the DB.
+      const meRes = await fetch("/api/auth/me", {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+        cache: "no-store",
+      });
+      if (!meRes.ok) return;
+      const me = await meRes.json() as {
+        uid: string;
+        full_name: string | null;
+        is_school_student: boolean;
+        exam_goal: string | null;
+      };
+      const user = { id: me.uid };
+      setName(me.full_name || "");
+      setIsSchool(!!me.is_school_student);
+      setExamGoal(me.exam_goal || null);
 
       if (prof && !prof.is_school_student) {
         try {

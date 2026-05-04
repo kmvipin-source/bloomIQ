@@ -5,8 +5,9 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { supabaseBrowser } from "@/lib/supabase/client";
 import {
-  Bot, Send, ArrowLeft, Loader2, Sparkles, MessageSquare, Trash2,
+  Bot, Send, ArrowLeft, Loader2, Sparkles, MessageSquare, Trash2, Crown,
 } from "lucide-react";
+import { useFeatureAccess } from "@/lib/featureAccess";
 
 // =============================================================================
 // DOUBT-CLEARING AI TUTOR — Socratic chat. Stateless on the server (each turn
@@ -28,6 +29,13 @@ type AnchorContext = {
 function TutorInner() {
   const search = useSearchParams();
   const questionId = search.get("question_id");
+
+  // Doubt-Clearing AI Tutor is a premium feature (key: ai_tutor_text). The
+  // /student/train tile already shows a PREMIUM badge; the page itself was
+  // unlocked, which let free users in by deep-linking. Gate here so both
+  // surfaces agree.
+  const access = useFeatureAccess();
+  const allowed = access.allowed.has("ai_tutor_text");
 
   const [context, setContext] = useState<AnchorContext | null>(null);
   const [loadingCtx, setLoadingCtx] = useState(false);
@@ -111,6 +119,33 @@ function TutorInner() {
       e.preventDefault();
       void send();
     }
+  }
+
+  if (!access.isLoading && !allowed) {
+    return (
+      <div className="max-w-2xl mx-auto fade-in">
+        <Link href="/student" className="inline-flex items-center gap-1 text-sm text-slate-600 hover:text-emerald-700 mb-3">
+          <ArrowLeft size={14} /> Back to dashboard
+        </Link>
+        <div className="card text-center">
+          <div className="mx-auto w-14 h-14 rounded-full bg-indigo-100 grid place-items-center">
+            <Bot size={26} className="text-indigo-700" />
+          </div>
+          <h1 className="h1 mt-3">Doubt-Clearing AI Tutor</h1>
+          <p className="muted mt-2">
+            A 24/7 Socratic tutor that walks you through concepts step by step — no answer dumps.
+          </p>
+          <div className="mt-4 inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-semibold">
+            <Crown size={12} /> Available on Premium and Premium Plus
+          </div>
+          <div className="mt-5">
+            <Link href="/pricing" className="btn btn-primary inline-flex items-center gap-2">
+              <Sparkles size={14} /> See Premium plans
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   return (

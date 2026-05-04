@@ -158,25 +158,33 @@ export default function TakeQuiz() {
     setLoadErr(null);
     try {
       const sb = supabaseBrowser();
-      const { data: { user } } = await sb.auth.getUser();
-      if (!user) { setLoadErr("Not signed in."); return; }
+      const { data: { session } } = await sb.auth.getSession();
+      if (!session) { setLoadErr("Not signed in."); return; }
 
-      // Best-effort save of the default for next time. A failure here is
-      // not fatal — we still apply the choice for this attempt.
-      try {
-        await sb.from("profiles").update({ track_question_time: trackTimeChoice }).eq("id", user.id);
-      } catch { /* ignore */ }
-
-      const { data: created, error } = await sb
-        .from("quiz_attempts")
-        .insert({ quiz_id: quiz.id, student_id: user.id, total: questions.length })
-        .select()
-        .single();
-      if (error || !created) {
-        setLoadErr(`Could not start attempt: ${error?.message || "unknown error"}`);
+      // Route the attempt insert through a service-role API endpoint to
+      // dodge the RLS race that intermittently rejected this insert from
+      // the user-token client with "new row violates row-level security
+      // policy for table 'quiz_attempts'". The endpoint re-verifies the
+      // bearer, persists the track_question_time preference, and inserts
+      // the attempt row with the daily-cap trigger still applied.
+      const r = await fetch("/api/student/attempt-start", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          quiz_id: quiz.id,
+          total: questions.length,
+          track_question_time: trackTimeChoice,
+        }),
+      });
+      const j = await r.json().catch(() => ({} as { error?: string; attempt?: { id: string } }));
+      if (!r.ok || !j?.attempt?.id) {
+        setLoadErr(`Could not start attempt: ${j?.error || `HTTP ${r.status}`}`);
         return;
       }
-      setAttemptId(created.id);
+      setAttemptId(j.attempt.id);
       startedAtRef.current = Date.now();
       setSecondsLeft(quiz.time_limit_minutes * 60);
       setTrackTime(trackTimeChoice);

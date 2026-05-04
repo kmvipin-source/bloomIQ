@@ -73,19 +73,41 @@ export default function ProfilePage() {
   async function load() {
     setLoading(true);
     const sb = supabaseBrowser();
-    const { data: { user } } = await sb.auth.getUser();
-    if (!user) { setLoading(false); return; }
-    setEmail(user.email || "");
+    const { data: { session } } = await sb.auth.getSession();
+    if (!session) { setLoading(false); return; }
 
-    const { data: prof } = await sb
-      .from("profiles")
-      .select("id, role, full_name, is_school_student, exam_goal, school_id, platform_admin")
-      .eq("id", user.id)
-      .maybeSingle();
-    const p = prof as Profile | null;
+    // Read identity via service-role /api/auth/me — direct profiles selects
+    // race RLS on the edge and intermittently returned null, which is what
+    // surfaced the "Couldn't load your profile" blank state.
+    const meRes = await fetch("/api/auth/me", {
+      headers: { Authorization: `Bearer ${session.access_token}` },
+      cache: "no-store",
+    });
+    if (!meRes.ok) { setLoading(false); return; }
+    const me = await meRes.json() as {
+      uid: string;
+      email: string | null;
+      role: string | null;
+      is_school_student: boolean;
+      platform_admin: boolean;
+      school_id: string | null;
+      full_name: string | null;
+      exam_goal: string | null;
+    };
+    setEmail(me.email || "");
+    const p: Profile = {
+      id: me.uid,
+      role: (me.role || "student") as Role,
+      full_name: me.full_name,
+      is_school_student: me.is_school_student,
+      exam_goal: me.exam_goal,
+      school_id: me.school_id,
+      platform_admin: me.platform_admin,
+    };
     setProfile(p);
-    setDraftName(p?.full_name || "");
-    setDraftGoal(p?.exam_goal || "");
+    setDraftName(p.full_name || "");
+    setDraftGoal(p.exam_goal || "");
+    const user = { id: me.uid };
 
     if (p?.school_id) {
       const { data: sch } = await sb
