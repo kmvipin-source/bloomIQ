@@ -154,7 +154,9 @@ function PricingInner() {
   useEffect(() => {
     (async () => {
       try {
-        const r = await fetch("/api/pricing/active-plans", { cache: "no-store" });
+        // Let the browser/CDN cache kick in — plans change rarely and the
+        // route sets Cache-Control: s-maxage=60, stale-while-revalidate=600.
+        const r = await fetch("/api/pricing/active-plans");
         const j = await r.json();
         if (r.ok && Array.isArray(j.plans)) setDbPlans(j.plans);
       } catch { /* silent — fall back to hardcoded plans */ }

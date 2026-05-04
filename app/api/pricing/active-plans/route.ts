@@ -2,8 +2,12 @@ import { NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
-export const revalidate = 0;
+// Plans change rarely (only when a platform admin edits prices), so we let
+// Vercel's edge CDN cache responses for 60s with a 10-minute stale-while-
+// revalidate window. First request after a price change pays the cold DB hit;
+// everyone else gets the cached copy from the nearest edge. Without this the
+// pricing page made every visitor wait for a Sydney round-trip on each load.
+export const revalidate = 60;
 
 /**
  * GET /api/pricing/active-plans
@@ -49,7 +53,14 @@ export async function GET() {
 
     return NextResponse.json(
       { ok: true, plans: sorted },
-      { headers: { "Cache-Control": "no-store, max-age=0" } }
+      {
+        headers: {
+          // Browser holds for 30s, CDN for 60s, serves stale up to 10min
+          // while revalidating in the background. Plans change rarely so
+          // this is a huge win for page load latency.
+          "Cache-Control": "public, max-age=30, s-maxage=60, stale-while-revalidate=600",
+        },
+      }
     );
   } catch (e) {
     return NextResponse.json(
