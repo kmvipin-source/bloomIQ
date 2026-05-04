@@ -646,16 +646,28 @@ export default function SchoolClassesPage() {
                           Cancel
                         </button>
                       </div>
-                      <p className="text-xs muted mt-2">
-                        <strong>Picking from the dropdown</strong> adds an <em>acting cover</em> — the
-                        canonical primary keeps the role and full access; the cover gets equivalent
-                        privileges temporarily. When the primary returns, click <strong>End acting cover</strong>
-                        on the row. No re-assignment needed.
-                        <br />
-                        <strong>Typing an email</strong> sends an invite the new teacher must accept —
-                        the gentler path for permanent onboarding (currently this still goes through
-                        the legacy primary-transfer flow; tightened in a follow-up).
-                      </p>
+                      {teachersInSchool.length === 0 ? (
+                        <div className="text-xs mt-2 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-900">
+                          No teachers in this school yet — the dropdown of in-school teachers
+                          will appear here once they accept their invite. For now, type the
+                          teacher&rsquo;s email above to send a primary-teacher invite, or
+                          add them first from the{" "}
+                          <Link href="/school/teachers" className="font-semibold underline">
+                            Teachers page
+                          </Link>.
+                        </div>
+                      ) : (
+                        <p className="text-xs muted mt-2">
+                          <strong>Picking from the dropdown</strong> adds an <em>acting cover</em> — the
+                          canonical primary keeps the role and full access; the cover gets equivalent
+                          privileges temporarily. When the primary returns, click <strong>End acting cover</strong>
+                          on the row. No re-assignment needed.
+                          <br />
+                          <strong>Typing an email</strong> sends an invite the new teacher must accept —
+                          the gentler path for permanent onboarding (currently this still goes through
+                          the legacy primary-transfer flow; tightened in a follow-up).
+                        </p>
+                      )}
                       {assignErr && (
                         <div className="mt-2 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{assignErr}</div>
                       )}
