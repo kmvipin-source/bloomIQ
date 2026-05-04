@@ -6,6 +6,7 @@ import { supabaseBrowser } from "@/lib/supabase/client";
 import { Building2, ArrowLeft, Search, Plus } from "lucide-react";
 import { pct } from "@/lib/utils";
 import { loadClassQuizIdsForClasses } from "@/lib/studentScope";
+import { useFocusRefetch } from "@/lib/useFocusRefetch";
 
 const GRADE_OPTIONS = Array.from({ length: 12 }, (_, i) => String(i + 1));
 const SECTION_OPTIONS = ["A", "B", "C", "D", "E", "F", "G", "H"];
@@ -174,22 +175,7 @@ export default function SchoolClassesPage() {
     setLoading(false);
   }
   useEffect(() => { load(); }, []);
-
-  // Refetch when the tab regains focus or becomes visible. Without this the
-  // school admin's dashboard kept showing 'Assigned' for a teacher who had
-  // already left the school from their own dashboard — the row was correct
-  // server-side but the admin's stale render lingered until manual refresh.
-  useEffect(() => {
-    const onFocus = () => { load(); };
-    const onVisible = () => { if (document.visibilityState === "visible") load(); };
-    window.addEventListener("focus", onFocus);
-    document.addEventListener("visibilitychange", onVisible);
-    return () => {
-      window.removeEventListener("focus", onFocus);
-      document.removeEventListener("visibilitychange", onVisible);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  useFocusRefetch(load);
 
   // End acting cover — used when the canonical primary returns from leave
   // and the temporary cover should go away. One click per class; no

@@ -10,6 +10,7 @@ import RenewBanner from "@/components/RenewBanner";
 import { useFeatureAccess } from "@/lib/featureAccess";
 import { generateQuizCode } from "@/lib/utils";
 import { loadClassQuizIdsForClasses } from "@/lib/studentScope";
+import { useFocusRefetch } from "@/lib/useFocusRefetch";
 
 type Stats = {
   teachers: number;
@@ -225,6 +226,7 @@ export default function SchoolHome() {
   }
 
   useEffect(() => { load(); }, []);
+  useFocusRefetch(load);
 
   async function saveSchoolName() {
     setRenameErr(null);

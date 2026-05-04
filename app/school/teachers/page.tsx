@@ -5,6 +5,7 @@ import Link from "next/link";
 import { supabaseBrowser } from "@/lib/supabase/client";
 import type { School } from "@/lib/types";
 import { UserPlus, UserMinus, Copy, ArrowLeft, ShieldCheck, Shield, ArrowUpRight, ArrowDownRight } from "lucide-react";
+import { useFocusRefetch } from "@/lib/useFocusRefetch";
 
 type TeacherRow = {
   id: string;
@@ -118,6 +119,7 @@ export default function SchoolTeachersPage() {
     setLoading(false);
   }
   useEffect(() => { load(); }, []);
+  useFocusRefetch(load);
 
   async function remove(teacherId: string, name: string, schoolRole: TeacherRow["schoolRole"]) {
     if (schoolRole === "head") {

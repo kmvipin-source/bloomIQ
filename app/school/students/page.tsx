@@ -6,6 +6,7 @@ import { supabaseBrowser } from "@/lib/supabase/client";
 import { TrendingUp, AlertTriangle, Trophy, ArrowLeft, Search } from "lucide-react";
 import { pct } from "@/lib/utils";
 import { loadClassQuizIdsForClasses } from "@/lib/studentScope";
+import { useFocusRefetch } from "@/lib/useFocusRefetch";
 
 type StudentRow = {
   id: string;
@@ -21,8 +22,7 @@ export default function SchoolStudentsPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
 
-  useEffect(() => {
-    (async () => {
+  async function load() {
       const sb = supabaseBrowser();
       // Resolve school_id via service-role /api/auth/me — direct profiles
       // selects race RLS on the edge and intermittently blank the page.
@@ -106,8 +106,9 @@ export default function SchoolStudentsPage() {
 
       setRows(out);
       setLoading(false);
-    })();
-  }, []);
+  }
+  useEffect(() => { load(); }, []);
+  useFocusRefetch(load);
 
   const filtered = useMemo(() => {
     const needle = search.trim().toLowerCase();
