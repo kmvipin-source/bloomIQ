@@ -122,6 +122,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }
 
     // === Case: email is null and not immediate -> unassign primary ===
+    // We FULLY remove the previous primary from the class (delete the
+    // class_teachers row, not demote to co). Then, if that teacher no
+    // longer has any class_teachers rows for any class in this school,
+    // we also null their profiles.school_id — otherwise their teacher
+    // dashboard would still show them as belonging to a school they
+    // have no remaining role in.
     if (!email && !immediate) {
       const { data: currentPrimary } = await admin
         .from("class_teachers")
@@ -129,14 +135,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         .eq("class_id", classId)
         .eq("role", "primary")
         .maybeSingle();
-      if (currentPrimary?.teacher_id) {
+      const prevTeacherId = currentPrimary?.teacher_id || null;
+      if (prevTeacherId) {
         await admin
           .from("class_teachers")
-          .update({ role: "co" })
+          .delete()
           .eq("class_id", classId)
-          .eq("teacher_id", currentPrimary.teacher_id);
+          .eq("teacher_id", prevTeacherId);
       }
-      // Also clear any acting cover — the class is being fully unassigned.
+      // Clear any acting cover — class is being fully unassigned.
       await admin
         .from("class_teachers")
         .delete()
@@ -148,7 +155,28 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         .eq("class_id", classId)
         .eq("role", "primary");
       await admin.from("classes").update({ owner_id: null }).eq("id", classId);
-      return NextResponse.json({ ok: true, status: "unassigned" });
+
+      // If the removed teacher has no remaining class roles in this
+      // school, drop them from the school roster. Otherwise leave them
+      // alone (they're still co/primary somewhere else here).
+      let removedFromSchool = false;
+      if (prevTeacherId) {
+        const { data: remainingRoles } = await admin
+          .from("class_teachers")
+          .select("class_id, classes!inner(school_id)")
+          .eq("teacher_id", prevTeacherId)
+          .eq("classes.school_id", cls.school_id);
+        const stillInSchool = ((remainingRoles as Array<unknown>) || []).length > 0;
+        if (!stillInSchool) {
+          await admin
+            .from("profiles")
+            .update({ school_id: null })
+            .eq("id", prevTeacherId)
+            .eq("school_id", cls.school_id);
+          removedFromSchool = true;
+        }
+      }
+      return NextResponse.json({ ok: true, status: "unassigned", removed_from_school: removedFromSchool });
     }
 
     // === BUSINESS-CONTINUITY PATH: immediate ACTING COVER (Option B) ===

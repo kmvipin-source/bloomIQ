@@ -225,13 +225,17 @@ export default function SchoolClassesPage() {
         },
         body: JSON.stringify({ email }),
       });
-      let json: { error?: string; status?: string } = {};
+      let json: { error?: string; status?: string; removed_from_school?: boolean } = {};
       let raw = "";
       try { raw = await res.text(); json = raw ? JSON.parse(raw) : {}; } catch {}
       if (!res.ok) throw new Error(json?.error || `HTTP ${res.status}: ${raw.slice(0,200)}`);
       if (json.status === "linked") setAssignStatus("✅ Linked — that teacher is now the primary.");
       else if (json.status === "pending") setAssignStatus("⏳ Invite sent. The class will show as Pending until the teacher accepts it from their dashboard. Use “Copy invite” to share the sign-in link.");
-      else if (json.status === "unassigned") setAssignStatus("Class is now unassigned.");
+      else if (json.status === "unassigned") {
+        setAssignStatus(json.removed_from_school
+          ? "Class unassigned. The previous primary had no other classes in this school, so they were also removed from the school roster."
+          : "Class unassigned. The previous primary still has other classes here, so they stay on the school roster.");
+      }
       setAssignFor(null);
       setAssignEmail("");
       await load();
@@ -634,11 +638,13 @@ export default function SchoolClassesPage() {
                         <button
                           className="btn btn-ghost"
                           onClick={() => {
-                            const warn = (c.coTeacherCount > 0 || c.memberCount > 0)
-                              ? `Unassign the primary of ${c.name}?\n\n` +
-                                `This class has ${c.coTeacherCount} co-teacher${c.coTeacherCount === 1 ? "" : "s"} and ${c.memberCount} student${c.memberCount === 1 ? "" : "s"}. ` +
-                                `They keep access, but adding more co-teachers will require the Admin Head until you assign a new primary. Continue?`
-                              : `Unassign the primary of ${c.name}? The class will become unassigned.`;
+                            const warn =
+                              `Unassign the primary of ${c.name}?\n\n` +
+                              `The previous primary will be removed from this class. ` +
+                              `If they have no other classes in this school, they will also be dropped from the school roster automatically. ` +
+                              ((c.coTeacherCount > 0 || c.memberCount > 0)
+                                ? `This class has ${c.coTeacherCount} co-teacher${c.coTeacherCount === 1 ? "" : "s"} and ${c.memberCount} student${c.memberCount === 1 ? "" : "s"} — they keep their access. Continue?`
+                                : `Continue?`);
                             if (confirm(warn)) assignPrimary(c.id, null);
                           }}
                           disabled={assignBusy}
