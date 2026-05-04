@@ -105,19 +105,34 @@ export default function SchoolClassesPage() {
     type Cs = { id: string; name: string; grade: string | null; section: string | null; owner_id: string | null; created_at: string };
     const classList = (cs as Cs[]) || [];
 
+    // Pull all primary invites in one shot via service-role API. Reading
+    // class_teacher_invites with the user-token client races RLS on the
+    // edge — a freshly-created pending invite intermittently returns
+    // empty, leaving the row stuck on 'Unassigned' with no Copy invite
+    // / Re-invite buttons. The endpoint returns the latest invite per
+    // class so the per-class hydration below can just look it up.
+    type InviteRow = { class_id: string; email: string; status: string; invited_at: string; responded_at: string | null };
+    let invitesByClass: Record<string, InviteRow> = {};
+    try {
+      const r = await fetch("/api/admin/school/class-invites", {
+        headers: { Authorization: `Bearer ${token}` },
+        cache: "no-store",
+      });
+      if (r.ok) {
+        const j = await r.json() as { invitesByClass: Record<string, InviteRow> };
+        invitesByClass = j.invitesByClass || {};
+      }
+    } catch { /* fall through — UI shows 'Unassigned' until next refetch */ }
+
     const hydrated: ClassRow[] = await Promise.all(
       classList.map(async (c) => {
-        const [{ data: ct }, { count: mCt }, { data: invite }, { count: coCount }, { data: acting }] = await Promise.all([
+        const [{ data: ct }, { count: mCt }, { count: coCount }, { data: acting }] = await Promise.all([
           sb.from("class_teachers").select("teacher_id, profile:profiles!class_teachers_teacher_id_fkey(full_name)").eq("class_id", c.id).eq("role", "primary").maybeSingle(),
           sb.from("class_members").select("student_id", { count: "exact", head: true }).eq("class_id", c.id),
-          // Sort by invited_at desc so a freshly created pending invite
-          // (responded_at = null) surfaces ahead of an older declined one.
-          // Sorting by responded_at put pending rows at the bottom and
-          // surfaced stale "Rejected" badges instead of the live invite.
-          sb.from("class_teacher_invites").select("email, status, responded_at, invited_at").eq("class_id", c.id).eq("role", "primary").order("invited_at", { ascending: false }).limit(1).maybeSingle(),
           sb.from("class_teachers").select("teacher_id", { count: "exact", head: true }).eq("class_id", c.id).eq("role", "co"),
           sb.from("class_teachers").select("teacher_id, profile:profiles!class_teachers_teacher_id_fkey(full_name)").eq("class_id", c.id).eq("role", "acting").maybeSingle(),
         ]);
+        const invite = invitesByClass[c.id] || null;
         type ActingRow = { teacher_id: string; profile: { full_name: string | null } | null };
         const actingRow = acting as unknown as ActingRow | null;
         const actingId = actingRow?.teacher_id || null;
