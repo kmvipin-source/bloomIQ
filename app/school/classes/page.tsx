@@ -109,7 +109,11 @@ export default function SchoolClassesPage() {
         const [{ data: ct }, { count: mCt }, { data: invite }, { count: coCount }, { data: acting }] = await Promise.all([
           sb.from("class_teachers").select("teacher_id, profile:profiles!class_teachers_teacher_id_fkey(full_name)").eq("class_id", c.id).eq("role", "primary").maybeSingle(),
           sb.from("class_members").select("student_id", { count: "exact", head: true }).eq("class_id", c.id),
-          sb.from("class_teacher_invites").select("email, status, responded_at").eq("class_id", c.id).eq("role", "primary").order("responded_at", { ascending: false, nullsFirst: false }).maybeSingle(),
+          // Sort by invited_at desc so a freshly created pending invite
+          // (responded_at = null) surfaces ahead of an older declined one.
+          // Sorting by responded_at put pending rows at the bottom and
+          // surfaced stale "Rejected" badges instead of the live invite.
+          sb.from("class_teacher_invites").select("email, status, responded_at, invited_at").eq("class_id", c.id).eq("role", "primary").order("invited_at", { ascending: false }).limit(1).maybeSingle(),
           sb.from("class_teachers").select("teacher_id", { count: "exact", head: true }).eq("class_id", c.id).eq("role", "co"),
           sb.from("class_teachers").select("teacher_id, profile:profiles!class_teachers_teacher_id_fkey(full_name)").eq("class_id", c.id).eq("role", "acting").maybeSingle(),
         ]);
@@ -226,7 +230,7 @@ export default function SchoolClassesPage() {
       try { raw = await res.text(); json = raw ? JSON.parse(raw) : {}; } catch {}
       if (!res.ok) throw new Error(json?.error || `HTTP ${res.status}: ${raw.slice(0,200)}`);
       if (json.status === "linked") setAssignStatus("✅ Linked — that teacher is now the primary.");
-      else if (json.status === "pending") setAssignStatus("⏳ No account yet for that email. The class will auto-link when they sign up. Use “Copy invite” to share the message.");
+      else if (json.status === "pending") setAssignStatus("⏳ Invite sent. The class will show as Pending until the teacher accepts it from their dashboard. Use “Copy invite” to share the sign-in link.");
       else if (json.status === "unassigned") setAssignStatus("Class is now unassigned.");
       setAssignFor(null);
       setAssignEmail("");
