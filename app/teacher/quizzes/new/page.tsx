@@ -216,16 +216,17 @@ function ComposerInner() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Save failed.");
       setVariantSaved((s) => ({ ...s, [idx]: true }));
-      const { data: { session } } = await sb.auth.getSession();
-      if (session) {
-        const rr = await fetch("/api/teacher/question-bank?status=approved", {
-          headers: { Authorization: `Bearer ${session.access_token}` },
-          cache: "no-store",
-        });
-        if (rr.ok) {
-          const jj = await rr.json() as { items: Question[] };
-          setBank(jj.items || []);
-        }
+      // Refresh the approved-questions library via the service-role
+      // endpoint (the user-token client raced RLS and showed the library
+      // as empty even when rows existed). Reuse the `session` already
+      // resolved earlier in this function.
+      const rr = await fetch("/api/teacher/question-bank?status=approved", {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+        cache: "no-store",
+      });
+      if (rr.ok) {
+        const jj = await rr.json() as { items: Question[] };
+        setBank(jj.items || []);
       }
     } catch (e) {
       setVariantErr(e instanceof Error ? e.message : "Save failed.");
