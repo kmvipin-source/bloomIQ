@@ -175,6 +175,22 @@ export default function SchoolClassesPage() {
   }
   useEffect(() => { load(); }, []);
 
+  // Refetch when the tab regains focus or becomes visible. Without this the
+  // school admin's dashboard kept showing 'Assigned' for a teacher who had
+  // already left the school from their own dashboard — the row was correct
+  // server-side but the admin's stale render lingered until manual refresh.
+  useEffect(() => {
+    const onFocus = () => { load(); };
+    const onVisible = () => { if (document.visibilityState === "visible") load(); };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // End acting cover — used when the canonical primary returns from leave
   // and the temporary cover should go away. One click per class; no
   // re-reassign of primary required (that's the whole point of Option B).
