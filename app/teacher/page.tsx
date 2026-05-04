@@ -50,12 +50,21 @@ export default function TeacherHome() {
 
   async function loadProfile() {
     const sb = supabaseBrowser();
-    const { data: { user } } = await sb.auth.getUser();
-    if (!user) return null;
-    const { data: prof } = await sb.from("profiles").select("full_name, school_id").eq("id", user.id).single();
-    setName(prof?.full_name || "");
-    setSchoolId(prof?.school_id || null);
-    return user;
+    // Service-role lookup — reading profiles via the user-token client races
+    // RLS on the edge and produces a flicker of empty name / "join a school"
+    // state before the dashboard hydrates.
+    const { data: { session } } = await sb.auth.getSession();
+    const token = session?.access_token;
+    if (!token) return null;
+    const r = await fetch("/api/auth/me", {
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+    });
+    if (!r.ok) return null;
+    const me = await r.json() as { uid: string; email: string | null; full_name: string | null; school_id: string | null };
+    setName(me.full_name || "");
+    setSchoolId(me.school_id);
+    return { id: me.uid, email: me.email };
   }
 
   async function joinSchool() {

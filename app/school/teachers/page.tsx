@@ -41,14 +41,20 @@ export default function SchoolTeachersPage() {
   async function load() {
     setLoading(true);
     const sb = supabaseBrowser();
-    const { data: { user } } = await sb.auth.getUser();
-    if (!user) return;
-
-    const { data: prof } = await sb.from("profiles").select("school_id").eq("id", user.id).single();
-    if (!prof?.school_id) {
-      setLoading(false);
-      return;
-    }
+    // Service-role identity + school_id lookup so first paint after login
+    // can't race RLS and blank the page.
+    const { data: { session } } = await sb.auth.getSession();
+    const token = session?.access_token;
+    if (!token) { setLoading(false); return; }
+    const meRes = await fetch("/api/auth/me", {
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+    });
+    if (!meRes.ok) { setLoading(false); return; }
+    const me = await meRes.json() as { uid: string; school_id: string | null };
+    if (!me.school_id) { setLoading(false); return; }
+    const prof = { school_id: me.school_id };
+    const user = { id: me.uid };
     const { data: sch } = await sb.from("schools").select("*").eq("id", prof.school_id).single();
     setSchool(sch as School);
     setCallerIsHead((sch as School)?.super_teacher_id === user.id);

@@ -24,10 +24,19 @@ export default function SchoolStudentsPage() {
   useEffect(() => {
     (async () => {
       const sb = supabaseBrowser();
-      const { data: { user } } = await sb.auth.getUser();
-      if (!user) return;
-      const { data: prof } = await sb.from("profiles").select("school_id").eq("id", user.id).single();
-      if (!prof?.school_id) { setLoading(false); return; }
+      // Resolve school_id via service-role /api/auth/me — direct profiles
+      // selects race RLS on the edge and intermittently blank the page.
+      const { data: { session } } = await sb.auth.getSession();
+      const token = session?.access_token;
+      if (!token) { setLoading(false); return; }
+      const meRes = await fetch("/api/auth/me", {
+        headers: { Authorization: `Bearer ${token}` },
+        cache: "no-store",
+      });
+      if (!meRes.ok) { setLoading(false); return; }
+      const me = await meRes.json() as { school_id: string | null };
+      if (!me.school_id) { setLoading(false); return; }
+      const prof = { school_id: me.school_id };
 
       // 1) All students in this school
       const { data: ss } = await sb
