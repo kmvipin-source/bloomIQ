@@ -88,10 +88,13 @@ export default function MyPracticePage() {
     }
 
     // ---- List of practice quizzes -------------------------------------
-    // The student's self-generated quizzes (owner_id = them). Hydrate
-    // each row with question count + last attempt for the list view.
+    // The student's self-generated quizzes (owner_id = them). Belt-and-
+    // suspenders: also exclude any quiz that's class-assigned to this
+    // student so a stale-auth-token glitch (or future RLS quirk) can't
+    // surface a teacher-owned class quiz here. classQuizIds already
+    // resolved above for the practice-stats filter.
     const { data: qs } = await sb.from("quizzes").select("*").eq("owner_id", user.id).order("created_at", { ascending: false });
-    const list = (qs as Quiz[]) || [];
+    const list = ((qs as Quiz[]) || []).filter((q) => !classQuizIds.has(q.id));
 
     const rows: Row[] = await Promise.all(list.map(async (q) => {
       const [{ count: qCount }, { data: atts }] = await Promise.all([

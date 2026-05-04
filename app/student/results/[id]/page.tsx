@@ -356,7 +356,7 @@ export default function ResultsPage() {
                 </tr>
               </thead>
               <tbody>
-                {benchData.questions.map((row) => {
+                {benchData.questions.map((row, idx) => {
                   const yourS = row.your_ms !== null ? Math.round(row.your_ms / 1000) : null;
                   const medS = row.median_ms !== null ? Math.round(row.median_ms / 1000) : null;
                   const paceTone =
@@ -372,7 +372,7 @@ export default function ResultsPage() {
                                                           "—";
                   return (
                     <tr key={row.question_id} className="border-b border-slate-100 last:border-0">
-                      <td className="py-2 pr-3 font-medium">Q{row.position || "—"}</td>
+                      <td className="py-2 pr-3 font-medium">Q{row.position ?? (idx + 1)}</td>
                       <td className="py-2 pr-3">
                         {row.is_correct === true  ? <span className="text-emerald-700">✓ Correct</span> :
                          row.is_correct === false ? <span className="text-rose-700">✗ Wrong</span>     :

@@ -106,18 +106,23 @@ export function useFeatureAccess(): FeatureAccessState {
   useEffect(() => {
     (async () => {
       const sb = supabaseBrowser();
-      const { data: { user } } = await sb.auth.getUser();
-      if (!user) { setState({ ...EMPTY, isLoading: false }); return; }
+      const { data: { session } } = await sb.auth.getSession();
+      if (!session) { setState({ ...EMPTY, isLoading: false }); return; }
 
-      // Pull the profile to figure out which subscription scope applies.
-      // School-managed students inherit the school's plan; everyone else
-      // (independent students, teachers, super_teachers, platform admins)
-      // resolves via their personal subscription.
-      const { data: prof } = await sb
-        .from("profiles")
-        .select("is_school_student, school_id")
-        .eq("id", user.id)
-        .single();
+      // Identity (is_school_student, school_id) via service-role
+      // /api/auth/me — direct profiles reads raced RLS and made school
+      // students show as "Free / Upgrade" in the sidebar even though
+      // they were on the school's plan.
+      const meRes = await fetch("/api/auth/me", {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+        cache: "no-store",
+      });
+      if (!meRes.ok) { setState({ ...EMPTY, isLoading: false }); return; }
+      const me = await meRes.json() as {
+        uid: string; is_school_student: boolean; school_id: string | null;
+      };
+      const user = { id: me.uid };
+      const prof = { is_school_student: me.is_school_student, school_id: me.school_id };
 
       let planRow: { tier: string | null; label: string | null; features: unknown; slug: string | null } | null = null;
       let expiresAtRaw: string | null = null;

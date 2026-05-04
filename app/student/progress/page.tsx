@@ -44,16 +44,22 @@ export default function ProgressPage() {
   useEffect(() => {
     (async () => {
       const sb = supabaseBrowser();
-      const { data: { user } } = await sb.auth.getUser();
-      if (!user) return;
-      const { data: prof } = await sb
-        .from("profiles")
-        .select("full_name, is_school_student")
-        .eq("id", user.id)
-        .single();
-      const profRow = prof as { full_name: string | null; is_school_student: boolean | null } | null;
-      setName(profRow?.full_name || "");
-      const isSchool = !!profRow?.is_school_student;
+      // Identity via /api/auth/me to dodge the RLS race that occasionally
+      // returned a null profile on first paint and rendered this page
+      // as an independent student (wrong copy + empty class-quiz list).
+      const { data: { session } } = await sb.auth.getSession();
+      if (!session) return;
+      const meRes = await fetch("/api/auth/me", {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+        cache: "no-store",
+      });
+      if (!meRes.ok) return;
+      const me = await meRes.json() as {
+        uid: string; full_name: string | null; is_school_student: boolean;
+      };
+      const user = { id: me.uid };
+      setName(me.full_name || "");
+      const isSchool = !!me.is_school_student;
       setIsSchoolStudent(isSchool);
 
       const { data: atts } = await sb
