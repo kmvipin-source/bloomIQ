@@ -469,6 +469,7 @@ export default function SchoolClassesPage() {
               <tr>
                 <th className="px-4 py-3 text-left">Class</th>
                 <th className="px-4 py-3 text-left">Primary teacher</th>
+                <th className="px-4 py-3 text-left">Status</th>
                 <th className="px-4 py-3 text-right">Students</th>
                 <th className="px-4 py-3 text-right">Tests</th>
                 <th className="px-4 py-3 text-right">Avg score</th>
@@ -485,32 +486,32 @@ export default function SchoolClassesPage() {
                   <td className="px-4 py-3">
                     <div className="flex flex-col gap-1">
                       {c.primaryName ? (
-                        <span className="inline-flex items-center gap-1.5 flex-wrap">
-                          <span className="text-[10px] uppercase tracking-wide font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5">✅ Accepted</span>
-                          <span>{c.primaryName}</span>
-                        </span>
-                      ) : c.inviteStatus === "pending" && c.pendingPrimaryEmail ? (
-                        <span className="inline-flex items-center gap-1.5 italic flex-wrap">
-                          <span className="text-[10px] uppercase tracking-wide font-bold text-sky-800 bg-sky-50 border border-sky-200 rounded-full px-2 py-0.5">⏳ Pending</span>
-                          <span className="text-slate-700">{c.pendingPrimaryEmail}</span>
-                        </span>
-                      ) : c.inviteStatus === "declined" ? (
-                        <span className="inline-flex items-center gap-1.5 italic flex-wrap">
-                          <span className="text-[10px] uppercase tracking-wide font-bold text-red-800 bg-red-50 border border-red-200 rounded-full px-2 py-0.5">❌ Rejected</span>
-                          <span className="text-slate-700">{c.inviteEmail}</span>
-                        </span>
+                        <span>{c.primaryName}</span>
+                      ) : c.pendingPrimaryEmail ? (
+                        <span className="text-slate-700 italic">{c.pendingPrimaryEmail}</span>
+                      ) : c.inviteEmail ? (
+                        <span className="text-slate-700 italic">{c.inviteEmail}</span>
                       ) : (
-                        <span className="text-[10px] uppercase tracking-wide font-bold text-amber-800 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5">
-                          Unassigned
-                        </span>
+                        <span className="muted italic">—</span>
                       )}
                       {c.actingName && (
                         <span className="inline-flex items-center gap-1.5 flex-wrap">
-                          <span className="text-[10px] uppercase tracking-wide font-bold text-violet-800 bg-violet-50 border border-violet-200 rounded-full px-2 py-0.5">🛡 Acting cover</span>
-                          <span className="text-slate-700">{c.actingName}</span>
+                          <span className="text-[10px] uppercase tracking-wide font-bold text-violet-800 bg-violet-50 border border-violet-200 rounded-full px-2 py-0.5">🛡 Cover</span>
+                          <span className="text-slate-700 text-xs">{c.actingName}</span>
                         </span>
                       )}
                     </div>
+                  </td>
+                  <td className="px-4 py-3">
+                    {c.primaryName ? (
+                      <span className="text-[10px] uppercase tracking-wide font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5">✅ Active</span>
+                    ) : c.inviteStatus === "pending" ? (
+                      <span className="text-[10px] uppercase tracking-wide font-bold text-sky-800 bg-sky-50 border border-sky-200 rounded-full px-2 py-0.5">⏳ Pending</span>
+                    ) : c.inviteStatus === "declined" ? (
+                      <span className="text-[10px] uppercase tracking-wide font-bold text-red-800 bg-red-50 border border-red-200 rounded-full px-2 py-0.5">❌ Rejected</span>
+                    ) : (
+                      <span className="text-[10px] uppercase tracking-wide font-bold text-amber-800 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5">Unassigned</span>
+                    )}
                   </td>
                   <td className="px-4 py-3 text-right">{c.memberCount}</td>
                   <td className="px-4 py-3 text-right">{c.quizCount}</td>
@@ -562,7 +563,7 @@ export default function SchoolClassesPage() {
                 </tr>
                 {assignFor === c.id && (
                   <tr className="bg-slate-50">
-                    <td colSpan={6} className="px-4 py-3">
+                    <td colSpan={7} className="px-4 py-3">
                       <div className="flex items-center gap-2 flex-wrap">
                         {teachersInSchool.length > 0 && (
                           <>
