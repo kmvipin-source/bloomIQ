@@ -163,7 +163,37 @@ export default function Sidebar({ role }: { role: SidebarRole }) {
     isSchoolStudent ? STUDENT_SCHOOL : STUDENT_INDEPENDENT;
 
   async function logout() {
-    await supabaseBrowser().auth.signOut();
+    // Sign out, then aggressively wipe any auth-shaped local storage so a
+    // stale token from a previous session can't be read by code that
+    // mounts before supabase-js finishes clearing its own copy. We have
+    // seen RSC / page mounts query the wrong user_id (a deleted account)
+    // until the user hard-refreshed; this prevents that recurring.
+    try { await supabaseBrowser().auth.signOut({ scope: "local" }); } catch { /* ignore */ }
+    if (typeof window !== "undefined") {
+      try {
+        const ls = window.localStorage;
+        for (let i = ls.length - 1; i >= 0; i--) {
+          const k = ls.key(i);
+          if (!k) continue;
+          if (k.startsWith("sb-") || k.startsWith("bloomiq_") || k.startsWith("supabase.")) {
+            ls.removeItem(k);
+          }
+        }
+        const ss = window.sessionStorage;
+        for (let i = ss.length - 1; i >= 0; i--) {
+          const k = ss.key(i);
+          if (!k) continue;
+          if (k.startsWith("sb-") || k.startsWith("bloomiq_") || k.startsWith("supabase.")) {
+            ss.removeItem(k);
+          }
+        }
+      } catch { /* private mode / quota — non-fatal */ }
+      // Hard-replace the location so React state, in-flight RSC fetches,
+      // and the supabase client are all torn down. router.push leaves the
+      // singletons alive and was the root of the cross-account leakage.
+      window.location.replace("/");
+      return;
+    }
     router.push("/");
   }
 

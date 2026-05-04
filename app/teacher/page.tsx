@@ -174,10 +174,10 @@ export default function TeacherHome() {
   }, []);
 
   const tiles = [
-    { label: "Approved questions", hint: "Ready to use in tests",  value: stats.approved, icon: Library,        iconBg: "bg-emerald-100", iconFg: "text-emerald-700" },
-    { label: "Awaiting review",    hint: "AI drafts to approve",     value: stats.pending,  icon: ClipboardCheck, iconBg: "bg-amber-100",   iconFg: "text-amber-700" },
-    { label: "Tests created",    hint: "Across all your classes",  value: stats.quizzes,  icon: ListChecks,     iconBg: "bg-sky-100",     iconFg: "text-sky-700" },
-    { label: "Student attempts",   hint: "Class tests only",       value: stats.attempts, icon: Users,          iconBg: "bg-violet-100",  iconFg: "text-violet-700" },
+    { label: "Approved questions", hint: "Ready to use in tests",  value: stats.approved, icon: Library,        iconBg: "bg-emerald-100", iconFg: "text-emerald-700", href: "/teacher/quizzes/new" },
+    { label: "Awaiting review",    hint: "AI drafts to approve",     value: stats.pending,  icon: ClipboardCheck, iconBg: "bg-amber-100",   iconFg: "text-amber-700",   href: "/teacher/review" },
+    { label: "Tests created",    hint: "Across all your classes",  value: stats.quizzes,  icon: ListChecks,     iconBg: "bg-sky-100",     iconFg: "text-sky-700",     href: "/teacher/quizzes" },
+    { label: "Student attempts",   hint: "Class tests only",       value: stats.attempts, icon: Users,          iconBg: "bg-violet-100",  iconFg: "text-violet-700",  href: "/teacher/analytics" },
   ];
 
   const focus: { title: string; sub: string; href: string; cta: string; tone: "amber" | "emerald" | "sky" | "rose" } =
@@ -297,8 +297,12 @@ export default function TeacherHome() {
       </div>
 
       <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 mt-6">
-        {tiles.map(({ label, hint, value, icon: Icon, iconBg, iconFg }) => (
-          <div key={label} className="card card-hover">
+        {tiles.map(({ label, hint, value, icon: Icon, iconBg, iconFg, href }) => (
+          <Link
+            key={label}
+            href={href}
+            className="card card-hover block focus:outline-none focus:ring-2 focus:ring-emerald-500 rounded-xl"
+          >
             <div className="flex items-center gap-3">
               <div className={`w-10 h-10 rounded-lg ${iconBg} ${iconFg} grid place-items-center shrink-0`}>
                 <Icon size={20} />
@@ -309,7 +313,7 @@ export default function TeacherHome() {
               </div>
             </div>
             <div className="text-[11px] muted mt-2">{hint}</div>
-          </div>
+          </Link>
         ))}
       </div>
 

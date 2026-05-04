@@ -468,10 +468,10 @@ export default function SchoolHome() {
       )}
 
       <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 mt-6">
-        <Stat label="Teachers"     value={stats?.teachers}  icon={UserRound}     color="from-emerald-500 to-emerald-600" />
-        <Stat label="Classes"      value={stats?.classes}   icon={Building2}     color="from-sky-500 to-sky-600" />
-        <Stat label="Tests made"   value={stats?.quizzes}   icon={ListChecks}    color="from-amber-500 to-amber-600" />
-        <Stat label="Attempts"     value={stats?.attempts}  icon={ClipboardList} color="from-violet-500 to-violet-600" sub={stats && stats.attempts > 0 ? `Avg ${stats.avgScore}%` : undefined} />
+        <Stat href="/school/teachers" label="Teachers"     value={stats?.teachers}  icon={UserRound}     color="from-emerald-500 to-emerald-600" />
+        <Stat href="/school/classes"  label="Classes"      value={stats?.classes}   icon={Building2}     color="from-sky-500 to-sky-600" />
+        <Stat href="/school/reports"  label="Tests made"   value={stats?.quizzes}   icon={ListChecks}    color="from-amber-500 to-amber-600" />
+        <Stat href="/school/reports"  label="Attempts"     value={stats?.attempts}  icon={ClipboardList} color="from-violet-500 to-violet-600" sub={stats && stats.attempts > 0 ? `Avg ${stats.avgScore}%` : undefined} />
       </div>
 
       <h2 className="h2 mt-8 mb-3 flex items-center gap-2"><UserRound size={20} /> Teacher activity</h2>
@@ -540,21 +540,33 @@ export default function SchoolHome() {
 }
 
 function Stat({
-  label, value, icon: Icon, color, sub,
+  label, value, icon: Icon, color, sub, href,
 }: {
   label: string; value: number | undefined; icon: React.ComponentType<{ size?: number }>;
   color: string; sub?: string;
+  /** When provided, the tile becomes a real link to a drill-down page.
+   *  Without it the tile renders as plain content (no hover affordance)
+   *  so users don't get tricked into clicking inert KPIs. */
+  href?: string;
 }) {
-  return (
-    <div className="card card-hover">
+  const inner = (
+    <>
       <div className={`w-10 h-10 rounded-lg bg-gradient-to-br ${color} text-white grid place-items-center mb-3`}>
         <Icon size={20} />
       </div>
       <div className="text-3xl font-bold">{value ?? "—"}</div>
       <div className="text-sm muted">{label}</div>
       {sub && <div className="text-xs muted mt-0.5">{sub}</div>}
-    </div>
+    </>
   );
+  if (href) {
+    return (
+      <Link href={href} className="card card-hover block focus:outline-none focus:ring-2 focus:ring-emerald-500 rounded-xl">
+        {inner}
+      </Link>
+    );
+  }
+  return <div className="card">{inner}</div>;
 }
 
 function NavCard({
