@@ -29,16 +29,33 @@ export default function CurrentPlanBadge() {
     (async () => {
       try {
         const sb = supabaseBrowser();
-        const { data: { user } } = await sb.auth.getUser();
-        if (!user) return;
-
-        const { data: prof } = await sb
-          .from("profiles")
-          .select("role, is_school_student, school_id, platform_admin")
-          .eq("id", user.id)
-          .maybeSingle();
-        if (!prof) return;
-        if (prof.platform_admin) return;
+        // Resolve role + school_id via the service-role /api/auth/me
+        // endpoint. Reading profiles via the user-token client races RLS
+        // and was returning a stale school_id even after the row was
+        // nulled, leaving the badge stuck on the old school name.
+        const { data: { session } } = await sb.auth.getSession();
+        const token = session?.access_token;
+        if (!token) return;
+        const meRes = await fetch("/api/auth/me", {
+          headers: { Authorization: `Bearer ${token}` },
+          cache: "no-store",
+        });
+        if (!meRes.ok) return;
+        const me = await meRes.json() as {
+          uid: string;
+          role: string | null;
+          is_school_student: boolean;
+          school_id: string | null;
+          platform_admin: boolean;
+        };
+        if (me.platform_admin) return;
+        const user = { id: me.uid };
+        const prof = {
+          role: me.role,
+          is_school_student: me.is_school_student,
+          school_id: me.school_id,
+          platform_admin: me.platform_admin,
+        };
 
         // Determine which subscription to read.
         const inSchool = !!prof.school_id;
