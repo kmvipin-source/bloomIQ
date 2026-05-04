@@ -73,15 +73,31 @@ export default function SchoolHome() {
   async function load() {
     setLoading(true);
     const sb = supabaseBrowser();
-    const { data: { user } } = await sb.auth.getUser();
-    if (!user) return;
-
-    const { data: prof } = await sb.from("profiles").select("school_id").eq("id", user.id).single();
-    if (!prof?.school_id) {
+    // Read identity + school_id via the service-role /api/auth/me endpoint.
+    // Reading profiles directly with the user-token client races RLS on the
+    // edge (same root cause that broke the teacher misroute) — the read
+    // sometimes returns null on the first paint after login, which made
+    // the page show "Set up your school" to a school admin who already has
+    // one. Hard refresh "fixed" it because the second request's RLS check
+    // ran with a warmed-up auth context. Going through the API route makes
+    // the lookup deterministic.
+    const { data: { session } } = await sb.auth.getSession();
+    const token = session?.access_token;
+    if (!token) { setLoading(false); return; }
+    const meRes = await fetch("/api/auth/me", {
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+    });
+    if (!meRes.ok) { setLoading(false); return; }
+    const me = await meRes.json() as { uid: string; school_id: string | null };
+    const userId = me.uid;
+    if (!me.school_id) {
       setNeedsSetup(true);
       setLoading(false);
       return;
     }
+    const prof = { school_id: me.school_id };
+    const user = { id: userId };
     let { data: sch } = await sb.from("schools").select("*").eq("id", prof.school_id).single();
     if (sch && !sch.join_code) {
       let code = generateQuizCode();

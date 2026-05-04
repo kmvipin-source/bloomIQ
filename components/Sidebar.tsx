@@ -136,12 +136,22 @@ export default function Sidebar({ role }: { role: SidebarRole }) {
 
   useEffect(() => {
     (async () => {
+      // Use the service-role /api/auth/me lookup instead of reading profiles
+      // directly. The user-token client races RLS on the edge, which made
+      // the sidebar briefly show the wrong user's name on first paint after
+      // login (and forced users to hard-refresh to see themselves).
       const sb = supabaseBrowser();
-      const { data: { user } } = await sb.auth.getUser();
-      if (!user) return;
-      const { data } = await sb.from("profiles").select("full_name, is_school_student").eq("id", user.id).single();
-      setName(data?.full_name || user.email || "");
-      setIsSchoolStudent(!!data?.is_school_student);
+      const { data: { session } } = await sb.auth.getSession();
+      const token = session?.access_token;
+      if (!token) return;
+      const r = await fetch("/api/auth/me", {
+        headers: { Authorization: `Bearer ${token}` },
+        cache: "no-store",
+      });
+      if (!r.ok) return;
+      const j = await r.json() as { full_name: string | null; email: string | null; is_school_student: boolean };
+      setName(j.full_name || j.email || "");
+      setIsSchoolStudent(!!j.is_school_student);
     })();
   }, []);
 

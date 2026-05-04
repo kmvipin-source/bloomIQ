@@ -41,7 +41,7 @@ export async function GET(req: Request) {
     const admin = supabaseAdmin();
     const { data: prof } = await admin
       .from("profiles")
-      .select("role, is_school_student, platform_admin, school_id, session_iat")
+      .select("role, is_school_student, platform_admin, school_id, session_iat, full_name")
       .eq("id", user.id)
       .maybeSingle();
 
@@ -62,6 +62,7 @@ export async function GET(req: Request) {
       is_school_student: !!prof?.is_school_student,
       platform_admin: !!prof?.platform_admin,
       school_id: prof?.school_id || null,
+      full_name: prof?.full_name || null,
     });
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : "Failed" }, { status: 500 });
