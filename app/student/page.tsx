@@ -128,7 +128,7 @@ export default function StudentHome() {
       setIsSchool(!!me.is_school_student);
       setExamGoal(me.exam_goal || null);
 
-      if (prof && !prof.is_school_student) {
+      if (!me.is_school_student) {
         try {
           const [{ data: remaining }, { data: limits }] = await Promise.all([
             sb.rpc("attempts_remaining_today"),
@@ -172,7 +172,7 @@ export default function StudentHome() {
       // here. Independent students have no class scope; their full
       // list IS personal practice by definition.
       let rows: AttemptRow[];
-      if (prof?.is_school_student) {
+      if (me.is_school_student) {
         const classQuizIds = await loadClassQuizIds(sb);
         rows = rawRows.filter((a) => a.quiz_id && classQuizIds.has(a.quiz_id));
       } else {
@@ -180,7 +180,7 @@ export default function StudentHome() {
       }
       setAttempts(rows);
 
-      if (prof?.is_school_student) {
+      if (me.is_school_student) {
         const { data: asg } = await sb
           .from("quiz_assignments")
           .select(`
