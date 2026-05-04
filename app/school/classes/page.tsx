@@ -504,7 +504,7 @@ export default function SchoolClassesPage() {
                   </td>
                   <td className="px-4 py-3">
                     {c.primaryName ? (
-                      <span className="text-[10px] uppercase tracking-wide font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5">✅ Active</span>
+                      <span className="text-[10px] uppercase tracking-wide font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5">✅ Assigned</span>
                     ) : c.inviteStatus === "pending" ? (
                       <span className="text-[10px] uppercase tracking-wide font-bold text-sky-800 bg-sky-50 border border-sky-200 rounded-full px-2 py-0.5">⏳ Pending</span>
                     ) : c.inviteStatus === "declined" ? (
