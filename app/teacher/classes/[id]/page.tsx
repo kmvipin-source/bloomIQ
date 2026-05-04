@@ -161,28 +161,50 @@ export default function ClassDetailPage() {
 
     setMembers(baseMembers);
 
-    // Load all teachers on this class (with my role for gating UI)
-    const { data: { user } } = await sb.auth.getUser();
-    const [{ data: cts }, { data: invites }] = await Promise.all([
-      sb.from("class_teachers")
-        .select("teacher_id, role, subject, profile:profiles!class_teachers_teacher_id_fkey(full_name)")
-        .eq("class_id", id),
-      sb.from("class_teacher_invites")
-        .select("email, role, subject, status")
-        .eq("class_id", id)
-        .in("status", ["pending", "declined"]),
-    ]);
-    type CtRow = { teacher_id: string; role: "primary" | "co"; subject: string | null; profile: { full_name: string | null } | null };
+    // Load class teachers + my role via the service-role
+    // /api/teacher/class-context endpoint. Reading class_teachers with
+    // the user-token client races RLS, which made the primary teacher
+    // get rendered as "Co-teacher view" with no add controls. Invites
+    // are still read directly because they're not on the racy path
+    // (and the school admin's invite flow is the canonical source).
+    const { data: { session } } = await sb.auth.getSession();
+    const userId = session?.user?.id || null;
+    type CtxTeacher = {
+      teacher_id: string;
+      role: "primary" | "co" | "acting";
+      subject: string | null;
+      full_name: string | null;
+    };
+    let ctTeachers: CtxTeacher[] = [];
+    let ctxMyRole: "primary" | "co" | null = null;
+    if (session?.access_token) {
+      const r = await fetch(`/api/teacher/class-context/${id}`, {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+        cache: "no-store",
+      });
+      if (r.ok) {
+        const j = await r.json() as { teachers: CtxTeacher[]; my_role: "primary" | "co" | "acting" | null };
+        ctTeachers = j.teachers || [];
+        // 'acting' covers count as primary for UI gating purposes.
+        ctxMyRole = j.my_role === "acting" ? "primary" : (j.my_role as "primary" | "co" | null);
+      }
+    }
+    const { data: invites } = await sb.from("class_teacher_invites")
+      .select("email, role, subject, status")
+      .eq("class_id", id)
+      .in("status", ["pending", "declined"]);
     type InvRow = { email: string; role: "primary" | "co"; subject: string | null; status: "pending" | "declined" };
 
-    const linked: CoTeacherRow[] = ((cts as unknown as CtRow[]) || []).map((c) => ({
-      teacher_id: c.teacher_id,
-      role: c.role,
-      subject: c.subject,
-      full_name: c.profile?.full_name || null,
-      pendingEmail: null,
-      declinedEmail: null,
-    }));
+    const linked: CoTeacherRow[] = ctTeachers
+      .filter((c) => c.role !== "acting") // acting cover is rendered separately by the page; out of scope here.
+      .map((c) => ({
+        teacher_id: c.teacher_id,
+        role: c.role as "primary" | "co",
+        subject: c.subject,
+        full_name: c.full_name,
+        pendingEmail: null,
+        declinedEmail: null,
+      }));
     const inviteRows: CoTeacherRow[] = ((invites as InvRow[]) || []).map((i) => ({
       teacher_id: null,
       role: i.role,
@@ -199,7 +221,8 @@ export default function ClassDetailPage() {
       return score(a) - score(b);
     });
     setCoTeachers(combined);
-    setMyRole(user ? (linked.find((x) => x.teacher_id === user.id)?.role || null) : null);
+    setMyRole(ctxMyRole);
+    void userId; // referenced via session above; kept for parity with prior shape.
 
     setLoading(false);
   }

@@ -74,14 +74,17 @@ export async function GET(req: Request) {
     }
 
     const admin = supabaseAdmin();
-    // Pull the teacher profiles in this school first.
+    // Pull every teacher AND super-teacher in this school. Including
+    // super_teacher rows lets the /school/teachers page render the Admin
+    // Head + Deputies in the same roster (the page filters them into
+    // their own bucket via t.role).
     const { data: profs, error: pErr } = await admin
       .from("profiles")
-      .select("id, full_name")
+      .select("id, full_name, role")
       .eq("school_id", me.school_id)
-      .eq("role", "teacher");
+      .in("role", ["teacher", "super_teacher"]);
     if (pErr) return NextResponse.json({ error: pErr.message }, { status: 500 });
-    const profList = ((profs as Array<{ id: string; full_name: string | null }>) || []);
+    const profList = ((profs as Array<{ id: string; full_name: string | null; role: string }>) || []);
 
     if (profList.length === 0) {
       return NextResponse.json({ teachers: [] });
@@ -99,6 +102,7 @@ export async function GET(req: Request) {
     const teachers = profList.map((p) => ({
       id: p.id,
       full_name: p.full_name,
+      role: p.role,
       email: emailById.get(p.id) ?? null,
     }));
     return NextResponse.json({ teachers });

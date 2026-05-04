@@ -18,15 +18,22 @@ export default function ReviewPage() {
   async function load() {
     setLoading(true);
     const sb = supabaseBrowser();
-    const { data: { user } } = await sb.auth.getUser();
-    if (!user) return;
-    const { data } = await sb
-      .from("question_bank")
-      .select("*")
-      .eq("owner_id", user.id)
-      .eq("status", "pending")
-      .order("created_at", { ascending: false });
-    setItems((data as Question[]) || []);
+    const { data: { session } } = await sb.auth.getSession();
+    if (!session) { setLoading(false); return; }
+    // Use the service-role /api/teacher/question-bank endpoint instead of
+    // reading question_bank directly — the user-token client raced RLS
+    // and was returning an empty list even when the dashboard KPI
+    // correctly showed pending rows.
+    const r = await fetch("/api/teacher/question-bank?status=pending", {
+      headers: { Authorization: `Bearer ${session.access_token}` },
+      cache: "no-store",
+    });
+    if (r.ok) {
+      const j = await r.json() as { items: Question[] };
+      setItems(j.items || []);
+    } else {
+      setItems([]);
+    }
     setSelected(new Set());
     setLoading(false);
   }

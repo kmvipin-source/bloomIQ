@@ -122,12 +122,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }
 
     // === Case: email is null and not immediate -> unassign primary ===
-    // We FULLY remove the previous primary from the class (delete the
-    // class_teachers row, not demote to co). Then, if that teacher no
-    // longer has any class_teachers rows for any class in this school,
-    // we also null their profiles.school_id — otherwise their teacher
-    // dashboard would still show them as belonging to a school they
-    // have no remaining role in.
+    // Removes the previous primary from THIS class (deletes the
+    // class_teachers row + clears classes.owner_id + clears any pending
+    // primary invite). Does NOT touch profiles.school_id — a teacher who
+    // joined the school via the join code stays in the school even after
+    // a class unassign. To evict them from the school entirely, the admin
+    // uses the explicit Remove action on /school/teachers.
     if (!email && !immediate) {
       const { data: currentPrimary } = await admin
         .from("class_teachers")
@@ -155,28 +155,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         .eq("class_id", classId)
         .eq("role", "primary");
       await admin.from("classes").update({ owner_id: null }).eq("id", classId);
-
-      // If the removed teacher has no remaining class roles in this
-      // school, drop them from the school roster. Otherwise leave them
-      // alone (they're still co/primary somewhere else here).
-      let removedFromSchool = false;
-      if (prevTeacherId) {
-        const { data: remainingRoles } = await admin
-          .from("class_teachers")
-          .select("class_id, classes!inner(school_id)")
-          .eq("teacher_id", prevTeacherId)
-          .eq("classes.school_id", cls.school_id);
-        const stillInSchool = ((remainingRoles as Array<unknown>) || []).length > 0;
-        if (!stillInSchool) {
-          await admin
-            .from("profiles")
-            .update({ school_id: null })
-            .eq("id", prevTeacherId)
-            .eq("school_id", cls.school_id);
-          removedFromSchool = true;
-        }
-      }
-      return NextResponse.json({ ok: true, status: "unassigned", removed_from_school: removedFromSchool });
+      return NextResponse.json({ ok: true, status: "unassigned" });
     }
 
     // === BUSINESS-CONTINUITY PATH: immediate ACTING COVER (Option B) ===

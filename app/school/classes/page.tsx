@@ -105,42 +105,48 @@ export default function SchoolClassesPage() {
     type Cs = { id: string; name: string; grade: string | null; section: string | null; owner_id: string | null; created_at: string };
     const classList = (cs as Cs[]) || [];
 
-    // Pull all primary invites in one shot via service-role API. Reading
-    // class_teacher_invites with the user-token client races RLS on the
-    // edge — a freshly-created pending invite intermittently returns
-    // empty, leaving the row stuck on 'Unassigned' with no Copy invite
-    // / Re-invite buttons. The endpoint returns the latest invite per
-    // class so the per-class hydration below can just look it up.
+    // Pull primary + acting + invites for every class in one shot via the
+    // service-role API. Reading class_teachers / class_teacher_invites
+    // with the user-token client raced RLS on the edge — accepted
+    // primaries showed as 'Unassigned' and freshly-created pending
+    // invites failed to surface. The endpoint resolves all three in one
+    // round trip, names included, so the per-class loop below just looks
+    // values up by class id.
     type InviteRow = { class_id: string; email: string; status: string; invited_at: string; responded_at: string | null };
+    type NamedTeacher = { teacher_id: string; full_name: string | null };
     let invitesByClass: Record<string, InviteRow> = {};
+    let primaryByClass: Record<string, NamedTeacher> = {};
+    let actingByClass:  Record<string, NamedTeacher> = {};
     try {
       const r = await fetch("/api/admin/school/class-invites", {
         headers: { Authorization: `Bearer ${token}` },
         cache: "no-store",
       });
       if (r.ok) {
-        const j = await r.json() as { invitesByClass: Record<string, InviteRow> };
+        const j = await r.json() as {
+          invitesByClass: Record<string, InviteRow>;
+          primaryByClass: Record<string, NamedTeacher>;
+          actingByClass:  Record<string, NamedTeacher>;
+        };
         invitesByClass = j.invitesByClass || {};
+        primaryByClass = j.primaryByClass || {};
+        actingByClass  = j.actingByClass  || {};
       }
     } catch { /* fall through — UI shows 'Unassigned' until next refetch */ }
 
     const hydrated: ClassRow[] = await Promise.all(
       classList.map(async (c) => {
-        const [{ data: ct }, { count: mCt }, { count: coCount }, { data: acting }] = await Promise.all([
-          sb.from("class_teachers").select("teacher_id, profile:profiles!class_teachers_teacher_id_fkey(full_name)").eq("class_id", c.id).eq("role", "primary").maybeSingle(),
+        const [{ count: mCt }, { count: coCount }] = await Promise.all([
           sb.from("class_members").select("student_id", { count: "exact", head: true }).eq("class_id", c.id),
           sb.from("class_teachers").select("teacher_id", { count: "exact", head: true }).eq("class_id", c.id).eq("role", "co"),
-          sb.from("class_teachers").select("teacher_id, profile:profiles!class_teachers_teacher_id_fkey(full_name)").eq("class_id", c.id).eq("role", "acting").maybeSingle(),
         ]);
         const invite = invitesByClass[c.id] || null;
-        type ActingRow = { teacher_id: string; profile: { full_name: string | null } | null };
-        const actingRow = acting as unknown as ActingRow | null;
-        const actingId = actingRow?.teacher_id || null;
-        const actingName = actingRow?.profile?.full_name || null;
-        type CtRow = { teacher_id: string; profile: { full_name: string | null } | null };
-        const ctRow = ct as unknown as CtRow | null;
-        const primaryId = ctRow?.teacher_id || null;
-        const primaryName = ctRow?.profile?.full_name || null;
+        const primarySrc = primaryByClass[c.id] || null;
+        const actingSrc  = actingByClass[c.id]  || null;
+        const primaryId  = primarySrc?.teacher_id || null;
+        const primaryName = primarySrc?.full_name || null;
+        const actingId   = actingSrc?.teacher_id || null;
+        const actingName = actingSrc?.full_name || null;
         type InviteRow = { email: string; status: "pending" | "accepted" | "declined" | null };
         const inviteRow = invite as InviteRow | null;
         const inviteEmail = inviteRow?.email || null;
@@ -242,17 +248,15 @@ export default function SchoolClassesPage() {
         },
         body: JSON.stringify({ email }),
       });
-      let json: { error?: string; status?: string; removed_from_school?: boolean } = {};
+      let json: { error?: string; status?: string } = {};
       let raw = "";
       try { raw = await res.text(); json = raw ? JSON.parse(raw) : {}; } catch {}
       if (!res.ok) throw new Error(json?.error || `HTTP ${res.status}: ${raw.slice(0,200)}`);
       if (json.status === "linked") setAssignStatus("✅ Linked — that teacher is now the primary.");
       else if (json.status === "pending") setAssignStatus("⏳ Invite sent. The class will show as Pending until the teacher accepts it from their dashboard. Use “Copy invite” to share the sign-in link.");
-      else if (json.status === "unassigned") {
-        setAssignStatus(json.removed_from_school
-          ? "Class unassigned. The previous primary had no other classes in this school, so they were also removed from the school roster."
-          : "Class unassigned. The previous primary still has other classes here, so they stay on the school roster.");
-      }
+      else if (json.status === "unassigned") setAssignStatus(
+        "Class unassigned. The previous primary stays on the school roster — to remove them from the school, use the Remove action on Teachers."
+      );
       setAssignFor(null);
       setAssignEmail("");
       await load();
@@ -658,8 +662,7 @@ export default function SchoolClassesPage() {
                           onClick={() => {
                             const warn =
                               `Unassign the primary of ${c.name}?\n\n` +
-                              `The previous primary will be removed from this class. ` +
-                              `If they have no other classes in this school, they will also be dropped from the school roster automatically. ` +
+                              `The previous primary loses access to THIS class only. They stay on the school roster — to evict them from the school, use the Remove action on the Teachers page. ` +
                               ((c.coTeacherCount > 0 || c.memberCount > 0)
                                 ? `This class has ${c.coTeacherCount} co-teacher${c.coTeacherCount === 1 ? "" : "s"} and ${c.memberCount} student${c.memberCount === 1 ? "" : "s"} — they keep their access. Continue?`
                                 : `Continue?`);

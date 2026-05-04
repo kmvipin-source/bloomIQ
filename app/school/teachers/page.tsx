@@ -60,13 +60,25 @@ export default function SchoolTeachersPage() {
     setSchool(sch as School);
     setCallerIsHead((sch as School)?.super_teacher_id === user.id);
 
-    const { data: ts } = await sb
-      .from("profiles")
-      .select("id, full_name, role")
-      .eq("school_id", prof.school_id)
-      .in("role", ["teacher", "super_teacher"]);
-    type T = { id: string; full_name: string | null; role: "teacher" | "super_teacher" };
-    const memberList = (ts as T[]) || [];
+    // Source the roster from the service-role /api/admin/school/teachers
+    // endpoint. Reading profiles directly with the user-token client races
+    // RLS on the edge — the page used to render with only the Admin Head
+    // visible even when 4 other teachers shared the same school_id. The
+    // endpoint enumerates teacher + super_teacher rows AND attaches their
+    // emails (needed by the row's "Remove" / "Promote" actions) in one
+    // round trip.
+    type T = { id: string; full_name: string | null; role: "teacher" | "super_teacher"; email: string | null };
+    let memberList: T[] = [];
+    try {
+      const r = await fetch("/api/admin/school/teachers", {
+        headers: { Authorization: `Bearer ${token}` },
+        cache: "no-store",
+      });
+      if (r.ok) {
+        const j = await r.json() as { teachers: T[] };
+        memberList = j.teachers || [];
+      }
+    } catch { /* fall through — roster stays empty if the API is down */ }
 
     const headId = (sch as School)?.super_teacher_id || null;
     const rows: TeacherRow[] = await Promise.all(
@@ -82,7 +94,7 @@ export default function SchoolTeachersPage() {
         return {
           id: t.id,
           full_name: t.full_name,
-          email: null,
+          email: t.email,
           schoolRole,
           classCount: classCt || 0,
           quizCount: quizCt || 0,
@@ -97,23 +109,6 @@ export default function SchoolTeachersPage() {
       if (dr !== 0) return dr;
       return (b.classCount + b.quizCount) - (a.classCount + a.quizCount);
     });
-
-    try {
-      const { data: { session } } = await sb.auth.getSession();
-      if (session) {
-        const r = await fetch("/api/admin/school/teachers", {
-          headers: { Authorization: `Bearer ${session.access_token}` },
-        });
-        if (r.ok) {
-          const j = await r.json();
-          type EmailRow = { id: string; email: string | null };
-          const emailById = new Map<string, string | null>(
-            ((j.teachers as EmailRow[]) || []).map((t) => [t.id, t.email]),
-          );
-          for (const row of rows) row.email = emailById.get(row.id) ?? null;
-        }
-      }
-    } catch { /* non-fatal */ }
 
     setTeachers(rows);
     setLoading(false);

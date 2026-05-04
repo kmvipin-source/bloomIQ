@@ -72,16 +72,21 @@ function ComposerInner() {
     (async () => {
       setLoadingBank(true);
       const sb = supabaseBrowser();
-      const { data: { user } } = await sb.auth.getUser();
-      if (!user) return;
-      const { data } = await sb
-        .from("question_bank")
-        .select("*")
-        .eq("owner_id", user.id)
-        .eq("status", "approved")
-        .order("created_at", { ascending: false });
-      setBank((data as Question[]) || []);
+      const { data: { session } } = await sb.auth.getSession();
+      if (!session) { setLoadingBank(false); return; }
+      // Service-role library load. The previous direct read of
+      // question_bank raced RLS and produced "0 approved questions in
+      // your library" even after the rows were marked approved.
+      const r = await fetch("/api/teacher/question-bank?status=approved", {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+        cache: "no-store",
+      });
+      if (r.ok) {
+        const j = await r.json() as { items: Question[] };
+        setBank(j.items || []);
+      }
       setLoadingBank(false);
+      const user = { id: session.user.id };
 
       try {
         const { data: calibRows, error: calibErr } = await sb
@@ -211,15 +216,16 @@ function ComposerInner() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Save failed.");
       setVariantSaved((s) => ({ ...s, [idx]: true }));
-      const { data: { user } } = await sb.auth.getUser();
-      if (user) {
-        const { data: refreshed } = await sb
-          .from("question_bank")
-          .select("*")
-          .eq("owner_id", user.id)
-          .eq("status", "approved")
-          .order("created_at", { ascending: false });
-        setBank((refreshed as Question[]) || []);
+      const { data: { session } } = await sb.auth.getSession();
+      if (session) {
+        const rr = await fetch("/api/teacher/question-bank?status=approved", {
+          headers: { Authorization: `Bearer ${session.access_token}` },
+          cache: "no-store",
+        });
+        if (rr.ok) {
+          const jj = await rr.json() as { items: Question[] };
+          setBank(jj.items || []);
+        }
       }
     } catch (e) {
       setVariantErr(e instanceof Error ? e.message : "Save failed.");
