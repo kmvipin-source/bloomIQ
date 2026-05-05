@@ -118,7 +118,25 @@ export async function GET(req: Request) {
       }
     }
 
+    // Pre-compute student headcount per school for per-student revenue.
+    const schoolStudentByIdForRevenue = new Map<string, number>();
+    for (const p of allProfiles) {
+      if (p.is_school_student && p.school_id) {
+        schoolStudentByIdForRevenue.set(
+          p.school_id,
+          (schoolStudentByIdForRevenue.get(p.school_id) || 0) + 1,
+        );
+      }
+    }
+
     // Walk each active sub, increment its plan's member count + revenue.
+    // Revenue resolution order:
+    //   1) subscriptions.price_paid_paise — actual amount billed at checkout.
+    //   2) per_student plans  — per_student_price_paise × school's student count.
+    //   3) fixed-price plans  — plan.price_paise (list price for the term).
+    // Falling back to (2) and (3) means schools with active subs whose
+    // checkout amount wasn't captured (legacy / migrated rows / direct-DB
+    // setup) still surface a non-zero revenue line on the dashboard.
     for (const s of activeSubs) {
       if (!s.plan_id) continue;
       const plan = planById.get(s.plan_id);
@@ -126,7 +144,16 @@ export async function GET(req: Request) {
       const row = rowBySlug.get(plan.slug);
       if (!row) continue;
       row.members += 1;
-      row.revenue_paise += s.price_paid_paise || 0;
+      let rev = s.price_paid_paise || 0;
+      if (rev === 0) {
+        if (plan.pricing_model === "per_student" && s.school_id) {
+          const headcount = schoolStudentByIdForRevenue.get(s.school_id) || 0;
+          rev = (plan.per_student_price_paise || 0) * headcount;
+        } else {
+          rev = plan.price_paise || 0;
+        }
+      }
+      row.revenue_paise += rev;
     }
 
     // Add unsubscribed/free into the Free category as a synthetic row when
