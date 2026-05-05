@@ -106,21 +106,29 @@ export default function StaffLoginPage() {
         throw new Error("Incorrect credentials.");
       }
 
-      // Verify platform_admin AFTER auth succeeds. A non-staff account that
-      // somehow tries here gets signed out and sees the same generic
-      // "incorrect credentials" message — no information leak about whether
-      // the email is staff or not.
-      const { data: { user } } = await sb.auth.getUser();
-      if (!user) throw new Error("Signed in but session is empty.");
-      const { data: prof } = await sb
-        .from("profiles")
-        .select("platform_admin")
-        .eq("id", user.id)
-        .single();
-      if (!prof?.platform_admin) {
+      // Verify platform_admin AFTER auth succeeds. Read via the
+      // service-role /api/auth/me endpoint — the user-token profiles
+      // select raced RLS on the edge and returned null for valid staff
+      // accounts, which then surfaced as "Incorrect credentials". A
+      // non-staff account that somehow tries here gets signed out and
+      // sees the same generic message — no information leak about
+      // whether the email is staff or not.
+      const { data: { session: fresh } } = await sb.auth.getSession();
+      const tk = fresh?.access_token;
+      if (!tk) throw new Error("Signed in but session is empty.");
+      let isPlatformAdmin = false;
+      try {
+        const r = await fetch("/api/auth/me", {
+          headers: { Authorization: `Bearer ${tk}` },
+          cache: "no-store",
+        });
+        if (r.ok) {
+          const j = await r.json() as { platform_admin?: boolean };
+          isPlatformAdmin = !!j.platform_admin;
+        }
+      } catch { /* fall through — treated as non-admin below */ }
+      if (!isPlatformAdmin) {
         try { await sb.auth.signOut(); } catch { /* ignore */ }
-        // Same generic copy as the wrong-password branch — defense
-        // against email enumeration via this surface.
         throw new Error("Incorrect credentials.");
       }
 
