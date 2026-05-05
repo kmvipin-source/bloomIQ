@@ -62,6 +62,7 @@ const PLATFORM_ADMIN: ItemGroup[] = [
   { items: [
     { href: "/admin/dashboard",      label: "Dashboard",      icon: BarChart3 },
     { href: "/admin/onboard-school", label: "Onboard School", icon: Building2 },
+    { href: "/admin/users",          label: "Users",          icon: Users },
     { href: "/admin/plans",          label: "Plans",          icon: ListChecks },
     { href: "/admin/team",           label: "Admin Team",     icon: UserPlus },
   ] },
