@@ -20,7 +20,13 @@ export const runtime = "nodejs";
  * definitions). Only platform admins. Cannot delete yourself.
  */
 
-const ALLOWED_ROLES = new Set(["student", "teacher", "super_teacher", "platform_admin"]);
+// User-management surface only handles students + teachers. Promotions to
+// super_teacher (school admin) live behind /school's Transfer Admin Head
+// flow; promotions to platform_admin live behind /admin/team. Refuse to
+// touch those roles from this endpoint to avoid an accidental demotion
+// that orphans a school or locks the platform admin team.
+const ALLOWED_ROLES = new Set(["student", "teacher"]);
+const PROTECTED_ROLES = new Set(["super_teacher", "platform_admin"]);
 
 async function requirePlatformAdmin(req: Request) {
   const token = getBearer(req);
@@ -52,6 +58,22 @@ export async function PATCH(
     const { id } = await params;
     if (!id) return NextResponse.json({ error: "Missing user id" }, { status: 400 });
 
+    // Verify target is a student or teacher (not a school admin or
+    // platform admin). The /admin/users surface deliberately excludes
+    // those two — they have dedicated management flows.
+    const { data: target } = await admin
+      .from("profiles")
+      .select("role, platform_admin")
+      .eq("id", id)
+      .maybeSingle();
+    if (!target) return NextResponse.json({ error: "User not found." }, { status: 404 });
+    if (target.platform_admin || PROTECTED_ROLES.has(target.role || "")) {
+      return NextResponse.json(
+        { error: "Use /admin/team or /school to manage school / platform admins." },
+        { status: 403 }
+      );
+    }
+
     const body = await req.json().catch(() => ({}));
     const patch: Record<string, unknown> = {};
 
@@ -67,9 +89,6 @@ export async function PATCH(
     }
     if (typeof body.is_school_student === "boolean") {
       patch.is_school_student = body.is_school_student;
-    }
-    if (typeof body.platform_admin === "boolean") {
-      patch.platform_admin = body.platform_admin;
     }
 
     if (Object.keys(patch).length === 0) {
@@ -102,6 +121,20 @@ export async function DELETE(
       return NextResponse.json(
         { error: "You can't delete your own account from here." },
         { status: 400 }
+      );
+    }
+
+    // Refuse to delete school admins or platform admins from this
+    // surface — same reasoning as PATCH above.
+    const { data: target } = await admin
+      .from("profiles")
+      .select("role, platform_admin")
+      .eq("id", id)
+      .maybeSingle();
+    if (target?.platform_admin || PROTECTED_ROLES.has(target?.role || "")) {
+      return NextResponse.json(
+        { error: "Use /admin/team or /school to manage school / platform admins." },
+        { status: 403 }
       );
     }
 

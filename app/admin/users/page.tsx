@@ -21,32 +21,41 @@ import {
  * profiles + cascades).
  */
 
+type SubRole =
+  | "individual_student"
+  | "school_student"
+  | "primary_teacher"
+  | "co_teacher"
+  | "unassigned_teacher";
+
 type User = {
   id: string;
   full_name: string | null;
   email: string | null;
-  role: "student" | "teacher" | "super_teacher" | "platform_admin" | null;
+  role: "student" | "teacher" | null;
   is_school_student: boolean;
-  platform_admin: boolean;
+  sub_role: SubRole;
   school_id: string | null;
   school_name: string | null;
   created_at: string | null;
 };
 
-type RoleFilter = "all" | "student" | "teacher" | "super_teacher" | "platform_admin";
+type RoleFilter = "all" | SubRole | "all_teachers";
 
-const ROLE_LABEL: Record<NonNullable<User["role"]>, string> = {
-  student: "Student",
-  teacher: "Teacher",
-  super_teacher: "Super Teacher",
-  platform_admin: "Platform Admin",
+const SUB_ROLE_LABEL: Record<SubRole, string> = {
+  individual_student: "Individual Student",
+  school_student: "School Student",
+  primary_teacher: "Primary Teacher",
+  co_teacher: "Co-Teacher",
+  unassigned_teacher: "Teacher",
 };
 
-const ROLE_TONE: Record<NonNullable<User["role"]>, string> = {
-  student: "bg-sky-50 text-sky-800 border-sky-200",
-  teacher: "bg-emerald-50 text-emerald-800 border-emerald-200",
-  super_teacher: "bg-violet-50 text-violet-800 border-violet-200",
-  platform_admin: "bg-amber-50 text-amber-800 border-amber-200",
+const SUB_ROLE_TONE: Record<SubRole, string> = {
+  individual_student: "bg-sky-50 text-sky-800 border-sky-200",
+  school_student: "bg-indigo-50 text-indigo-800 border-indigo-200",
+  primary_teacher: "bg-emerald-50 text-emerald-800 border-emerald-200",
+  co_teacher: "bg-violet-50 text-violet-800 border-violet-200",
+  unassigned_teacher: "bg-slate-50 text-slate-700 border-slate-200",
 };
 
 export default function AdminUsersPage() {
@@ -60,7 +69,6 @@ export default function AdminUsersPage() {
   const [draftName, setDraftName] = useState("");
   const [draftRole, setDraftRole] = useState<NonNullable<User["role"]>>("student");
   const [draftSchoolStudent, setDraftSchoolStudent] = useState(false);
-  const [draftPlatformAdmin, setDraftPlatformAdmin] = useState(false);
   const [saving, setSaving] = useState(false);
   const [actionErr, setActionErr] = useState<string | null>(null);
   const [actionOk, setActionOk] = useState<string | null>(null);
@@ -94,7 +102,6 @@ export default function AdminUsersPage() {
     setDraftName(u.full_name || "");
     setDraftRole((u.role || "student") as NonNullable<User["role"]>);
     setDraftSchoolStudent(u.is_school_student);
-    setDraftPlatformAdmin(u.platform_admin);
     setActionErr(null);
     setActionOk(null);
   }
@@ -121,7 +128,6 @@ export default function AdminUsersPage() {
           full_name: draftName,
           role: draftRole,
           is_school_student: draftSchoolStudent,
-          platform_admin: draftPlatformAdmin,
         }),
       });
       const j = await r.json().catch(() => ({}));
@@ -169,7 +175,11 @@ export default function AdminUsersPage() {
   const filtered = useMemo(() => {
     const needle = search.trim().toLowerCase();
     return users.filter((u) => {
-      if (roleFilter !== "all" && u.role !== roleFilter) return false;
+      if (roleFilter === "all_teachers") {
+        if (u.role !== "teacher") return false;
+      } else if (roleFilter !== "all") {
+        if (u.sub_role !== roleFilter) return false;
+      }
       if (!needle) return true;
       const hay = `${u.full_name || ""} ${u.email || ""} ${u.school_name || ""}`.toLowerCase();
       return hay.includes(needle);
@@ -177,12 +187,20 @@ export default function AdminUsersPage() {
   }, [users, search, roleFilter]);
 
   const counts = useMemo(() => {
-    const c = { all: users.length, student: 0, teacher: 0, super_teacher: 0, platform_admin: 0 };
+    const c = {
+      all: users.length,
+      individual_student: 0,
+      school_student: 0,
+      all_teachers: 0,
+      primary_teacher: 0,
+      co_teacher: 0,
+    };
     for (const u of users) {
-      if (u.role === "student") c.student++;
-      else if (u.role === "teacher") c.teacher++;
-      else if (u.role === "super_teacher") c.super_teacher++;
-      else if (u.role === "platform_admin") c.platform_admin++;
+      if (u.sub_role === "individual_student") c.individual_student++;
+      else if (u.sub_role === "school_student") c.school_student++;
+      if (u.role === "teacher") c.all_teachers++;
+      if (u.sub_role === "primary_teacher") c.primary_teacher++;
+      if (u.sub_role === "co_teacher") c.co_teacher++;
     }
     return c;
   }, [users]);
@@ -226,10 +244,11 @@ export default function AdminUsersPage() {
         <div className="flex flex-wrap gap-1.5">
           {([
             ["all", `All (${counts.all})`],
-            ["student", `Students (${counts.student})`],
-            ["teacher", `Teachers (${counts.teacher})`],
-            ["super_teacher", `School Admins (${counts.super_teacher})`],
-            ["platform_admin", `Platform Admins (${counts.platform_admin})`],
+            ["individual_student", `Individual Students (${counts.individual_student})`],
+            ["school_student", `School Students (${counts.school_student})`],
+            ["all_teachers", `Teachers (${counts.all_teachers})`],
+            ["primary_teacher", `Primary (${counts.primary_teacher})`],
+            ["co_teacher", `Co-Teachers (${counts.co_teacher})`],
           ] as Array<[RoleFilter, string]>).map(([key, label]) => (
             <button
               key={key}
@@ -279,19 +298,9 @@ export default function AdminUsersPage() {
                     <div className="text-xs muted truncate max-w-[260px]">{u.email || u.id}</div>
                   </td>
                   <td className="px-4 py-3">
-                    <div className="flex flex-col gap-1">
-                      {u.role && (
-                        <span className={`inline-block text-[10px] uppercase tracking-wide font-bold rounded-full px-2 py-0.5 border ${ROLE_TONE[u.role]}`}>
-                          {ROLE_LABEL[u.role]}
-                        </span>
-                      )}
-                      {u.is_school_student && (
-                        <span className="text-[10px] uppercase tracking-wide font-semibold text-slate-500">school-managed</span>
-                      )}
-                      {u.platform_admin && u.role !== "platform_admin" && (
-                        <span className="text-[10px] uppercase tracking-wide font-bold text-amber-800">+ platform_admin flag</span>
-                      )}
-                    </div>
+                    <span className={`inline-block text-[10px] uppercase tracking-wide font-bold rounded-full px-2 py-0.5 border ${SUB_ROLE_TONE[u.sub_role]}`}>
+                      {SUB_ROLE_LABEL[u.sub_role]}
+                    </span>
                   </td>
                   <td className="px-4 py-3">
                     {u.school_name ? (
@@ -358,12 +367,11 @@ export default function AdminUsersPage() {
                 >
                   <option value="student">Student</option>
                   <option value="teacher">Teacher</option>
-                  <option value="super_teacher">Super Teacher (School Admin)</option>
-                  <option value="platform_admin">Platform Admin</option>
                 </select>
                 <p className="text-xs muted mt-1">
-                  Switching roles can orphan classes, school headship, or platform admin
-                  team membership. Verify the consequence before saving.
+                  Switching between Student and Teacher can orphan class memberships
+                  or class assignments. Verify before saving. School admins and
+                  platform admins are managed elsewhere.
                 </p>
               </div>
               <label className="flex items-center gap-2 text-sm">
@@ -373,14 +381,6 @@ export default function AdminUsersPage() {
                   onChange={(e) => setDraftSchoolStudent(e.target.checked)}
                 />
                 <span>School-managed student (sets <code className="text-xs">is_school_student</code>)</span>
-              </label>
-              <label className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={draftPlatformAdmin}
-                  onChange={(e) => setDraftPlatformAdmin(e.target.checked)}
-                />
-                <span>Platform admin flag (grants /admin access)</span>
               </label>
             </div>
 

@@ -43,10 +43,19 @@ export async function GET(req: Request) {
     // Pull profiles + schools in one round trip; resolve emails from
     // auth.users via the admin API. listUsers paginates at 1000 — fine
     // for now; if the user base grows past that we'll page here.
+    //
+    // Scope: only individual students, school students, and teachers.
+    // Platform admins and school admins (super_teacher) are deliberately
+    // excluded — they are managed elsewhere (/admin/team for platform
+    // admins; super_teacher transfers go through /school's "Transfer
+    // Admin Head" flow). Surfacing them here would risk an admin
+    // accidentally demoting a school's only super_teacher.
     const [{ data: profs, error: pErr }, { data: schools }] = await Promise.all([
       admin
         .from("profiles")
         .select("id, full_name, role, is_school_student, platform_admin, school_id, created_at")
+        .in("role", ["student", "teacher"])
+        .or("platform_admin.is.null,platform_admin.eq.false")
         .order("created_at", { ascending: false }),
       admin.from("schools").select("id, name"),
     ]);
@@ -73,13 +82,49 @@ export async function GET(req: Request) {
       school_id: string | null;
       created_at: string | null;
     };
-    const users = ((profs as ProfRow[] | null) || []).map((p) => ({
+    const profList = ((profs as ProfRow[] | null) || [])
+      .filter((p) => !p.platform_admin); // belt-and-suspenders for legacy rows
+
+    // Sub-role for teachers: primary/co/unassigned. Pulled in one shot;
+    // primary wins if a teacher holds both primary and co somewhere.
+    const teacherIds = profList.filter((p) => p.role === "teacher").map((p) => p.id);
+    const subRoleByTeacher = new Map<string, "primary" | "co_teacher">();
+    if (teacherIds.length) {
+      const { data: cts } = await admin
+        .from("class_teachers")
+        .select("teacher_id, role")
+        .in("teacher_id", teacherIds);
+      for (const r of (cts as Array<{ teacher_id: string; role: string }> | null) || []) {
+        if (r.role === "primary") subRoleByTeacher.set(r.teacher_id, "primary");
+        else if (r.role === "co" && !subRoleByTeacher.has(r.teacher_id)) {
+          subRoleByTeacher.set(r.teacher_id, "co_teacher");
+        }
+      }
+    }
+
+    type SubRole =
+      | "individual_student"
+      | "school_student"
+      | "primary_teacher"
+      | "co_teacher"
+      | "unassigned_teacher";
+    const subRoleOf = (p: ProfRow): SubRole => {
+      if (p.role === "student") {
+        return p.is_school_student ? "school_student" : "individual_student";
+      }
+      const t = subRoleByTeacher.get(p.id);
+      return t === "primary" ? "primary_teacher"
+           : t === "co_teacher" ? "co_teacher"
+           : "unassigned_teacher";
+    };
+
+    const users = profList.map((p) => ({
       id: p.id,
       full_name: p.full_name,
       email: emailById.get(p.id) ?? null,
       role: p.role,
       is_school_student: !!p.is_school_student,
-      platform_admin: !!p.platform_admin,
+      sub_role: subRoleOf(p),
       school_id: p.school_id,
       school_name: p.school_id ? (schoolNameById.get(p.school_id) ?? null) : null,
       created_at: p.created_at,
