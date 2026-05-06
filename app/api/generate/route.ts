@@ -62,6 +62,10 @@ ${jsonShape()}`;
 }
 
 function syllabusPrompt(topic: string, className: string, syllabus: string, level: BloomLevel, n: number, numPct: number, seedBlock: string) {
+  const exam = detectExamFromTopic(topic);
+  // eslint-disable-next-line no-console
+  console.log(`[generate] topicSyllabus path — topic="${topic}" — exam detected: ${exam ? exam.name : "NONE"}`);
+  if (exam) return examStylePrompt(exam, level, n, numPct, seedBlock);
   return `Topic: ${topic}
 Class / grade: ${className}
 Syllabus / board: ${syllabus || "(unspecified)"}
@@ -75,7 +79,262 @@ ${numericalHint(numPct, n)}${seedBlock}
 ${jsonShape()}`;
 }
 
+// =============================================================================
+// Competitive-exam detector (Option 2 — see README session 2026-05-03 evening 2).
+// -----------------------------------------------------------------------------
+// When the user types a bare exam name as the topic (e.g. "CAT", "JEE", "NEET"),
+// the default topic prompt makes the LLM produce META-questions ABOUT the exam
+// instead of questions IN THE STYLE OF the exam. The detector below catches
+// well-known Indian + international competitive exams as a whole-word, case-
+// insensitive token match against this allowlist, then switches to a special
+// prompt that asks for exam-paper-style questions across the canonical
+// sections.
+//
+// Allowlist-only by design: anything not in the table (Velocity, Acceleration,
+// Commerce, Photosynthesis, …) falls through to the existing prompt unchanged.
+// Whole-word match ensures Catalysis ≠ CAT, Catalogue ≠ CAT, etc.
+// =============================================================================
+type ExamMeta = {
+  name: string;            // pretty display name
+  description: string;     // 1-line "what is this exam"
+  sections: string[];      // canonical paper sections
+  // 1–2 short example stems that look like REAL questions from this exam.
+  // Few-shot examples reliably anchor the LLM on the right question style
+  // even when the exam name is an ambiguous abbreviation. Keep them
+  // generic so they don't bias the model toward repeating them verbatim.
+  sampleQuestions: string[];
+  // Which Bloom levels the actual paper genuinely tests. The request
+  // handler filters requested levels through this list — prevents the
+  // LLM from being asked for fake "Remember CAT questions" etc. Keep in
+  // sync with the same field in app/api/student/quick-test/route.ts.
+  bloomLevels: BloomLevel[];
+};
+
+const EXAM_DETECTORS: Record<string, ExamMeta> = {
+  CAT: {
+    name: "CAT",
+    description: "Common Admission Test for IIM/MBA admissions in India",
+    sections: ["Quantitative Aptitude", "Verbal Ability and Reading Comprehension", "Data Interpretation and Logical Reasoning"],
+    sampleQuestions: [
+      "If x + 1/x = 5, find the value of x² + 1/x².",
+      "A train travelling at 72 km/hr crosses a 250 m platform in 25 seconds. Find the length of the train.",
+      "Identify the option that best replaces the underlined phrase to make the sentence grammatically correct.",
+    ],
+  
+    bloomLevels: ["apply", "analyze", "evaluate"],
+  },
+  JEE: {
+    name: "JEE Main / JEE Advanced",
+    description: "Joint Entrance Examination for engineering admissions in India (IITs/NITs)",
+    sections: ["Physics", "Chemistry", "Mathematics"],
+    sampleQuestions: [
+      "A particle moves along a straight line such that v² = u² + 2as. Find its displacement after 5 s if u = 4 m/s and a = 2 m/s².",
+      "Calculate the pH of a 0.01 M HCl solution.",
+      "Evaluate the integral ∫ (x² + 1)/(x² - 1) dx.",
+    ],
+  
+    bloomLevels: ["understand", "apply", "analyze", "evaluate"],
+  },
+  NEET: {
+    name: "NEET",
+    description: "National Eligibility cum Entrance Test for medical admissions in India",
+    sections: ["Physics", "Chemistry", "Botany", "Zoology"],
+    sampleQuestions: [
+      "Which of the following hormones is secreted by the alpha cells of the islets of Langerhans?",
+      "The site of Krebs cycle in eukaryotic cells is the:",
+      "An object is placed 30 cm in front of a concave mirror of focal length 15 cm. Find the position of the image.",
+    ],
+  
+    bloomLevels: ["remember", "understand", "apply", "analyze"],
+  },
+  GMAT: {
+    name: "GMAT",
+    description: "Graduate Management Admission Test for international business school admissions",
+    sections: ["Quantitative Reasoning", "Verbal Reasoning", "Data Insights"],
+    sampleQuestions: [
+      "If 0 < x < 1, which of the following is the largest? (A) x  (B) x²  (C) √x  (D) 1/x  (E) 1/x²",
+      "Which of the following best strengthens the argument that increasing the marketing budget will improve profitability?",
+    ],
+  
+    bloomLevels: ["apply", "analyze", "evaluate"],
+  },
+  GRE: {
+    name: "GRE",
+    description: "Graduate Record Examinations for international graduate school admissions",
+    sections: ["Quantitative Reasoning", "Verbal Reasoning", "Analytical Writing"],
+    sampleQuestions: [
+      "If 5x – 3 = 2x + 9, what is the value of x?",
+      "Choose the word that is most nearly synonymous with PROPITIATE.",
+    ],
+  
+    bloomLevels: ["understand", "apply", "analyze", "evaluate"],
+  },
+  UPSC: {
+    name: "UPSC CSE Prelims",
+    description: "Union Public Service Commission Civil Services Exam preliminary stage (India)",
+    sections: ["General Studies (Polity, Economy, Geography, History, Environment, Current Affairs)", "CSAT (aptitude, reasoning, comprehension)"],
+    sampleQuestions: [
+      "Which of the following Articles of the Indian Constitution deals with the abolition of untouchability?",
+      "Consider the following statements about the Goods and Services Tax (GST) Council. Which of the statements given above are correct?",
+    ],
+  
+    bloomLevels: ["remember", "understand", "apply", "analyze"],
+  },
+  IELTS: {
+    name: "IELTS",
+    description: "International English Language Testing System",
+    sections: ["Listening", "Reading", "Writing", "Speaking"],
+    sampleQuestions: [
+      "According to the passage, the main reason coral reefs are declining is:",
+      "Choose the word that best fits the gap: 'Despite the heavy rain, the team managed to ____ the match on time.'",
+    ],
+  
+    bloomLevels: ["understand", "apply", "analyze"],
+  },
+  TOEFL: {
+    name: "TOEFL",
+    description: "Test of English as a Foreign Language",
+    sections: ["Reading", "Listening", "Speaking", "Writing"],
+    sampleQuestions: [
+      "The word 'ubiquitous' in the passage is closest in meaning to:",
+      "Which sentence below best expresses the essential information in the highlighted sentence in the passage?",
+    ],
+  
+    bloomLevels: ["understand", "apply", "analyze"],
+  },
+  CLAT: {
+    name: "CLAT",
+    description: "Common Law Admission Test for law school admissions in India",
+    sections: ["English", "Current Affairs and General Knowledge", "Legal Reasoning", "Logical Reasoning", "Quantitative Techniques"],
+    sampleQuestions: [
+      "Principle: A person who voluntarily causes hurt commits an offence. Facts: A pushed B in a crowded train accidentally. Has A committed an offence?",
+      "Which of the following is a Fundamental Right under the Indian Constitution?",
+    ],
+  
+    bloomLevels: ["remember", "understand", "apply", "analyze"],
+  },
+  BITSAT: {
+    name: "BITSAT",
+    description: "BITS Pilani Admission Test for engineering admissions",
+    sections: ["Physics", "Chemistry", "Mathematics or Biology", "English Proficiency", "Logical Reasoning"],
+    sampleQuestions: [
+      "A capacitor of capacitance 2 μF is charged to 100 V. The energy stored in the capacitor is:",
+      "If sin θ + cos θ = √2, find the value of sin θ × cos θ.",
+    ],
+  
+    bloomLevels: ["understand", "apply", "analyze"],
+  },
+  SAT: {
+    name: "SAT",
+    description: "Scholastic Assessment Test for US college admissions",
+    sections: ["Reading and Writing", "Math"],
+    sampleQuestions: [
+      "If 2(x – 3) = 4x + 6, what is the value of x?",
+      "In the passage, the author's primary purpose is most likely to:",
+    ],
+  
+    bloomLevels: ["apply", "analyze"],
+  },
+  GATE: {
+    name: "GATE",
+    description: "Graduate Aptitude Test in Engineering (India) for MTech / PSU recruitment",
+    sections: ["General Aptitude", "Engineering Mathematics", "Subject-specific section"],
+    sampleQuestions: [
+      "The eigenvalues of the matrix [[2, 1], [1, 2]] are:",
+      "If the time complexity of an algorithm is T(n) = 2T(n/2) + n, then T(n) is:",
+    ],
+  
+    bloomLevels: ["apply", "analyze", "evaluate"],
+  },
+  NDA: {
+    name: "NDA",
+    description: "National Defence Academy entrance exam (India)",
+    sections: ["Mathematics", "General Ability Test (English + General Knowledge)"],
+    sampleQuestions: [
+      "If sin A = 3/5 and cos B = 12/13 (both in the first quadrant), find sin(A + B).",
+      "Who was the Viceroy of India during the Jallianwala Bagh massacre of 1919?",
+    ],
+  
+    bloomLevels: ["remember", "understand", "apply"],
+  },
+  CUET: {
+    name: "CUET (UG)",
+    description: "Common University Entrance Test for undergraduate admissions to Indian universities",
+    sections: ["Language", "Domain-specific subjects", "General Test"],
+    sampleQuestions: [
+      "Read the following passage and choose the option closest in meaning to the underlined word.",
+      "If 3x – 4 = 11, what is the value of 2x + 1?",
+    ],
+  
+    bloomLevels: ["remember", "understand", "apply"],
+  },
+};
+
+function detectExamFromTopic(topic: string): ExamMeta | null {
+  if (!topic) return null;
+  // Tokenize on whitespace + common punctuation; uppercase for match.
+  const tokens = topic.toUpperCase().split(/[\s,;.\-/_()]+/).filter(Boolean);
+  for (const t of tokens) {
+    if (EXAM_DETECTORS[t]) return EXAM_DETECTORS[t];
+  }
+  return null;
+}
+
+function examStylePrompt(exam: ExamMeta, level: BloomLevel, n: number, numPct: number, seedBlock: string) {
+  // The disambiguation banner is the most important line in this prompt.
+  // For short, ambiguous abbreviations (CAT, GRE, GATE, NDA, SAT) the LLM
+  // has strong priors on a non-exam meaning (animal, machine, gate, …)
+  // and will produce off-topic questions if we don't explicitly forbid it.
+  // Listing 4–6 forbidden interpretations up front is a known prompt-
+  // engineering trick that reliably routes the model to the exam meaning.
+  const forbiddenExamples: Record<string, string> = {
+    CAT:    "cats / felines / animals",
+    JEE:    "literal English words",
+    NEET:   "literal English meanings of 'neet'",
+    GMAT:   "the literal characters",
+    GRE:    "the country Greece, the literal letters",
+    UPSC:   "literal interpretations of the letters",
+    IELTS:  "any non-exam interpretation",
+    TOEFL:  "any non-exam interpretation",
+    CLAT:   "the verb 'clat' (clatter)",
+    BITSAT: "literal 'bits' / 'sat'",
+    SAT:    "the past tense of 'sit', a satellite, or any non-exam meaning",
+    GATE:   "literal gates, doors, or barriers",
+    NDA:    "non-disclosure agreements or any non-exam meaning",
+    CUET:   "any non-exam interpretation",
+  };
+  const examKey = exam.name.split(/\s/)[0].toUpperCase();
+  const forbidden = forbiddenExamples[examKey] || "any non-exam interpretation";
+
+  const exampleBlock = exam.sampleQuestions.length > 0
+    ? `
+
+EXAMPLES of REAL ${exam.name} questions (use these to anchor style and difficulty — DO NOT copy verbatim):
+${exam.sampleQuestions.map((q, i) => `Example ${i + 1}: ${q}`).join("\n")}`
+    : "";
+
+  return `You are writing multiple-choice questions for the ${exam.name} competitive exam paper.
+
+CRITICAL DISAMBIGUATION (read carefully): When this prompt mentions the exam name, it refers EXCLUSIVELY to ${exam.name} — ${exam.description}. The acronym is NOT ${forbidden}. Any question that interprets the acronym as ${forbidden} is WRONG and must NOT be generated. Every single question must be the kind of question that would appear in a real ${exam.name} examination paper for ${exam.name} aspirants.
+
+Typical paper sections of ${exam.name}: ${exam.sections.join("; ")}.${exampleBlock}
+
+Generate ${n} multiple-choice questions in the STYLE, DIFFICULTY, and SECTION COVERAGE of a real ${exam.name} examination paper, at the "${level}" level of Bloom's Taxonomy. These should be questions that could plausibly appear on the exam paper — NOT meta-questions about the exam itself (no "what is the exam about", "who conducts it", "eligibility", "history of the exam", etc.).
+
+Distribute the questions across the canonical sections where applicable: ${exam.sections.join(", ")}. Match the difficulty and tone of past ${exam.name} papers — NOT introductory school-level content unless the section explicitly covers it.
+
+Bloom Level: ${level} — ${BLOOM_META[level].description}
+Verb hint: ${BLOOM_META[level].verb}
+${numericalHint(numPct, n)}${seedBlock}
+
+${jsonShape()}`;
+}
+
 function topicOnlyPrompt(topic: string, level: BloomLevel, n: number, numPct: number, seedBlock: string) {
+  const exam = detectExamFromTopic(topic);
+  // eslint-disable-next-line no-console
+  console.log(`[generate] topicOnly path — topic="${topic}" — exam detected: ${exam ? exam.name : "NONE"}`);
+  if (exam) return examStylePrompt(exam, level, n, numPct, seedBlock);
   return `Topic: ${topic}
 Bloom Level: ${level} — ${BLOOM_META[level].description}
 Verb hint: ${BLOOM_META[level].verb}
@@ -132,6 +391,24 @@ export async function POST(req: Request) {
     }
     if (levels.length === 0) {
       return NextResponse.json({ error: "No Bloom levels selected" }, { status: 400 });
+    }
+
+    // Per-exam Bloom level allowlist: when the topic is a known exam,
+    // filter the user's requested levels through what the actual paper
+    // tests. Stops the LLM from inventing fake commerce trivia for
+    // "Remember CAT" requests.
+    const examForFilter = detectExamFromTopic(topic);
+    let omittedLevels: BloomLevel[] = [];
+    let effectiveLevels = levels;
+    if (examForFilter) {
+      const allowed = new Set(examForFilter.bloomLevels);
+      effectiveLevels = levels.filter((l) => allowed.has(l));
+      omittedLevels = levels.filter((l) => !allowed.has(l));
+      if (effectiveLevels.length === 0) {
+        return NextResponse.json({
+          error: `${examForFilter.name} only tests ${examForFilter.bloomLevels.join(", ")} levels. Pick at least one of those — questions for the levels you selected don't appear on the actual ${examForFilter.name} paper.`,
+        }, { status: 400 });
+      }
     }
 
     const summary = blankBloomCounts();
@@ -294,7 +571,7 @@ export async function POST(req: Request) {
     let results: PromiseSettledResult<Awaited<ReturnType<typeof genFor>>>[];
     if (source === "image") {
       results = [];
-      for (const lvl of levels) {
+      for (const lvl of effectiveLevels) {
         try {
           const v = await genFor(lvl);
           results.push({ status: "fulfilled", value: v });
@@ -303,7 +580,7 @@ export async function POST(req: Request) {
         }
       }
     } else {
-      results = await Promise.allSettled(levels.map(genFor));
+      results = await Promise.allSettled(effectiveLevels.map(genFor));
     }
 
     results.forEach((r, i) => {
@@ -317,7 +594,7 @@ export async function POST(req: Request) {
     if (!allRows.length) {
       // Surface the per-level reasons so the client (and the dev server log) can see what went wrong
       const reasons = results
-        .map((r, i) => r.status === "rejected" ? `${levels[i]}: ${r.reason instanceof Error ? r.reason.message : String(r.reason).slice(0, 120)}` : `${levels[i]}: 0 valid questions`)
+        .map((r, i) => r.status === "rejected" ? `${effectiveLevels[i]}: ${r.reason instanceof Error ? r.reason.message : String(r.reason).slice(0, 120)}` : `${effectiveLevels[i]}: 0 valid questions`)
         .join(" | ");
       // eslint-disable-next-line no-console
       console.error(`[generate] No questions produced. Per-level: ${reasons}`);
@@ -348,6 +625,9 @@ export async function POST(req: Request) {
         verified: verifiedCount,
         disputed: disputedCount,
       },
+      examFilter: examForFilter
+        ? { name: examForFilter.name, omitted: omittedLevels, supported: examForFilter.bloomLevels }
+        : null,
     });
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : "Generation failed" }, { status: 500 });

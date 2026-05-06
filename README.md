@@ -146,7 +146,176 @@ platform-admin invite flow at `/admin/onboard-school` instead.
 
 ---
 
-## 🆕 Latest session — 2026-05-03 (Business continuity: Deputy Admin Heads + immediate primary reassignment)
+## 🆕 Latest session — 2026-05-06 (Compose-a-test: Class-fit suggestion + question-calibration UI removed)
+
+The teacher Compose-a-test page (`/teacher/quizzes/new`) gained one new affordance and lost a complex one. Net effect: a simpler, more useful composer.
+
+### What shipped
+
+**Class-fit suggestion (new) — "Will this fit a class?"**
+
+Optional dropdown above the Create button on the right sidebar. When the
+teacher picks one of their classes, a debounced fetch hits a new
+`/api/teacher/class-fit` endpoint and reports:
+
+- "8 of 15 selected questions have prior attempts in Class 9-A. Average there: 67% across 142 attempts."
+- Or, if no overlap: "This class hasn't seen any of the 15 selected questions yet — fresh territory."
+
+It's a planning aid, not a predictor — it surfaces whether the draft test
+recycles material the class has drilled (and how well they did), or
+breaks new ground. Hides cleanly when the teacher has no classes
+assigned, no class is picked, or no questions are selected.
+
+The endpoint joins `attempt_answers` × `quiz_attempts.student_id ∈ class_members(class_id)` × `question_id ∈ requested ids`,
+gated by an upstream `class_teachers` membership check on the calling
+teacher (any role: primary / acting / co). Service-role read; teacher
+cannot fish for data outside their own class.
+
+**Question-calibration UI removed (deletion)**
+
+The Calibrate now button, the difficulty / discrimination pills next to
+every question in the library, the calibrating progress badges, and a
+live test-stats card that briefly shipped earlier in the same session —
+all gone from the composer. Reasoning: in BloomIQ's current usage profile
+(typical teacher: ~30 questions × ~4 students), calibration almost never
+reaches the 20-attempts-per-question threshold needed for statistical
+signal, so the UI was pure cost. The genuinely useful signal it captured
+(broken-question detection via negative discrimination) wasn't worth the
+surface-area tax for the small fraction of teachers who'd see it.
+
+### What was deliberately NOT removed
+
+- `/api/qbank/calibrate` endpoint — orphaned but intact, in case we revive
+- `lib/calibration.ts` and `lib/calibrationView.ts` — still used internally by `/api/rank/predict` and `/api/papers/generate` (no teacher UI)
+- The `calibrated_*` columns in `question_bank` — left intact
+- `/student/calibration/*` — completely separate feature (student ability estimation), unrelated to question calibration
+
+So if we ever want to revive question calibration, the math, storage, and
+endpoint are all still there — only the UI was peeled off.
+
+### Hosting cost impact
+
+Zero. The class-fit endpoint is one Supabase call per change of class /
+selection (debounced 400 ms). Removing calibration UI also removes a
+query (calibration map fetch) on every composer page load, so the page
+gets marginally lighter at runtime.
+
+### Files touched
+
+- `app/api/teacher/class-fit/route.ts` (NEW, 161 lines) — service-role endpoint with `class_teachers` membership check.
+- `app/teacher/quizzes/new/page.tsx` — added ClassFit state / effects / card; removed all question-calibration UI (Calibrate button, badges, TestStatsCard, related state and imports). File: 1284 → 989 lines (−11 KB).
+
+### Catch-up since 2026-05-03 (not yet broken out into per-session entries)
+
+A lot shipped between the 05-03 login split and today. Brief enumeration
+so the log isn't missing context:
+
+- **Exam-style generation** (`/api/student/quick-test`, `/api/generate`, `/student/generate`, `/teacher/generate`) — competitive-exam topic detection (CAT, JEE, NEET, GMAT, GRE, UPSC, IELTS, TOEFL, CLAT, BITSAT, SAT, GATE, NDA, CUET) with per-exam Bloom-level allowlist, a disambiguation banner ("CAT = Common Admission Test, NOT cat the animal"), section-grouped ordering for multi-section exams, and exam-aware numerical-percentage default.
+- **Pick-how-many vs Pick-how-long** mode toggle on student + teacher generate pages, with non-uniform per-Bloom-level question counts derived from the time budget.
+- **Auth-state-change interceptor** (`lib/supabase/client.ts`) — graceful handling of refresh-token failures + cross-device sign-out, redirects to `/login?reason=elsewhere&next=...` instead of leaving the user on a half-broken page with a console error.
+- **Review-page textarea sizing** (`app/teacher/review/page.tsx`) — `rows=2` → `rows=6` / `rows=4` plus `field-sizing: content` so long question stems are readable in a single view.
+- **Test-account seeding** — `scripts/seed-test-users.js` extended with platform admin (`ops@bloomiq.example.com`) and a pre-promoted Deputy Admin Head (`deputy@testacademy.example.com`).
+
+### Test plan (manual, next session)
+
+1. **Class-fit happy path** — pick a class with prior attempts on selected questions; expect "X of N have prior attempts here. Average: Y%."
+2. **Class-fit fresh territory** — pick a class with no prior attempts; expect the "fresh territory" message.
+3. **Class-fit auth gate** — confirm `403` when calling the API for a class the teacher isn't assigned to.
+4. **Composer simplicity** — verify Calibrate button, badges, and the live stats card are all gone; only ClassFit card + existing flow remain.
+5. **Variants modal still works** — open variants on a question, generate, save to bank.
+6. **URL hydration still works** — `/teacher/quizzes/new?ids=...&topic=...&bloom=...` preselects correctly from `/teacher/generate`.
+
+---
+
+## 🆕 Earlier session — 2026-05-03 evening (Login flow split: /login/school vs /login/student)
+
+Public sign-in surface separated by audience to stop the 5-tab login from
+confusing both school people and indie learners. Modeled on Slack / Notion /
+Linear's split between workspace and personal sign-in.
+
+### What shipped
+
+- **`/login` is now a picker** — two cards: *For schools* (links to
+  `/login/school`) and *For independent learners* (links to
+  `/login/student`). Each card has its own sub-CTA (school: "Talk to us"
+  mailto, student: "Create an account" → `/signup?role=student`). The
+  picker page is ~106 lines, no auth logic — pure routing.
+- **`/login/school`** — three tabs (Admin Head, Teacher, School student),
+  each with its own identifier label (work email vs. username), heading,
+  and post-signin role gate. Honors a `?tab=` query hint so the
+  post-signup teacher redirect can land them directly on the Teacher tab.
+  School students skip MFA (kids without authenticator apps); Admin Head
+  + Teacher tabs prompt for TOTP if the account has it.
+- **`/login/student`** — single form for the indie self-pay learner.
+  No tabs, email-only identifier (no username path — that's school-only).
+  Role gate enforces `role==='student' && !is_school_student`. School
+  students mistakenly typing here get a clear "use /login/school instead"
+  error.
+- **Post-signup redirect upgraded** — `/signup` now sends the user to the
+  specialised login that matches their role:
+  - Teacher signup → `/login/school?signedup=1&tab=teacher`
+  - Student signup → `/login/student?signedup=1`
+  - (Admin Head still invite-only via `/admin/onboard-school`.)
+- **Platform admin (`/staff`) unchanged** — separate route, separate
+  surface; staff never come through the public login flow.
+
+### Why a picker instead of forcing one default
+
+A redirect from `/login` → `/login/school` would have been one less click
+but worse for indie students (who'd have to back out and click into
+`/login/student`). The picker spends one click to put each user on the
+right specialised page; that page is then narrow and unambiguous, with
+context-correct footer copy and no confusing tabs.
+
+### Hosting cost impact
+
+Zero. Each new login page bundle is smaller than the old combined
+`/login` (fewer tabs, less conditional logic). No new API endpoints, no
+new database queries — same single Supabase `signInWithPassword` call as
+before. Build time +1-2 s. Static-rendered, so production traffic hits
+the CDN edge cache with no per-request function cost.
+
+### Files touched
+
+- `app/login/page.tsx` — converted from 672-line multi-tab form to a
+  106-line picker.
+- `app/login/school/page.tsx` (NEW, 605 lines) — three-tab school login.
+- `app/login/student/page.tsx` (NEW, 442 lines) — single-form indie
+  student login.
+- `app/signup/page.tsx` — post-signup redirect now per-role.
+
+Anything else in the codebase still pointing at `/login` (PublicNav, auth
+gates in `/teacher` / `/school` / `/student` layouts, set-password page,
+service-worker precache) keeps working — they all land on the picker
+which routes them through.
+
+### Test plan (manual, next session)
+
+1. **Picker** — visit `/login` while signed out. See two cards. Each
+   navigates to its specialised page.
+2. **Indie student happy path** — `/login/student`, email + password,
+   role gate accepts `role=student && !is_school_student`, lands on
+   `/student`.
+3. **Indie student wrong page** — try a school student account on
+   `/login/student`. Expect "use /login/school instead" error.
+4. **School Admin Head + Deputy** — both work on the Admin Head tab of
+   `/login/school` (same `role=super_teacher`).
+5. **School student** — username (no @) on the School student tab; no
+   email format required; "Forgot password" hidden, replaced by "Ask
+   your teacher" hint.
+6. **Wrong tab** — try a teacher account on the Admin Head tab. Expect
+   "this tab is for X only" error and signed-out state.
+7. **Post-signup redirect** — sign up as Teacher, complete; expect
+   redirect to `/login/school?signedup=1&tab=teacher` with the Teacher
+   tab pre-selected and a green "Account created" banner.
+8. **Post-signup redirect — student** — sign up as Independent Student,
+   complete; expect `/login/student?signedup=1` with the green banner.
+9. **Platform admin** — try a platform_admin account on either public
+   login page. Expect "use /staff" error.
+
+---
+
+## 🆕 Earlier session — 2026-05-03 (Business continuity: Deputy Admin Heads + immediate primary reassignment)
 
 The first hour of the session shipped Option 1 (school-plan renewal banner
 for super-teachers — see the section below). The rest tackled a real
@@ -1784,32 +1953,4 @@ app/
     quizzes/                list + new (Composer) + [id] (assignments)
     classes/                list + [id] (members + co-teachers)
     analytics/              action-items + problem questions
-    reports/                Excel/PDF/digest
-    papers/                 exam paper generator (template-driven, printable)
-    coach/, digest/         AI chat + weekly brief
-    live/, live/[code]/host live class quiz
-  school/                   super_teacher (Admin Head) area
-    page.tsx                home + setup
-    teachers/, classes/, students/   management surfaces
-    reports/                Bloom Pulse (4 tabs)
-    coach/, digest/         Principal Coach + Brief
-  student/
-    page.tsx                branches by is_school_student; goal picker; tile catalogue
-    classes/                school-student area
-    join/                   enter quiz/class code
-    generate/, tests/, progress/, flashcards/
-    practice/, drill/                ★ adaptive + daily smart drill
-    teach-back/, misconceptions/, climber/, xray/, xray/[id]/    ★ killer features
-    speed/, traps/, rank/, tutor/, sprint/                       ★ competitive-exam
-    visualizer/, memory/, calibration/                           ★ retention
-    parent/, voice-teacher/, graph/                              ★ commercial-unlock
-    coach/, digest/                  performance coach + brief
-    quiz/[code]/                     test interface (also handles drill quizzes)
-    live/[code]/                     live quiz player
-    results/[id]/                    results; "Diagnose my mistakes" panel
-  api/
-    admin/                  platform admin RPCs (onboard-school, team, plans, schools, classes, students, school)
-    teacher/                teacher RPCs (classes, coach, digest)
-    student/                student RPCs (adaptive-practice, daily-drill, srs-due, coach, digest, quick-test)
-    school/                 super_teacher RPCs (join, coach, digest)
-    generate/, papers/generate/      AI que
+    reports/          

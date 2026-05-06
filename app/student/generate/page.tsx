@@ -9,6 +9,51 @@ import { Sparkles, FileText, Image as ImageIcon, GraduationCap, Tag, Play, Scrol
 
 type Source = "topic_only" | "topic_syllabus" | "notes" | "image" | "past_paper";
 
+// =============================================================================
+// Client-side competitive-exam detector (mirror of backend in
+// app/api/student/quick-test/route.ts). Used to auto-set the numerical %
+// slider with a sensible default the moment the user types a known exam name.
+// Each entry includes:
+//   - displayName: shown in the explainer banner
+//   - defaultNumericalPercent: app-suggested numerical %
+//   - rationale: shown next to the slider so the student knows WHY we set it
+// User can still drag the slider — we just stop touching it after they do.
+// =============================================================================
+type ExamDefault = {
+  displayName: string;
+  defaultNumericalPercent: number;
+  rationale: string;
+  // Bloom levels the actual exam paper genuinely contains. The UI warns
+  // when a user picks a level outside this list — and the backend filters
+  // them anyway, so generation stays honest.
+  supportedBloomLevels: BloomLevel[];
+};
+const EXAM_NUMERICAL_DEFAULTS: Record<string, ExamDefault> = {
+  CAT:   { displayName: "CAT",            defaultNumericalPercent: 35, rationale: "Quantitative Aptitude is roughly one-third of the paper.",                                supportedBloomLevels: ["apply", "analyze", "evaluate"] },
+  JEE:   { displayName: "JEE",            defaultNumericalPercent: 70, rationale: "Physics + Math + parts of Chemistry are heavily numerical.",                              supportedBloomLevels: ["understand", "apply", "analyze", "evaluate"] },
+  NEET:  { displayName: "NEET",           defaultNumericalPercent: 30, rationale: "Physics + parts of Chemistry are numerical; Biology is mostly conceptual.",               supportedBloomLevels: ["remember", "understand", "apply", "analyze"] },
+  GMAT:  { displayName: "GMAT",           defaultNumericalPercent: 40, rationale: "Quant + Data Insights are numerical; Verbal is not.",                                     supportedBloomLevels: ["apply", "analyze", "evaluate"] },
+  GRE:   { displayName: "GRE",            defaultNumericalPercent: 50, rationale: "Quantitative Reasoning is half the test.",                                                supportedBloomLevels: ["understand", "apply", "analyze", "evaluate"] },
+  UPSC:  { displayName: "UPSC Prelims",   defaultNumericalPercent: 10, rationale: "GS is conceptual; CSAT has some quant + reasoning.",                                      supportedBloomLevels: ["remember", "understand", "apply", "analyze"] },
+  IELTS: { displayName: "IELTS",          defaultNumericalPercent: 0,  rationale: "Pure language test — no numerical content.",                                              supportedBloomLevels: ["understand", "apply", "analyze"] },
+  TOEFL: { displayName: "TOEFL",          defaultNumericalPercent: 0,  rationale: "Pure language test — no numerical content.",                                              supportedBloomLevels: ["understand", "apply", "analyze"] },
+  CLAT:  { displayName: "CLAT",           defaultNumericalPercent: 10, rationale: "Quantitative Techniques is one of five sections.",                                        supportedBloomLevels: ["remember", "understand", "apply", "analyze"] },
+  BITSAT:{ displayName: "BITSAT",         defaultNumericalPercent: 70, rationale: "Physics + Chemistry + Math dominate; English/Logical small.",                             supportedBloomLevels: ["understand", "apply", "analyze"] },
+  SAT:   { displayName: "SAT",            defaultNumericalPercent: 50, rationale: "Math is half the SAT; Reading & Writing the other half.",                                supportedBloomLevels: ["apply", "analyze"] },
+  GATE:  { displayName: "GATE",           defaultNumericalPercent: 70, rationale: "Engineering Mathematics + subject section are highly numerical.",                         supportedBloomLevels: ["apply", "analyze", "evaluate"] },
+  NDA:   { displayName: "NDA",            defaultNumericalPercent: 50, rationale: "Mathematics is half; General Ability the other half.",                                    supportedBloomLevels: ["remember", "understand", "apply"] },
+  CUET:  { displayName: "CUET",           defaultNumericalPercent: 30, rationale: "Mix varies by chosen subjects; quant is part of General Test.",                            supportedBloomLevels: ["remember", "understand", "apply"] },
+};
+
+function detectExamDefault(topic: string): ExamDefault | null {
+  if (!topic) return null;
+  const tokens = topic.toUpperCase().split(/[\s,;.\-/_()]+/).filter(Boolean);
+  for (const t of tokens) {
+    if (EXAM_NUMERICAL_DEFAULTS[t]) return EXAM_NUMERICAL_DEFAULTS[t];
+  }
+  return null;
+}
+
 const MAX_IMAGE_BYTES = 6 * 1024 * 1024;
 const IMAGE_MAX_DIM = 1600;
 const IMAGE_QUALITY = 0.85;
@@ -61,6 +106,15 @@ export default function StudentGeneratePage() {
   // recommendation so their explicit choice isn't quietly overwritten.
   const [timeManuallySet, setTimeManuallySet] = useState(false);
   const [numericalPercent, setNumericalPercent] = useState(0);
+  // Same pattern for numerical %: app-suggested when topic matches an exam,
+  // but stop overriding the moment the user drags the slider.
+  const [numericalManuallySet, setNumericalManuallySet] = useState(false);
+  // Mode toggle: "Pick how many" (existing flow) vs "Pick how long" (new flow
+  // where the student types target minutes and we choose the question count).
+  const [planMode, setPlanMode] = useState<"by_count" | "by_time">("by_count");
+  // Target minutes for "Pick how long" mode. Defaults to 20 — a reasonable
+  // practice-test length for an indie student.
+  const [targetMinutes, setTargetMinutes] = useState(20);
 
   // The actual levels we'll send: all 6 OR the custom subset
   const effectiveLevels = levelMode === "all" ? BLOOM_LEVELS.slice() : pickedLevels;
@@ -82,6 +136,51 @@ export default function StudentGeneratePage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [recommendedMinutes]);
+
+  // Detect competitive exam from topic and auto-suggest numerical %. Only
+  // fires while numericalManuallySet is false — the student can always
+  // override and we'll respect their choice from then on.
+  const examDefault = useMemo(() => detectExamDefault(topic), [topic]);
+  useEffect(() => {
+    if (examDefault && !numericalManuallySet) {
+      setNumericalPercent(examDefault.defaultNumericalPercent);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [examDefault]);
+
+  // "Pick how long" mode — derive a NON-UNIFORM per-level question count
+  // from the student's target time. Each Bloom level takes a different
+  // amount of time per question (Remember = 30s, Create = 180s), so a
+  // 20-min test should naturally have more easy questions than hard ones.
+  // Algorithm: divide usable time equally across selected levels, then
+  // floor(slot / secsPerQ) for each level (min 1).
+  const computedFromTime = useMemo(() => {
+    if (planMode !== "by_time") return null;
+    if (effectiveLevels.length === 0) return null;
+    // Mirror lib/bloom.ts BLOOM_SECONDS_PER_QUESTION values. Keep in sync
+    // if the canonical table is ever rebalanced.
+    const SECS_PER_Q: Record<BloomLevel, number> = {
+      remember: 30, understand: 60, apply: 90, analyze: 120, evaluate: 150, create: 180,
+    };
+    // Strip the 15% review buffer the recommendation adds, so a "20 min"
+    // target produces ~20 min of actual question-solving time.
+    const usableSec = (targetMinutes * 60) / 1.15;
+    const slotSec = usableSec / effectiveLevels.length;
+    const counts = {} as Record<BloomLevel, number>;
+    for (const l of BLOOM_LEVELS) counts[l] = 0;
+    for (const l of effectiveLevels) {
+      counts[l] = Math.max(1, Math.floor(slotSec / SECS_PER_Q[l]));
+    }
+    const totalQ = effectiveLevels.reduce((s, l) => s + counts[l], 0);
+    return { counts, totalQ };
+  }, [planMode, effectiveLevels, targetMinutes]);
+
+  // The perLevel sent to the API in by_count mode. by_time mode sends a
+  // separate `perLevelCounts` map (handled below).
+  const effectivePerLevel = perLevel;
+  // The time the API receives. In by_count mode it's the (possibly overridden)
+  // suggested limit; in by_time mode it IS the input.
+  const effectiveTimeLimit = planMode === "by_time" ? targetMinutes : timeLimit;
 
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -137,10 +236,16 @@ export default function StudentGeneratePage() {
         source,
         topic,
         levels: effectiveLevels,
-        perLevel,
-        timeLimit,
+        perLevel: effectivePerLevel,
+        timeLimit: effectiveTimeLimit,
         numericalPercent,
       };
+      // by_time mode produces non-uniform counts (Remember gets more than
+      // Create for the same time). Send the full map; the API will use it
+      // and ignore `perLevel` when present.
+      if (planMode === "by_time" && computedFromTime) {
+        body.perLevelCounts = computedFromTime.counts;
+      }
       if (source === "notes") body.content = content;
       if (source === "image" && imageFile) body.imageDataUrl = await downscaleToDataUrl(imageFile);
       if (source === "past_paper" && imageFile) {
@@ -395,47 +500,127 @@ export default function StudentGeneratePage() {
               We&apos;ll cover all six: {BLOOM_LEVELS.map((l) => BLOOM_META[l].label).join(", ")}.
             </p>
           )}
+          {/* When the topic matches a known competitive exam, warn if any
+              of the user's selected Bloom levels aren't actually tested
+              by that exam. The backend filters them anyway — this surface
+              just sets honest expectations BEFORE the request goes out. */}
+          {examDefault && (() => {
+            const supported = new Set(examDefault.supportedBloomLevels);
+            const unsupported = effectiveLevels.filter((l) => !supported.has(l));
+            if (unsupported.length === 0) return null;
+            const supportedLabels = examDefault.supportedBloomLevels.map((l) => BLOOM_META[l].label).join(", ");
+            const unsupportedLabels = unsupported.map((l) => BLOOM_META[l].label).join(", ");
+            return (
+              <p className="text-xs mt-2" style={{ color: "var(--brand-700, #047857)" }}>
+                <strong>Heads up:</strong> {examDefault.displayName} papers don&apos;t test {unsupportedLabels} levels — those questions wouldn&apos;t look like the real exam. We&apos;ll skip them and generate {supportedLabels} only.
+              </p>
+            );
+          })()}
         </div>
 
-        <div className="grid sm:grid-cols-2 gap-3">
-          <div>
-            <label className="label">Questions per level</label>
-            <input type="number" min={1} max={10} className="input w-32"
-                   value={perLevel} onChange={(e) => setPerLevel(Math.max(1, Math.min(10, +e.target.value || 1)))} />
-            <p className="text-xs muted mt-1">Total: {totalQs} question{totalQs === 1 ? "" : "s"}</p>
+        {/* Mode toggle — students/teachers pick whichever framing matches
+            how they're thinking about the test. Both modes share Bloom
+            level selection (above) and numerical % (below). */}
+        <div>
+          <label className="label">Set up your test</label>
+          <div className="inline-flex rounded-lg border border-slate-200 overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setPlanMode("by_count")}
+              className={`px-3 py-1.5 text-sm font-semibold transition ${planMode === "by_count" ? "bg-emerald-600 text-white" : "bg-white text-slate-700 hover:bg-slate-50"}`}
+            >
+              Pick how many
+            </button>
+            <button
+              type="button"
+              onClick={() => setPlanMode("by_time")}
+              className={`px-3 py-1.5 text-sm font-semibold transition ${planMode === "by_time" ? "bg-emerald-600 text-white" : "bg-white text-slate-700 hover:bg-slate-50"}`}
+            >
+              Pick how long
+            </button>
           </div>
+          <p className="text-xs muted mt-1">
+            {planMode === "by_count"
+              ? "Choose the question count and we'll suggest a time."
+              : "Choose how long you have and we'll size the question count to fit."}
+          </p>
+        </div>
+
+        {planMode === "by_count" ? (
+          <div className="grid sm:grid-cols-2 gap-3">
+            <div>
+              <label className="label">Questions per level</label>
+              <input type="number" min={1} max={10} className="input w-32"
+                     value={perLevel} onChange={(e) => setPerLevel(Math.max(1, Math.min(10, +e.target.value || 1)))} />
+              <p className="text-xs muted mt-1">Total: {totalQs} question{totalQs === 1 ? "" : "s"}</p>
+            </div>
+            <div>
+              <label className="label">Time limit (minutes)</label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  min={1}
+                  max={180}
+                  className="input w-32"
+                  value={timeLimit}
+                  onChange={(e) => {
+                    setTimeLimit(Math.max(1, Math.min(180, +e.target.value || 1)));
+                    setTimeManuallySet(true);
+                  }}
+                />
+                {timeManuallySet && recommendedMinutes > 0 && timeLimit !== recommendedMinutes && (
+                  <button
+                    type="button"
+                    className="text-xs text-emerald-700 font-semibold hover:underline"
+                    onClick={() => { setTimeLimit(recommendedMinutes); setTimeManuallySet(false); }}
+                    title="Use the suggested time"
+                  >
+                    Use suggested ({recommendedMinutes} min)
+                  </button>
+                )}
+              </div>
+              {recommendedMinutes > 0 && (
+                <p className="text-xs muted mt-1">
+                  Suggested: <strong className="text-slate-700">{recommendedMinutes} min</strong> for these {totalQs} question{totalQs === 1 ? "" : "s"} — derived from question complexity (Bloom-level mix). {timeLimit !== recommendedMinutes ? <>Your current limit of {timeLimit} min gives ~{Math.max(1, Math.round((timeLimit * 60) / Math.max(1, totalQs)))} sec/question.</> : <>That works out to ~{Math.max(1, Math.round((recommendedMinutes * 60) / Math.max(1, totalQs)))} sec/question.</>}
+                </p>
+              )}
+            </div>
+          </div>
+        ) : (
           <div>
-            <label className="label">Time limit (minutes)</label>
+            <label className="label">How long do you have?</label>
             <div className="flex items-center gap-2">
               <input
                 type="number"
-                min={1}
+                min={5}
                 max={180}
                 className="input w-32"
-                value={timeLimit}
-                onChange={(e) => {
-                  setTimeLimit(Math.max(1, Math.min(180, +e.target.value || 1)));
-                  setTimeManuallySet(true);
-                }}
+                value={targetMinutes}
+                onChange={(e) => setTargetMinutes(Math.max(5, Math.min(180, +e.target.value || 5)))}
               />
-              {timeManuallySet && recommendedMinutes > 0 && timeLimit !== recommendedMinutes && (
-                <button
-                  type="button"
-                  className="text-xs text-emerald-700 font-semibold hover:underline"
-                  onClick={() => { setTimeLimit(recommendedMinutes); setTimeManuallySet(false); }}
-                  title="Use the suggested time"
-                >
-                  Use suggested ({recommendedMinutes} min)
-                </button>
-              )}
+              <span className="text-sm text-slate-600">minutes</span>
             </div>
-            {recommendedMinutes > 0 && (
-              <p className="text-xs muted mt-1">
-                Suggested: <strong className="text-slate-700">{recommendedMinutes} min</strong> for these {totalQs} question{totalQs === 1 ? "" : "s"} · ~{Math.max(1, Math.round((timeLimit * 60) / Math.max(1, totalQs)))} sec/question at the current setting
-              </p>
+            {computedFromTime ? (
+              <div className="text-xs muted mt-1 space-y-1">
+                <p>
+                  We&apos;ll size your test to about{" "}
+                  <strong className="text-slate-700">{computedFromTime.totalQ} question{computedFromTime.totalQ === 1 ? "" : "s"}</strong>
+                  {" "}across the {effectiveLevels.length} Bloom level{effectiveLevels.length === 1 ? "" : "s"} you picked. Easier levels get more questions because they take less time per question:
+                </p>
+                <p className="text-slate-600">
+                  {effectiveLevels.map((l, i) => (
+                    <span key={l}>
+                      {i > 0 ? " · " : ""}
+                      <strong className="text-slate-700">{computedFromTime.counts[l]}</strong> {BLOOM_META[l].label}
+                    </span>
+                  ))}
+                </p>
+              </div>
+            ) : (
+              <p className="text-xs muted mt-1">Pick at least one Bloom level above to see the question count.</p>
             )}
           </div>
-        </div>
+        )}
 
         <div>
           <label className="label flex items-center justify-between">
@@ -445,12 +630,29 @@ export default function StudentGeneratePage() {
           <input
             type="range" min={0} max={100} step={5}
             value={numericalPercent}
-            onChange={(e) => setNumericalPercent(+e.target.value)}
+            onChange={(e) => { setNumericalPercent(+e.target.value); setNumericalManuallySet(true); }}
             className="w-full accent-emerald-600"
           />
-          <p className="text-xs muted mt-1">
-            Target % of questions involving calculation or numbers. Auto-ignored for non-numerical topics (history, literature, etc.).
-          </p>
+          {examDefault && !numericalManuallySet ? (
+            <p className="text-xs mt-1" style={{ color: "var(--brand-700, #047857)" }}>
+              Set to <strong>{examDefault.defaultNumericalPercent}%</strong> to match {examDefault.displayName} — {examDefault.rationale} Drag the slider to override.
+            </p>
+          ) : examDefault && numericalManuallySet ? (
+            <p className="text-xs muted mt-1">
+              {examDefault.displayName} usually has ~{examDefault.defaultNumericalPercent}% numerical content. You&apos;ve set yours to {numericalPercent}%.{" "}
+              <button
+                type="button"
+                className="text-emerald-700 font-semibold hover:underline"
+                onClick={() => { setNumericalPercent(examDefault.defaultNumericalPercent); setNumericalManuallySet(false); }}
+              >
+                Use suggested
+              </button>
+            </p>
+          ) : (
+            <p className="text-xs muted mt-1">
+              Target % of questions involving calculation or numbers. Auto-ignored for non-numerical topics (history, literature, etc.).
+            </p>
+          )}
         </div>
 
         {err && <div className="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{err}</div>}

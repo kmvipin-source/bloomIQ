@@ -53,5 +53,38 @@ export function supabaseBrowser(): SupabaseClient {
       lock: processLock,
     },
   });
+
+  // Graceful sign-out / refresh-failure handling.
+  // -----------------------------------------------------------------------
+  // Supabase emits "SIGNED_OUT" when:
+  //   - the user explicitly signs out
+  //   - another device signed in (single-session policy revokes refresh
+  //     tokens on the current tab via signOut({ scope: "others" }))
+  //   - the refresh token expired or was invalidated server-side
+  //
+  // Without this listener, the user sees a console error
+  // ("Invalid Refresh Token: Refresh Token Not Found") and a half-broken
+  // page that can't load any authenticated data. With the listener we
+  // route them cleanly back to /login with a reason banner the existing
+  // /login page already understands.
+  //
+  // We intentionally skip the redirect on public surfaces (/, /login,
+  // /signup, /staff, /pricing, /terms, /privacy, /auth) so signed-out
+  // visitors browsing those pages don't get bounced to the login page
+  // repeatedly.
+  if (typeof window !== "undefined") {
+    _client.auth.onAuthStateChange((event) => {
+      if (event !== "SIGNED_OUT") return;
+      const path = window.location.pathname;
+      const publicPaths = ["/", "/login", "/signup", "/staff", "/pricing", "/terms", "/privacy", "/auth"];
+      if (publicPaths.some((p) => path === p || path.startsWith(p + "/"))) return;
+      // ?reason=elsewhere is already handled by the /login page banner —
+      // it shows "Your session was signed out because this account signed
+      // in on another device." That covers the dominant cause; for
+      // expired-token cases the same banner is reasonable enough.
+      window.location.href = "/login?reason=elsewhere&next=" + encodeURIComponent(path);
+    });
+  }
+
   return _client;
 }

@@ -166,8 +166,13 @@ export default function ReviewPage() {
               </div>
 
               <label className="label">Question</label>
-              <textarea className="textarea" rows={2} value={stem}
-                onChange={(ev) => setField(q.id, { stem: ev.target.value })} />
+              <textarea
+                className="textarea"
+                rows={6}
+                style={{ resize: "vertical", minHeight: "5rem", fieldSizing: "content" } as React.CSSProperties}
+                value={stem}
+                onChange={(ev) => setField(q.id, { stem: ev.target.value })}
+              />
 
               <div className="grid sm:grid-cols-2 gap-3 mt-3">
                 {opts.map((o, i) => (
@@ -195,8 +200,13 @@ export default function ReviewPage() {
               </div>
 
               <label className="label mt-4">Explanation</label>
-              <textarea className="textarea" rows={2} value={explanation || ""}
-                onChange={(ev) => setField(q.id, { explanation: ev.target.value })} />
+              <textarea
+                className="textarea"
+                rows={4}
+                style={{ resize: "vertical", minHeight: "4rem", fieldSizing: "content" } as React.CSSProperties}
+                value={explanation || ""}
+                onChange={(ev) => setField(q.id, { explanation: ev.target.value })}
+              />
 
               <div className="flex items-center gap-2 mt-4 justify-end">
                 {dirty && (
@@ -204,11 +214,19 @@ export default function ReviewPage() {
                     <Save size={16} /> Save
                   </button>
                 )}
-                <button className="btn btn-danger" onClick={() => setStatus(q, "rejected")}>
-                  <X size={16} /> Reject
-                </button>
-                <button className="btn btn-primary" onClick={() => setStatus(q, "approved")}>
+                <button
+                  className="btn btn-primary"
+                  onClick={() => approve(q.id)}
+                  title="Approve and add to your bank"
+                >
                   <Check size={16} /> Approve
+                </button>
+                <button
+                  className="btn btn-ghost text-red-600"
+                  onClick={() => reject(q.id)}
+                  title="Reject and remove"
+                >
+                  <X size={16} /> Reject
                 </button>
               </div>
             </div>

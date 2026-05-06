@@ -1,13 +1,44 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { supabaseBrowser } from "@/lib/supabase/client";
 import { toast } from "@/lib/toast";
 import { BLOOM_LEVELS, BLOOM_META, type BloomLevel } from "@/lib/bloom";
 import { Sparkles, FileText, Image as ImageIcon, GraduationCap, Tag } from "lucide-react";
 
 type Source = "notes" | "image" | "topic_syllabus" | "topic_only";
+
+// Client-side competitive-exam detector. Mirrors the backend logic in
+// app/api/generate/route.ts and app/api/student/quick-test/route.ts.
+type ExamDefault = {
+  displayName: string;
+  defaultNumericalPercent: number;
+  rationale: string;
+  supportedBloomLevels: BloomLevel[];
+};
+const EXAM_DEFAULTS: Record<string, ExamDefault> = {
+  CAT:    { displayName: "CAT",          defaultNumericalPercent: 35, rationale: "Quantitative Aptitude is roughly one-third of the paper.",                                supportedBloomLevels: ["apply", "analyze", "evaluate"] },
+  JEE:    { displayName: "JEE",          defaultNumericalPercent: 70, rationale: "Physics + Math + parts of Chemistry are heavily numerical.",                              supportedBloomLevels: ["understand", "apply", "analyze", "evaluate"] },
+  NEET:   { displayName: "NEET",         defaultNumericalPercent: 30, rationale: "Physics + parts of Chemistry are numerical; Biology is mostly conceptual.",               supportedBloomLevels: ["remember", "understand", "apply", "analyze"] },
+  GMAT:   { displayName: "GMAT",         defaultNumericalPercent: 40, rationale: "Quant + Data Insights are numerical; Verbal is not.",                                     supportedBloomLevels: ["apply", "analyze", "evaluate"] },
+  GRE:    { displayName: "GRE",          defaultNumericalPercent: 50, rationale: "Quantitative Reasoning is half the test.",                                                supportedBloomLevels: ["understand", "apply", "analyze", "evaluate"] },
+  UPSC:   { displayName: "UPSC Prelims", defaultNumericalPercent: 10, rationale: "GS is conceptual; CSAT has some quant + reasoning.",                                      supportedBloomLevels: ["remember", "understand", "apply", "analyze"] },
+  IELTS:  { displayName: "IELTS",        defaultNumericalPercent: 0,  rationale: "Pure language test — no numerical content.",                                              supportedBloomLevels: ["understand", "apply", "analyze"] },
+  TOEFL:  { displayName: "TOEFL",        defaultNumericalPercent: 0,  rationale: "Pure language test — no numerical content.",                                              supportedBloomLevels: ["understand", "apply", "analyze"] },
+  CLAT:   { displayName: "CLAT",         defaultNumericalPercent: 10, rationale: "Quantitative Techniques is one of five sections.",                                        supportedBloomLevels: ["remember", "understand", "apply", "analyze"] },
+  BITSAT: { displayName: "BITSAT",       defaultNumericalPercent: 70, rationale: "Physics + Chemistry + Math dominate; English/Logical small.",                             supportedBloomLevels: ["understand", "apply", "analyze"] },
+  SAT:    { displayName: "SAT",          defaultNumericalPercent: 50, rationale: "Math is half the SAT; Reading & Writing the other half.",                                supportedBloomLevels: ["apply", "analyze"] },
+  GATE:   { displayName: "GATE",         defaultNumericalPercent: 70, rationale: "Engineering Mathematics + subject section are highly numerical.",                         supportedBloomLevels: ["apply", "analyze", "evaluate"] },
+  NDA:    { displayName: "NDA",          defaultNumericalPercent: 50, rationale: "Mathematics is half; General Ability the other half.",                                    supportedBloomLevels: ["remember", "understand", "apply"] },
+  CUET:   { displayName: "CUET",         defaultNumericalPercent: 30, rationale: "Mix varies by chosen subjects; quant is part of General Test.",                            supportedBloomLevels: ["remember", "understand", "apply"] },
+};
+function detectExamDefault(topic: string): ExamDefault | null {
+  if (!topic) return null;
+  const tokens = topic.toUpperCase().split(/[\s,;.\-/_()]+/).filter(Boolean);
+  for (const t of tokens) if (EXAM_DEFAULTS[t]) return EXAM_DEFAULTS[t];
+  return null;
+}
 
 const MAX_IMAGE_BYTES = 6 * 1024 * 1024; // 6 MB raw upload cap
 const IMAGE_MAX_DIM = 1600;
@@ -54,7 +85,22 @@ export default function GeneratePage() {
   const [mode, setMode] = useState<"all" | "custom">("all");
   const [pickedLevels, setPickedLevels] = useState<BloomLevel[]>(["understand"]);
   const [numericalPercent, setNumericalPercent] = useState(0);
+  // Stop overriding numerical % once the teacher drags the slider.
+  const [numericalManuallySet, setNumericalManuallySet] = useState(false);
   const MAX_PICKED = 5;
+
+  // Detect competitive exam from topic and auto-suggest numerical %.
+  const examDefault = useMemo(() => detectExamDefault(topic), [topic]);
+  useEffect(() => {
+    if (examDefault && !numericalManuallySet) {
+      setNumericalPercent(examDefault.defaultNumericalPercent);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [examDefault]);
+
+  // Effective levels — used to warn when the teacher picks levels the
+  // detected exam doesn't actually test.
+  const effectiveLevels: BloomLevel[] = mode === "all" ? BLOOM_LEVELS.slice() : pickedLevels;
 
   function togglePickedLevel(l: BloomLevel) {
     setPickedLevels((prev) => {
@@ -317,6 +363,19 @@ export default function GeneratePage() {
               </p>
             </>
           )}
+          {/* Per-exam Bloom level warning. Same pattern as the student page. */}
+          {examDefault && (() => {
+            const supported = new Set(examDefault.supportedBloomLevels);
+            const unsupported = effectiveLevels.filter((l) => !supported.has(l));
+            if (unsupported.length === 0) return null;
+            const supportedLabels = examDefault.supportedBloomLevels.map((l) => BLOOM_META[l].label).join(", ");
+            const unsupportedLabels = unsupported.map((l) => BLOOM_META[l].label).join(", ");
+            return (
+              <p className="text-xs mt-2" style={{ color: "var(--brand-700, #047857)" }}>
+                <strong>Heads up:</strong> {examDefault.displayName} papers don&apos;t test {unsupportedLabels} levels — those questions wouldn&apos;t look like the real exam. We&apos;ll skip them and generate {supportedLabels} only.
+              </p>
+            );
+          })()}
         </div>
 
         <div>
@@ -338,12 +397,29 @@ export default function GeneratePage() {
           <input
             type="range" min={0} max={100} step={5}
             value={numericalPercent}
-            onChange={(e) => setNumericalPercent(+e.target.value)}
+            onChange={(e) => { setNumericalPercent(+e.target.value); setNumericalManuallySet(true); }}
             className="w-full accent-emerald-600"
           />
-          <p className="text-xs muted mt-1">
-            Target % of questions that should involve calculation, formulas, or quantitative reasoning. Ignored automatically for non-numerical topics (history, literature, etc.).
-          </p>
+          {examDefault && !numericalManuallySet ? (
+            <p className="text-xs mt-1" style={{ color: "var(--brand-700, #047857)" }}>
+              Set to <strong>{examDefault.defaultNumericalPercent}%</strong> to match {examDefault.displayName} — {examDefault.rationale} Drag the slider to override.
+            </p>
+          ) : examDefault && numericalManuallySet ? (
+            <p className="text-xs muted mt-1">
+              {examDefault.displayName} usually has ~{examDefault.defaultNumericalPercent}% numerical content. You&apos;ve set yours to {numericalPercent}%.{" "}
+              <button
+                type="button"
+                className="text-emerald-700 font-semibold hover:underline"
+                onClick={() => { setNumericalPercent(examDefault.defaultNumericalPercent); setNumericalManuallySet(false); }}
+              >
+                Use suggested
+              </button>
+            </p>
+          ) : (
+            <p className="text-xs muted mt-1">
+              Target % of questions that should involve calculation, formulas, or quantitative reasoning. Ignored automatically for non-numerical topics (history, literature, etc.).
+            </p>
+          )}
         </div>
 
         {err && <div className="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{err}</div>}

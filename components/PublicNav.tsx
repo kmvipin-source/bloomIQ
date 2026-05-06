@@ -17,6 +17,10 @@ import { LogOut, LayoutDashboard } from "lucide-react";
  * those would just bounce them to their dashboard anyway, which is what we
  * do directly here.
  *
+ * Both "Sign in" and "Create account" route to /login — the unified front
+ * door (Option B). The picker page handles both intents inside two
+ * audience cards, so users only ever encounter one selector.
+ *
  * The Dashboard link routes to the right home page based on role:
  *   platform_admin = true → /admin/onboard-school
  *   role = super_teacher  → /school
@@ -66,15 +70,13 @@ export default function PublicNav() {
       </Link>
 
       {state.kind === "loading" ? (
-        // Reserve a roughly-CTA-shaped spot during the brief loading window
-        // so the layout doesn't jump when auth resolves.
         <div className="w-32 h-9" aria-hidden />
       ) : state.kind === "anon" ? (
         <>
           <Link href="/login" className="text-sm font-semibold text-slate-700 hover:text-emerald-700 px-2 py-1">
             Sign in
           </Link>
-          <Link href="/signup" className="btn btn-primary text-sm">
+          <Link href="/login" className="btn btn-primary text-sm">
             Create account
           </Link>
         </>

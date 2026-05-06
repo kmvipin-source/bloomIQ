@@ -76,7 +76,7 @@ export default function LandingPage() {
 
           <div className="mt-10 flex flex-col sm:flex-row gap-3 items-center justify-center fade-in">
             <Link
-              href="/signup"
+              href="/login"
               className="btn btn-primary text-base px-7 py-3 inline-flex items-center gap-2"
             >
               Get started free <ArrowRight size={18} />
@@ -188,7 +188,7 @@ export default function LandingPage() {
         </p>
         <div className="mt-8 flex flex-col sm:flex-row gap-3 items-center justify-center">
           <Link
-            href="/signup"
+            href="/login"
             className="btn btn-primary text-base px-7 py-3 inline-flex items-center gap-2"
           >
             Get started free <ArrowRight size={18} />

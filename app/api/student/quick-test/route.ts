@@ -70,6 +70,10 @@ ${jsonShape()}`;
 }
 
 function syllabusPrompt(topic: string, className: string, syllabus: string, level: BloomLevel, n: number, numPct: number, seedBlock: string) {
+  const exam = detectExamFromTopic(topic);
+  // eslint-disable-next-line no-console
+  console.log(`[quick-test] topicSyllabus path — topic="${topic}" — exam detected: ${exam ? exam.name : "NONE"}`);
+  if (exam) return examStylePrompt(exam, level, n, numPct, seedBlock);
   return `Topic: ${topic}
 Class / grade: ${className}
 Syllabus / board: ${syllabus || "(unspecified)"}
@@ -111,7 +115,119 @@ ${numericalHint(numPct, n)}${seedBlock}
 ${jsonShape()}`;
 }
 
+// =============================================================================
+// Competitive-exam detector — duplicated from app/api/generate/route.ts so the
+// student "Take a test" flow (this file = /api/student/quick-test) ALSO routes
+// "CAT", "JEE", "NEET", … to exam-paper-style prompts instead of meta-questions
+// or animal trivia. TODO: extract to lib/examDetector.ts and import from both.
+// =============================================================================
+type ExamMeta = {
+  name: string;
+  description: string;
+  sections: string[];
+  sampleQuestions: string[];
+};
+
+const EXAM_DETECTORS: Record<string, ExamMeta> = {
+  CAT: {
+    name: "CAT",
+    description: "Common Admission Test for IIM/MBA admissions in India",
+    sections: ["Quantitative Aptitude", "Verbal Ability and Reading Comprehension", "Data Interpretation and Logical Reasoning"],
+    sampleQuestions: [
+      "If x + 1/x = 5, find the value of x² + 1/x².",
+      "A train travelling at 72 km/hr crosses a 250 m platform in 25 seconds. Find the length of the train.",
+      "Identify the option that best replaces the underlined phrase to make the sentence grammatically correct.",
+    ],
+  },
+  JEE: {
+    name: "JEE Main / JEE Advanced",
+    description: "Joint Entrance Examination for engineering admissions in India (IITs/NITs)",
+    sections: ["Physics", "Chemistry", "Mathematics"],
+    sampleQuestions: [
+      "A particle moves along a straight line such that v² = u² + 2as. Find its displacement after 5 s if u = 4 m/s and a = 2 m/s².",
+      "Calculate the pH of a 0.01 M HCl solution.",
+      "Evaluate the integral ∫ (x² + 1)/(x² - 1) dx.",
+    ],
+  },
+  NEET: {
+    name: "NEET",
+    description: "National Eligibility cum Entrance Test for medical admissions in India",
+    sections: ["Physics", "Chemistry", "Botany", "Zoology"],
+    sampleQuestions: [
+      "Which of the following hormones is secreted by the alpha cells of the islets of Langerhans?",
+      "The site of Krebs cycle in eukaryotic cells is the:",
+      "An object is placed 30 cm in front of a concave mirror of focal length 15 cm. Find the position of the image.",
+    ],
+  },
+  GMAT: { name: "GMAT", description: "Graduate Management Admission Test", sections: ["Quantitative Reasoning", "Verbal Reasoning", "Data Insights"], sampleQuestions: ["If 0 < x < 1, which is largest among x, x², √x, 1/x, 1/x²?"] },
+  GRE:  { name: "GRE",  description: "Graduate Record Examinations",          sections: ["Quantitative Reasoning", "Verbal Reasoning"], sampleQuestions: ["Choose the word that is most nearly synonymous with PROPITIATE."] },
+  UPSC: { name: "UPSC CSE Prelims", description: "UPSC Civil Services Exam preliminary stage (India)", sections: ["General Studies", "CSAT (aptitude, reasoning)"], sampleQuestions: ["Which Article of the Indian Constitution deals with the abolition of untouchability?"] },
+  IELTS:{ name: "IELTS", description: "International English Language Testing System", sections: ["Listening", "Reading", "Writing", "Speaking"], sampleQuestions: ["According to the passage, the main reason coral reefs are declining is:"] },
+  TOEFL:{ name: "TOEFL", description: "Test of English as a Foreign Language", sections: ["Reading", "Listening", "Speaking", "Writing"], sampleQuestions: ["The word 'ubiquitous' in the passage is closest in meaning to:"] },
+  CLAT: { name: "CLAT",  description: "Common Law Admission Test (India)", sections: ["English", "Current Affairs", "Legal Reasoning", "Logical Reasoning", "Quantitative Techniques"], sampleQuestions: ["Principle: A person who voluntarily causes hurt commits an offence. Has A committed an offence in this scenario?"] },
+  BITSAT:{ name: "BITSAT", description: "BITS Pilani Admission Test for engineering admissions", sections: ["Physics", "Chemistry", "Mathematics or Biology", "English Proficiency", "Logical Reasoning"], sampleQuestions: ["A capacitor of capacitance 2 μF is charged to 100 V. The energy stored is:"] },
+  SAT:  { name: "SAT",   description: "Scholastic Assessment Test for US college admissions", sections: ["Reading and Writing", "Math"], sampleQuestions: ["If 2(x – 3) = 4x + 6, what is the value of x?"] },
+  GATE: { name: "GATE",  description: "Graduate Aptitude Test in Engineering (India)", sections: ["General Aptitude", "Engineering Mathematics", "Subject section"], sampleQuestions: ["The eigenvalues of the matrix [[2,1],[1,2]] are:"] },
+  NDA:  { name: "NDA",   description: "National Defence Academy entrance exam (India)", sections: ["Mathematics", "General Ability Test"], sampleQuestions: ["If sin A = 3/5 and cos B = 12/13 (both first quadrant), find sin(A + B)."] },
+  CUET: { name: "CUET (UG)", description: "Common University Entrance Test (India)", sections: ["Language", "Domain subjects", "General Test"], sampleQuestions: ["If 3x – 4 = 11, what is the value of 2x + 1?"] },
+};
+
+function detectExamFromTopic(topic: string): ExamMeta | null {
+  if (!topic) return null;
+  const tokens = topic.toUpperCase().split(/[\s,;.\-/_()]+/).filter(Boolean);
+  for (const t of tokens) if (EXAM_DETECTORS[t]) return EXAM_DETECTORS[t];
+  return null;
+}
+
+const FORBIDDEN_INTERPRETATIONS: Record<string, string> = {
+  CAT: "cats / felines / animals",
+  JEE: "literal English words",
+  NEET: "literal English meanings of 'neet'",
+  GMAT: "the literal characters",
+  GRE: "the country Greece, the literal letters",
+  UPSC: "literal interpretations of the letters",
+  IELTS: "any non-exam interpretation",
+  TOEFL: "any non-exam interpretation",
+  CLAT: "the verb 'clat' (clatter)",
+  BITSAT: "literal 'bits' / 'sat'",
+  SAT: "the past tense of 'sit', a satellite, or any non-exam meaning",
+  GATE: "literal gates, doors, or barriers",
+  NDA: "non-disclosure agreements or any non-exam meaning",
+  CUET: "any non-exam interpretation",
+};
+
+function examStylePrompt(exam: ExamMeta, level: BloomLevel, n: number, numPct: number, seedBlock: string) {
+  const examKey = exam.name.split(/\s/)[0].toUpperCase();
+  const forbidden = FORBIDDEN_INTERPRETATIONS[examKey] || "any non-exam interpretation";
+  const exampleBlock = exam.sampleQuestions.length > 0
+    ? `
+
+EXAMPLES of REAL ${exam.name} questions (use these to anchor style and difficulty — DO NOT copy verbatim):
+${exam.sampleQuestions.map((q, i) => `Example ${i + 1}: ${q}`).join("\n")}`
+    : "";
+
+  return `You are writing multiple-choice questions for the ${exam.name} competitive exam paper.
+
+CRITICAL DISAMBIGUATION (read carefully): When this prompt mentions the exam name, it refers EXCLUSIVELY to ${exam.name} — ${exam.description}. The acronym is NOT ${forbidden}. Any question that interprets the acronym as ${forbidden} is WRONG and must NOT be generated. Every single question must be the kind of question that would appear in a real ${exam.name} examination paper for ${exam.name} aspirants.
+
+Typical paper sections of ${exam.name}: ${exam.sections.join("; ")}.${exampleBlock}
+
+Generate ${n} multiple-choice questions in the STYLE, DIFFICULTY, and SECTION COVERAGE of a real ${exam.name} examination paper, at the "${level}" level of Bloom's Taxonomy. These should be questions that could plausibly appear on the exam paper — NOT meta-questions about the exam itself (no "what is the exam about", "who conducts it", "eligibility", "history of the exam", etc.).
+
+Distribute the questions across the canonical sections where applicable: ${exam.sections.join(", ")}. Match the difficulty and tone of past ${exam.name} papers — NOT introductory school-level content unless the section explicitly covers it.
+
+Bloom Level: ${level} — ${BLOOM_META[level].description}
+Verb hint: ${BLOOM_META[level].verb}
+${numericalHint(numPct, n)}${seedBlock}
+
+${jsonShape()}`;
+}
+
 function topicOnlyPrompt(topic: string, level: BloomLevel, n: number, numPct: number, seedBlock: string) {
+  const exam = detectExamFromTopic(topic);
+  // eslint-disable-next-line no-console
+  console.log(`[quick-test] topicOnly path — topic="${topic}" — exam detected: ${exam ? exam.name : "NONE"}`);
+  if (exam) return examStylePrompt(exam, level, n, numPct, seedBlock);
   return `Topic: ${topic}
 Bloom Level: ${level} — ${BLOOM_META[level].description}
 Verb hint: ${BLOOM_META[level].verb}
@@ -156,6 +272,18 @@ export async function POST(req: Request) {
     const imageDataUrl: string = body.imageDataUrl || "";
     const examLabel: string = body.examLabel || "";
     const perLevel: number = Math.max(1, Math.min(10, Number(body.perLevel) || 2));
+    // Optional non-uniform per-level counts. When present (by_time mode in
+    // the UI), each Bloom level gets its own count instead of all sharing
+    // `perLevel`. Counts are clamped to 1..10 per level.
+    const perLevelCountsRaw = body.perLevelCounts && typeof body.perLevelCounts === "object"
+      ? body.perLevelCounts as Record<string, unknown>
+      : null;
+    function countForLevel(lvl: BloomLevel): number {
+      if (!perLevelCountsRaw) return perLevel;
+      const v = Number((perLevelCountsRaw as Record<string, unknown>)[lvl]);
+      if (!Number.isFinite(v) || v <= 0) return perLevel;
+      return Math.max(1, Math.min(10, Math.round(v)));
+    }
     const numericalPercent: number = Math.max(0, Math.min(100, Number(body.numericalPercent) || 0));
     const requested: string[] = Array.isArray(body.levels) ? body.levels : BLOOM_LEVELS;
     const levels: BloomLevel[] = requested.filter(isBloomLevel);
@@ -363,8 +491,9 @@ export async function POST(req: Request) {
     //    `quality` field — question_bank has no such column. We surface
     //    aggregate verification stats on the response only.
     const insertRows = allRows.map((r) => {
-      const { quality, ...rest } = r;
+      const { quality, section, ...rest } = r;
       void quality;
+      void section;
       return rest;
     });
     const { data: insertedQs, error: qErr } = await sb
@@ -453,12 +582,50 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: `Could not create quiz: ${quizErr?.message || "unknown"}` }, { status: 500 });
     }
 
-    // 3) Attach questions to the quiz, preserving Bloom level order then insertion order
-    const ordered = (insertedQs as { id: string; bloom_level: BloomLevel }[]).slice().sort((a, b) => {
-      const ai = BLOOM_LEVELS.indexOf(a.bloom_level);
-      const bi = BLOOM_LEVELS.indexOf(b.bloom_level);
-      return ai - bi;
-    });
+    // 3) Attach questions to the quiz. Order strategy:
+    //    - For competitive-exam topics (NEET, JEE, …) we group by the exam's
+    //      canonical section sequence (e.g. NEET: Physics → Chemistry →
+    //      Botany → Zoology). Within each section we preserve insertion
+    //      order, which means random-feeling order — same as a real paper.
+    //    - For regular topics we keep the existing behaviour: Bloom-level
+    //      order (Remember → Create), insertion order within a level.
+    const examForOrdering = detectExamFromTopic(topic);
+    type InsertedQ = { id: string; bloom_level: BloomLevel };
+    const insertedTyped = insertedQs as InsertedQ[];
+    // Map RETURNING ids back to per-row section using the index parallel.
+    const insertedWithSection = insertedTyped.map((q, i) => ({
+      ...q,
+      section: sectionByIndex[i],
+      origIndex: i,
+    }));
+
+    function sectionRank(section: string | null, sections: string[]): number {
+      if (!section) return sections.length; // unknown sections sort to end
+      const norm = section.toLowerCase().trim();
+      // First exact match, then substring/contains, then unknown.
+      const exact = sections.findIndex((s) => s.toLowerCase().trim() === norm);
+      if (exact >= 0) return exact;
+      const partial = sections.findIndex((s) => norm.includes(s.toLowerCase().trim()) || s.toLowerCase().trim().includes(norm));
+      if (partial >= 0) return partial;
+      return sections.length;
+    }
+
+    const ordered = examForOrdering
+      ? insertedWithSection.slice().sort((a, b) => {
+          const ar = sectionRank(a.section, examForOrdering.sections);
+          const br = sectionRank(b.section, examForOrdering.sections);
+          if (ar !== br) return ar - br;
+          // Stable within a section — preserve LLM's original order, which
+          // is effectively random across Bloom levels (matches a real
+          // exam paper, where questions within a section aren't easy-to-hard).
+          return a.origIndex - b.origIndex;
+        })
+      : insertedWithSection.slice().sort((a, b) => {
+          const ai = BLOOM_LEVELS.indexOf(a.bloom_level);
+          const bi = BLOOM_LEVELS.indexOf(b.bloom_level);
+          if (ai !== bi) return ai - bi;
+          return a.origIndex - b.origIndex;
+        });
     const linkRows = ordered.map((q, i) => ({
       quiz_id: quiz!.id,
       question_id: q.id,
@@ -487,6 +654,12 @@ export async function POST(req: Request) {
         verified: verifiedCount,
         disputed: disputedCount,
       },
+      // When the topic matches a known competitive exam, surface any
+      // Bloom levels we filtered out so the UI can explain to the user
+      // why the test isn't covering everything they ticked.
+      examFilter: examForFilter
+        ? { name: examForFilter.name, omitted: omittedLevels, supported: examForFilter.bloomLevels }
+        : null,
     });
   } catch (e) {
     // eslint-disable-next-line no-console

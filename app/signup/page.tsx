@@ -245,7 +245,14 @@ function SignupForm({ role }: { role: Role }) {
     //   2. Forces a clean role-tab + ToS acceptance flow on first login,
     //      which the dashboard auth gate expects.
     try { await sb.auth.signOut(); } catch { /* ignore */ }
-    router.push(`/login?signedup=1`);
+    // Route to the specialised login page that matches the role they
+    // signed up as, so they don't land on the generic picker and have to
+    // pick again. Teachers default to the Teacher tab on /login/school.
+    const loginUrl =
+      role === "teacher"
+        ? `/login/school?signedup=1&tab=teacher`
+        : `/login/student?signedup=1`;
+    router.push(loginUrl);
   }
 
   return (
@@ -362,10 +369,21 @@ function SignupForm({ role }: { role: Role }) {
 
           <button
             className="btn btn-primary w-full"
-            disabled={busy || !passwordOk || !acceptedTerms}
+            disabled={busy}
           >
             {busy && <span className="spinner" />} Create {tile.label.toLowerCase()} account
           </button>
+          {/* Subtle hint when the form would fail validation, so the user
+              knows what's still missing without having to click first. The
+              onSubmit handler still re-checks and shows the same message
+              prominently when they click. */}
+          {!busy && (!passwordOk || !acceptedTerms) && (
+            <p className="text-xs text-amber-700 text-center">
+              {!passwordOk
+                ? "Your password needs 8+ characters with a lowercase letter, an uppercase letter, and a number."
+                : "Tick the Terms & Privacy box above to enable Create account."}
+            </p>
+          )}
         </form>
       </div>
     </>

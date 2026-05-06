@@ -8,20 +8,9 @@ import type { Question } from "@/lib/types";
 import { generateQuizCode } from "@/lib/utils";
 import BloomBadge from "@/components/BloomBadge";
 import {
-  difficultyBadgeMeta, discriminationBadgeMeta,
-  relativeFromNow, MIN_CALIBRATION_ATTEMPTS,
-} from "@/lib/calibrationView";
-import {
   Search, Layers, Plus, Check, X, ChevronUp, ChevronDown,
-  Trash2, Sparkles, Clock, Activity, Wand2, Lightbulb,
+  Trash2, Sparkles, Clock, Wand2, Lightbulb, Users,
 } from "lucide-react";
-
-type Calibration = {
-  calibrated_difficulty: number | null;
-  calibrated_discrimination: number | null;
-  calibrated_attempts: number | null;
-  calibrated_at: string | null;
-};
 
 type VariantCandidate = {
   stem: string;
@@ -31,6 +20,26 @@ type VariantCandidate = {
   bloom_level: BloomLevel;
   topic: string | null;
   verified: boolean;
+};
+
+// --- Feature B (class-fit suggestion) types ---------------------------
+// We fetch the teacher's class list once on mount, then call /api/teacher/
+// class-fit any time the chosen class or selected question set changes.
+type ClassOption = {
+  id: string;
+  name: string;
+  grade?: string | null;
+  section?: string | null;
+  subject?: string | null;
+  myRole?: "primary" | "co" | "acting";
+  memberCount?: number;
+};
+
+type ClassFit = {
+  matched: number;
+  total: number;
+  attempts: number;
+  avg_score_pct: number | null;
 };
 
 const NO_TOPIC = "(no topic)";
@@ -56,10 +65,6 @@ function ComposerInner() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  const [calibration, setCalibration] = useState<Map<string, Calibration>>(new Map());
-  const [calibrating, setCalibrating] = useState(false);
-  const [calibStatus, setCalibStatus] = useState<string | null>(null);
-
   // Variants modal — null when closed.
   const [variantsFor, setVariantsFor] = useState<Question | null>(null);
   const [variantList, setVariantList] = useState<VariantCandidate[]>([]);
@@ -67,6 +72,17 @@ function ComposerInner() {
   const [variantSaving, setVariantSaving] = useState<Record<number, boolean>>({});
   const [variantSaved, setVariantSaved] = useState<Record<number, boolean>>({});
   const [variantErr, setVariantErr] = useState<string | null>(null);
+
+  // ---- Class-fit suggestion (Feature B) ---------------------------------
+  // The class list is for the dropdown; targetClassId is what the teacher
+  // picked (empty string = "no class selected, show nothing"); classFit
+  // holds the latest fit response for that class + the current selection.
+  // None of these affect the existing compose flow if the teacher ignores
+  // the dropdown.
+  const [classes, setClasses] = useState<ClassOption[]>([]);
+  const [targetClassId, setTargetClassId] = useState<string>("");
+  const [classFit, setClassFit] = useState<ClassFit | null>(null);
+  const [loadingFit, setLoadingFit] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -86,84 +102,8 @@ function ComposerInner() {
         setBank(j.items || []);
       }
       setLoadingBank(false);
-      const user = { id: session.user.id };
-
-      try {
-        const { data: calibRows, error: calibErr } = await sb
-          .from("question_bank")
-          .select("id, calibrated_difficulty, calibrated_discrimination, calibrated_attempts, calibrated_at")
-          .eq("owner_id", user.id);
-        if (!calibErr && calibRows) {
-          const m = new Map<string, Calibration>();
-          (calibRows as Array<{
-            id: string;
-            calibrated_difficulty: number | null;
-            calibrated_discrimination: number | null;
-            calibrated_attempts: number | null;
-            calibrated_at: string | null;
-          }>).forEach((r) => {
-            m.set(r.id, {
-              calibrated_difficulty: r.calibrated_difficulty,
-              calibrated_discrimination: r.calibrated_discrimination,
-              calibrated_attempts: r.calibrated_attempts,
-              calibrated_at: r.calibrated_at,
-            });
-          });
-          setCalibration(m);
-        }
-      } catch {
-        /* migration 18 not applied yet */
-      }
     })();
   }, []);
-
-  async function runCalibration() {
-    if (calibrating) return;
-    setCalibrating(true);
-    setCalibStatus("Calibrating your bank…");
-    try {
-      const sb = supabaseBrowser();
-      const { data: { session } } = await sb.auth.getSession();
-      if (!session) throw new Error("Not signed in");
-      const res = await fetch("/api/qbank/calibrate", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${session.access_token}` },
-      });
-      const json = (await res.json()) as { updated?: number; skipped?: number; error?: string };
-      if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
-      setCalibStatus(
-        `Calibrated ${json.updated ?? 0} question${json.updated === 1 ? "" : "s"}` +
-        (json.skipped ? `, ${json.skipped} need more attempts.` : ".")
-      );
-      router.refresh();
-      const { data: calibRows } = await sb
-        .from("question_bank")
-        .select("id, calibrated_difficulty, calibrated_discrimination, calibrated_attempts, calibrated_at")
-        .eq("owner_id", session.user.id);
-      if (calibRows) {
-        const m = new Map<string, Calibration>();
-        (calibRows as Array<{
-          id: string;
-          calibrated_difficulty: number | null;
-          calibrated_discrimination: number | null;
-          calibrated_attempts: number | null;
-          calibrated_at: string | null;
-        }>).forEach((r) => {
-          m.set(r.id, {
-            calibrated_difficulty: r.calibrated_difficulty,
-            calibrated_discrimination: r.calibrated_discrimination,
-            calibrated_attempts: r.calibrated_attempts,
-            calibrated_at: r.calibrated_at,
-          });
-        });
-        setCalibration(m);
-      }
-    } catch (e) {
-      setCalibStatus(e instanceof Error ? e.message : "Calibration failed.");
-    } finally {
-      setCalibrating(false);
-    }
-  }
 
   async function openVariants(q: Question) {
     setVariantsFor(q);
@@ -339,6 +279,7 @@ function ComposerInner() {
   }, [selectedQuestions]);
   const mixedTopics = selectedTopics.length > 1;
 
+
   const recommendedMinutes = useMemo(
     () => recommendedQuizMinutes(selectedQuestions.map((q) => ({ bloom_level: q.bloom_level }))),
     [selectedQuestions]
@@ -349,6 +290,73 @@ function ComposerInner() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [recommendedMinutes]);
+
+  // ---- Feature B: load the teacher's classes for the dropdown ---------
+  // Best-effort. If this fails (RLS, network, schema drift) the class-fit
+  // card silently hides and the existing compose flow is unaffected.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const sb = supabaseBrowser();
+        const { data: { session } } = await sb.auth.getSession();
+        if (!session) return;
+        const r = await fetch("/api/teacher/classes", {
+          headers: { Authorization: `Bearer ${session.access_token}` },
+          cache: "no-store",
+        });
+        if (!r.ok) return;
+        const j = await r.json() as { classes?: ClassOption[] };
+        if (!cancelled && Array.isArray(j.classes)) setClasses(j.classes);
+      } catch {
+        /* hide the card on failure */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // ---- Feature B: recompute class-fit when class or selection changes -
+  // Debounced so that rapidly toggling questions doesn't spam the API.
+  // No-ops to "no class selected" or "empty selection".
+  useEffect(() => {
+    if (!targetClassId || selectedIds.length === 0) {
+      setClassFit(null);
+      return;
+    }
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      setLoadingFit(true);
+      try {
+        const sb = supabaseBrowser();
+        const { data: { session } } = await sb.auth.getSession();
+        if (!session) return;
+        const params = new URLSearchParams({
+          class_id: targetClassId,
+          question_ids: selectedIds.join(","),
+        });
+        const r = await fetch(`/api/teacher/class-fit?${params.toString()}`, {
+          headers: { Authorization: `Bearer ${session.access_token}` },
+          cache: "no-store",
+        });
+        if (!r.ok) {
+          if (!cancelled) setClassFit(null);
+          return;
+        }
+        const j = await r.json() as ClassFit & { ok?: boolean };
+        if (!cancelled) setClassFit({
+          matched: j.matched ?? 0,
+          total: j.total ?? selectedIds.length,
+          attempts: j.attempts ?? 0,
+          avg_score_pct: j.avg_score_pct ?? null,
+        });
+      } catch {
+        if (!cancelled) setClassFit(null);
+      } finally {
+        if (!cancelled) setLoadingFit(false);
+      }
+    }, 400);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [targetClassId, selectedIds]);
 
   async function create() {
     setErr(null);
@@ -443,22 +451,8 @@ function ComposerInner() {
           <div className="text-sm muted">
             {bank.length} approved question{bank.length === 1 ? "" : "s"} in your library
           </div>
-          <button
-            type="button"
-            onClick={runCalibration}
-            disabled={calibrating || bank.length === 0}
-            className="btn btn-secondary"
-            title="Recompute empirical difficulty and discrimination for every question in your bank."
-          >
-            {calibrating ? <><span className="spinner" /> Calibrating…</> : <><Activity size={14} /> Calibrate now</>}
-          </button>
         </div>
       </div>
-      {calibStatus && (
-        <div className="mt-3 text-sm text-slate-700 bg-slate-50 border border-slate-200 px-3 py-2 rounded-lg">
-          {calibStatus}
-        </div>
-      )}
 
       <div className="grid lg:grid-cols-[minmax(0,1fr)_400px] gap-6 mt-6 items-start">
         <section className="space-y-3">
@@ -550,7 +544,6 @@ function ComposerInner() {
                         <div className="flex items-center gap-2 mb-1 flex-wrap">
                           <BloomBadge level={q.bloom_level} />
                           {q.topic && <span className="text-xs muted">{q.topic}</span>}
-                          <CalibrationBadges calib={calibration.get(q.id)} />
                         </div>
                         <div className="text-sm font-medium">{q.stem}</div>
                         <ul className="grid sm:grid-cols-2 gap-x-4 gap-y-1 mt-2 text-sm">
@@ -730,6 +723,18 @@ function ComposerInner() {
             )}
           </div>
 
+          {/* ---------- Feature B: Class-fit suggestion ---------- */}
+          {classes.length > 0 && (
+            <ClassFitCard
+              classes={classes}
+              targetClassId={targetClassId}
+              setTargetClassId={setTargetClassId}
+              fit={classFit}
+              loading={loadingFit}
+              hasSelection={selectedQuestions.length > 0}
+            />
+          )}
+
           {err && <div className="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{err}</div>}
 
           <button
@@ -886,47 +891,92 @@ function BloomMiniChart({ items }: { items: Question[] }) {
   );
 }
 
-function CalibrationBadges({ calib }: { calib: Calibration | undefined }) {
-  if (!calib) return null;
-  const attempts = calib.calibrated_attempts ?? 0;
-  if (attempts <= 0) return null;
-
-  if (attempts < MIN_CALIBRATION_ATTEMPTS) {
-    return (
-      <span
-        className="text-[11px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200"
-        title={`Need ${MIN_CALIBRATION_ATTEMPTS} attempts before we can compute difficulty + discrimination. ${attempts} so far.`}
-      >
-        Calibrating: {attempts} / {MIN_CALIBRATION_ATTEMPTS} attempts
-      </span>
-    );
-  }
-
-  const diff = difficultyBadgeMeta(calib.calibrated_difficulty);
-  const disc = discriminationBadgeMeta(calib.calibrated_discrimination);
-  const when = relativeFromNow(calib.calibrated_at);
-  const tooltip = `Based on ${attempts} attempts.${when ? ` Calibrated ${when}.` : ""}`;
+// ---------- Feature B: Class-fit suggestion card -----------------------
+// Optional. Hidden entirely when the teacher has no classes. Collapses
+// to a one-line dropdown when no class is selected, so it doesn't add
+// noise to the create flow.
+function ClassFitCard({
+  classes,
+  targetClassId,
+  setTargetClassId,
+  fit,
+  loading,
+  hasSelection,
+}: {
+  classes: ClassOption[];
+  targetClassId: string;
+  setTargetClassId: (v: string) => void;
+  fit: ClassFit | null;
+  loading: boolean;
+  hasSelection: boolean;
+}) {
+  const labelFor = (c: ClassOption) => {
+    const parts = [c.name];
+    if (c.section) parts.push(c.section);
+    if (c.grade) parts.push(`Grade ${c.grade}`);
+    return parts.filter(Boolean).join(" · ");
+  };
 
   return (
-    <>
-      {diff && (
-        <span
-          className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${diff.className}`}
-          title={tooltip}
-        >
-          {diff.label}
-        </span>
+    <div className="card">
+      <div className="flex items-center gap-2 mb-2">
+        <Users size={14} className="text-slate-400" />
+        <h3 className="font-semibold text-sm">Will this fit a class?</h3>
+        <span className="muted text-xs font-normal ml-auto">optional</span>
+      </div>
+
+      <select
+        className="select w-full text-sm"
+        value={targetClassId}
+        onChange={(e) => setTargetClassId(e.target.value)}
+      >
+        <option value="">Compare with a class…</option>
+        {classes.map((c) => (
+          <option key={c.id} value={c.id}>
+            {labelFor(c)}
+          </option>
+        ))}
+      </select>
+
+      {!targetClassId ? (
+        <div className="text-xs muted mt-2">
+          Pick a class to see how many of these questions they&apos;ve seen and how they did.
+        </div>
+      ) : !hasSelection ? (
+        <div className="text-xs muted mt-2">
+          Add at least one question to see fit.
+        </div>
+      ) : loading ? (
+        <div className="text-xs muted mt-2 flex items-center gap-1.5">
+          <span className="spinner" /> Checking…
+        </div>
+      ) : !fit ? (
+        <div className="text-xs muted mt-2">No fit data right now.</div>
+      ) : (
+        <div className="mt-2 text-xs text-slate-700 space-y-1">
+          {fit.matched === 0 ? (
+            <div>
+              This class hasn&apos;t seen any of the {fit.total} selected
+              question{fit.total === 1 ? "" : "s"} yet — fresh territory.
+            </div>
+          ) : (
+            <>
+              <div>
+                <strong className="text-slate-800">{fit.matched}</strong> of{" "}
+                <strong className="text-slate-800">{fit.total}</strong> selected
+                question{fit.total === 1 ? "" : "s"} have prior attempts in this class.
+              </div>
+              {fit.avg_score_pct !== null && (
+                <div className="muted">
+                  Average there: <strong className="text-slate-700">{fit.avg_score_pct}%</strong>{" "}
+                  across {fit.attempts} attempt{fit.attempts === 1 ? "" : "s"}.
+                </div>
+              )}
+            </>
+          )}
+        </div>
       )}
-      {disc && (
-        <span
-          className={`text-[11px] px-2 py-0.5 rounded-full font-medium inline-flex items-center gap-1 ${disc.className}`}
-          title={tooltip}
-        >
-          <span className="text-[9px] font-bold opacity-75">{disc.icon}</span>
-          {disc.label}
-        </span>
-      )}
-    </>
+    </div>
   );
 }
 
