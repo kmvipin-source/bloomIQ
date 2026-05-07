@@ -146,7 +146,219 @@ platform-admin invite flow at `/admin/onboard-school` instead.
 
 ---
 
-## 🆕 Latest session — 2026-05-06 (Compose-a-test: Class-fit suggestion + question-calibration UI removed)
+## 🆕 Latest session — 2026-05-07 (Big polish day: test composer & detail upgrades, learner profiles, assign UX overhaul, nav rename)
+
+A long session. The dominant themes: make the teacher's "compose → assign" loop
+feel obvious instead of hidden, introduce per-user learning context so corporate
+trainees stop seeing K-12 examples, and fix nav labels that read like jargon.
+
+### What shipped
+
+**1. Test detail page (`/teacher/quizzes/[id]`) — preview + top CTA + edit-questions**
+
+Previously the page loaded only a count of questions ("13 questions") and never
+the questions themselves — there was no way to inspect what you'd built before
+sending it out. Now:
+
+- A **Preview test** section between the metadata cards and the Assignments
+  list. Renders all questions in the order students will see them, with the
+  correct option highlighted, Bloom badge, topic, explanation. Toggle to hide
+  answers. Print button. Collapsible.
+- **Top-of-page "Assign to class"** primary CTA right next to the title — the
+  dominant action on this page. The existing button next to the Assignments
+  section header stays for the "I'm scrolling through" mental moment.
+- **Edit questions** link that opens `/teacher/quizzes/new?ids=...` with the
+  current selection pre-loaded so you can swap or reorder without starting over.
+
+**2. Tests list (`/teacher/quizzes`) — status pills + inline Assign + prominent CTA**
+
+- Each row now carries a status pill: amber **Unassigned** or emerald **Assigned · N**.
+  The teacher's eye lands on tests that still need to go out.
+- Inline **Assign** button per row, opens the shared `AssignTestModal` in
+  place — no need to drill into the detail page just to assign.
+- Title upgraded "Your tests" → "**Build & assign tests**" with a descriptive
+  subtitle. The "+ New test" link is now a prominent **Create new test** CTA
+  (text-base, px-5, shadow) so it doesn't blend into the header.
+- Top-of-page caption shows total + unassigned count ("12 tests so far · 3 unassigned").
+
+**3. Shared `<AssignTestModal>` component**
+
+The Assign-test modal lived inline on the detail page. Extracted to `components/AssignTestModal.tsx` and reused on both the detail page and the list-page inline button. Same behaviour (mandatory future due-date, whole-class vs. specific-students, duplicate-assignment confirm); single source of truth.
+
+**4. Generate page — outcome-chip intent picker (`/teacher/generate`)**
+
+Six outcome-shaped chips at the top, K-12 set:
+
+- Quick formative check (Remember + Understand)
+- Chapter-end test (Understand + Apply + Analyze)
+- Diagnostic (all six Bloom levels evenly)
+- Mock paper (Apply + Analyze + Evaluate; pairs with the existing exam-detector)
+- Homework set (Apply + Analyze)
+- Re-teach / remediation (Remember + Understand)
+
+Click a chip → form pre-fills (Bloom mode, picked levels, per-level count) →
+green "Why this setup:" caption explains the rationale → all dials still
+editable. Soft narrowing, not a hard gate.
+
+**5. Class scope on `/teacher/generate` (Q1 V1)**
+
+Optional **"Which class is this for?"** dropdown above the intent picker. Lists
+classes the teacher is assigned to (primary / co / acting). When picked, shows
+a green focus-reminder banner. Topic suggestions from class history + Generate-
+and-assign combo are V2 (deferred).
+
+**6. Learner profile system (Q2) — non-invasive corporate readiness**
+
+The most strategic change in the session. Adds a `learner_profile` field to
+`profiles` with three values (`k12` default, `competitive_exam`, `corporate`)
+that drives content suggestions WITHOUT changing any vocabulary. A corporate
+trainee is still called a "student" in the UI; they just see Java / AWS /
+mainframe examples instead of Photosynthesis.
+
+Components:
+
+- **Migration 52** — adds `learner_profile` text column with a check constraint
+  on the three enum values; default `'k12'` so every existing user is unaffected.
+- **`<LearnerProfilePrompt>`** — first-time inline card on the generate pages
+  asking *"Quick question — what are you here to learn?"*. After first interaction
+  it collapses to a **persistent compact chip row** at the top so users can
+  switch context any time without leaving the page. Selected chip rendered in
+  solid emerald-600 with white text + ring for unmistakable "this is on" feel.
+- **`lib/skillDetectors.ts`** — corporate skill detection table (Java, Python,
+  TypeScript, Go, COBOL, JCL, Mainframe, DB2, CICS, React, Spring, Django, Node,
+  AWS, GCP, Azure, Kubernetes, Docker, Terraform, SQL, Postgres, SAP, ServiceNow,
+  Salesforce — 24 entries). When a corporate user types one of these in the
+  topic field, a green "Detected: …" banner appears and the prompt switches to
+  skill-assessment style.
+- **Profile-aware intent chips** on `/teacher/generate`:
+  - Corporate: Onboarding skill check / Certification prep / Code review drill /
+    Architecture scenario / Hands-on debugging
+  - Competitive exam: Mock paper first, then Diagnostic / Formative / Re-teach
+  - K-12: existing six chips
+- **Profile-aware topic placeholders** on `/teacher/generate` AND `/student/generate` —
+  three helper functions per page swap example text:
+  - K-12 (default): *Photosynthesis / Newton's Laws of Motion / Mitochondria*
+  - Competitive exam: *CAT Quantitative Aptitude / JEE Mechanics / NEET Biology*
+  - Corporate: *Java Streams / Spring Boot security / Kubernetes pod scheduling*
+- **Editable from `/settings/profile`** — dropdown visible to all roles.
+- **`/api/auth/me`** extended to expose `learner_profile` so the profile page can hydrate it.
+- A comment in the student-side code explicitly notes that `is_school_student`
+  is **intentionally** not consulted — a corporate trainee enrolled by their
+  L&D logs in as a school student in our schema, but their `learner_profile`
+  is the source of truth for what they're studying.
+
+**7. Source-tab reorder on `/student/generate`**
+
+Past question paper demoted from position 1 to position 4. Most school students
+aren't doing exam prep day-one; the curriculum-driven path is the natural
+landing. New order: Topic+syllabus → Just a topic → From your notes → Past
+paper → From image. Past paper kept in the list (still useful for indie exam
+aspirants), just no longer the front-page lead.
+
+**8. Self-explanatory nav labels**
+
+Sidebar + MobileNav teacher entries renamed:
+
+- "Generate" → **"Generate Questions"**
+- "Review" → **"Review Pending"**
+- "Tests" → **"Build & Assign Tests"**
+
+The nav now reads as a workflow: *Generate Questions → Review Pending → Build &
+Assign Tests*. Page subtitles re-explain this pipeline so a new teacher
+understands what each destination does.
+
+**9. Login picker — single-line buttons**
+
+The cards on `/login` were wrapping their CTAs onto two lines on tablet
+viewports. Shortened labels (the card heading already contextualizes — no need
+to repeat "School" / "Student" in every button) and added `whitespace-nowrap`.
+Now: *Sign in* / *Create account* / *Talk to us* — all single-line at any
+viewport ≥ 320 px.
+
+**10. Auth-token guard (`purgeStaleAuthBlob` in `lib/supabase/client.ts`)**
+
+Layered defense in depth on top of the 05-06 interceptor. `supabaseBrowser()`
+now scrubs localStorage of definitely-dead session blobs (corrupted JSON,
+missing refresh token, access-token expired > 7 days ago) BEFORE supabase-js
+gets a chance to read them and emit the noisy `console.error("Invalid Refresh
+Token: Refresh Token Not Found")`. Also-ran `purgeStaleSession()` only kills
+pathological data; valid sessions stay intact.
+
+### Decisions made and explicitly NOT shipped
+
+- **Quick-assign sidebar entry + `/teacher/assign` page** — built and removed
+  in the same session. Redundant with the inline Assign button on the
+  list page. The directory now contains a redirect-only stub so stale bookmarks
+  don't 404.
+- **Question-calibration UI** — removed earlier (logged in 05-06). Underlying
+  `/api/qbank/calibrate` endpoint and DB columns left intact in case we revive.
+- **`org_type` column on schools** — discussed and **deferred**. Premature for
+  current scale (no corporate customers yet); user-level `learner_profile` covers
+  the realistic scenarios. Revisit after 3+ corporate customers signed.
+- **`is_school_student` gating of corporate option** — explicitly avoided. A
+  corporate L&D logs trainees in as school students in our schema; gating
+  would hide the right option for the right people.
+- **Live test stats card** — built earlier today, then removed when we
+  pulled out the question-calibration surface (it was calibration-driven and
+  became redundant once that data wasn't surfaced).
+
+### Hosting cost impact
+
+Negligible. New `/api/teacher/class-fit` endpoint is one Supabase call per
+class+selection change (debounced 400 ms). New profile fetch on generate-page
+mount adds one row read per session. Auth-guard runs entirely client-side, no
+server cost. The new migration adds one nullable text column with a check
+constraint — no row-level cost.
+
+### Files touched
+
+| File | Change |
+|---|---|
+| `supabase/migrations/52_profiles_learner_profile.sql` | NEW migration |
+| `components/AssignTestModal.tsx` | NEW shared modal |
+| `components/LearnerProfilePrompt.tsx` | NEW first-time + chip-row prompt |
+| `lib/skillDetectors.ts` | NEW skill-detector table |
+| `app/teacher/quizzes/[id]/page.tsx` | Preview, top CTA, edit link, shared modal |
+| `app/teacher/quizzes/page.tsx` | Status pills, inline Assign, prominent CTA, subtitle |
+| `app/teacher/generate/page.tsx` | Intent picker, class picker, profile-aware intents + placeholders, skill banner |
+| `app/student/generate/page.tsx` | Profile prompt, skill banner, profile-aware placeholders, tab reorder |
+| `app/settings/profile/page.tsx` | learner_profile dropdown |
+| `app/login/page.tsx` | Single-line buttons, shorter labels |
+| `components/Sidebar.tsx` | Self-explanatory teacher nav labels |
+| `components/MobileNav.tsx` | Self-explanatory teacher nav labels |
+| `lib/supabase/client.ts` | `purgeStaleAuthBlob` guard |
+| `app/api/auth/me/route.ts` | Expose `learner_profile` |
+| `app/teacher/assign/page.tsx` | NEW redirect-only stub (page was built then removed) |
+
+### Pre-deploy checklist
+
+Apply migration 52 in Supabase SQL editor BEFORE the new build goes live —
+otherwise the `learner_profile` column doesn't exist and the profile page
++ generate prompt will silently fail on writes:
+
+```sql
+-- Run the contents of supabase/migrations/52_profiles_learner_profile.sql
+notify pgrst, 'reload schema';
+```
+
+### Test plan (manual, next session)
+
+1. **Migration 52 applied** — `select learner_profile from profiles limit 1;` returns `'k12'` for everyone
+2. **First-time prompt** — fresh K-12 user lands on `/teacher/generate` and sees the rich card; pick "Professional / training"; reload page → compact chip row only, with "Professional" highlighted in solid emerald
+3. **Profile cascade** — switch to corporate; intent chips swap to Onboarding skill check / Cert prep / etc.; topic placeholders swap to "e.g. Java Streams"
+4. **Skill detection** — type "Java Streams" with corporate profile; green "Detected: Java" banner appears
+5. **Test detail preview** — open `/teacher/quizzes/[id]` for an existing test; see the new Preview section with all questions; toggle Show correct answers; click Print
+6. **Inline Assign** — on `/teacher/quizzes` list, an Unassigned row's button opens the shared modal; assign; row repaints with emerald "Assigned · 1"
+7. **Top-of-page Assign CTA** — on `/teacher/quizzes/[id]`, the "Assign to class" button next to the title opens the same modal
+8. **Edit questions** — on `/teacher/quizzes/[id]`, click "Edit questions"; lands on composer with ids pre-selected
+9. **Sidebar labels** — "Generate Questions / Review Pending / Build & Assign Tests" visible
+10. **Login picker** — `/login` cards show single-line "Sign in / Create account / Talk to us" at viewport widths 360 / 768 / 1280
+11. **Auth guard** — sign in, manually corrupt localStorage `sb-*-auth-token` value, refresh; no console error; page redirects to `/login`
+12. **Class picker** — on `/teacher/generate`, pick a class from the dropdown; green focus banner appears; refresh page; selection persists across that session
+
+---
+
+## 🆕 Earlier session — 2026-05-06 (Compose-a-test: Class-fit suggestion + question-calibration UI removed)
 
 The teacher Compose-a-test page (`/teacher/quizzes/new`) gained one new affordance and lost a complex one. Net effect: a simpler, more useful composer.
 
