@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { groqJSON } from "@/lib/groq";
 import { geminiJSON, geminiText, isGeminiConfigured } from "@/lib/gemini";
+import { fixFrameLayout, type LayoutElement } from "@/lib/visualizerLayout";
 import { getBearer, supabaseServer } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
@@ -97,7 +98,10 @@ Rules:
   - **MAIN SCENE:** y = 100..360, x = 80..720. The diagram lives here. Hero shapes (pulley wheel, atom, op-amp triangle, cell membrane, P-V plot, etc.) go inside this box. Scenes wider than 640 should breathe a little — leave 30..50 px of empty margin around the focal cluster.
   - **Side gutters:** x = 0..80 and x = 720..800. Use for axis labels (m/s, kPa), legends, vector key, secondary annotations. Do not put primary shapes here.
   - **Takeaway strip:** y = 400..470. The final-frame summary rect goes here (a wide rect spanning x = 60..740, height 50, with a centred text containing the canonical formula).
-- **NO OVERLAP RULE:** unless two shapes are physically connected (a tension arrow touching a mass, a label tied to its element with a 4 px gap), keep at least 24 px of empty space between non-text shapes. Text labels may sit just above/below/beside their target, but never on top of another shape.
+- **NO OVERLAP RULE:** unless two shapes are physically connected (a tension arrow touching a mass, a label tied to its element with a 4 px gap), keep at least 32 px of empty space between non-text shapes. Text labels may sit just above/below/beside their target, but never on top of another shape.
+- **GRID & ALIGNMENT — snap every coordinate to a 24 px grid (multiples of 24 for hero shape centres / rect origins; multiples of 8 for fine adjustments and text). Aligned coordinates read as "designed", drifty coordinates read as "AI-generated". Examples: cx=240 (good), cx=237 (bad). x=120 width=240 (good), x=117 width=243 (bad).** When two shapes are meant to be horizontally aligned, give them the SAME y. When stacked vertically, give them the SAME x. When in a row of 3+, evenly distribute: x = 100, 280, 460, 640.
+- **LABEL ANCHORING — every text label must point at one specific shape and live in a predictable spot relative to it (above by 18 px, right by 12 px, below by 22 px, etc). Pick ONE rule per label group and keep it consistent within the frame.** Never let a label sit on top of a shape it isn't part of, and never let two labels collide. If a long label can't fit beside its target without overlapping the next shape, shorten the label or split into two lines using two text elements.
+- **SAFE CANVAS INSET — keep all hero shapes inside x ∈ [60, 740] and y ∈ [60, 420]. The 40 px padding around the edges is for breathing room only — do NOT place shapes there. The takeaway-rect strip y=420..460 is the only allowed exception and must not be wider than x=80..720.**
 - **AXIS / FRAME PROPS** (always include when the topic has a measurable axis):
   - Mechanics: ground line at y=380 + x-axis gridlines + y-axis gridlines + axis arrows.
   - Thermodynamics / kinetics graphs: P–V axes anchored at (120,360) → (700,360) horizontal and (120,360) → (120,110) vertical, with arrowheads at the far ends and tick labels at quarters.
@@ -419,6 +423,15 @@ Stay under 350 words. No JSON. No backticks.`;
         { error: "We couldn't build a clean animation for that topic. Try rephrasing." },
         { status: 502 }
       );
+    }
+
+    // Deterministic layout pass — snap to 8 px grid, clamp into the safe
+    // canvas inset, push overlapping text labels away from nearby shapes.
+    // The model handles 80% of layout via the tightened prompt; this fixer
+    // catches the remaining drift / collisions so the output looks polished
+    // every time, not just on a good roll.
+    for (const f of frames) {
+      f.elements = fixFrameLayout(f.elements as unknown as LayoutElement[]) as typeof f.elements;
     }
 
     const title = String((raw as { title?: unknown }).title || topic).trim().slice(0, 120);
