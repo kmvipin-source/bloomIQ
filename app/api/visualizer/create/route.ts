@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { groqJSON } from "@/lib/groq";
+import { geminiJSON, isGeminiConfigured } from "@/lib/gemini";
 import { getBearer, supabaseServer } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
@@ -137,6 +138,7 @@ Rules:
 - **WHAT TWEEN BETWEEN FRAMES MEANS:** if the same physical entity exists in frame N and frame N+1, give it the SAME id and the renderer will smoothly interpolate its position/size/rotation. Use this to make motion read continuously: a piston compressing the gas → same "piston" id with different x; the ball flying through air → same "ball" id with different (cx, cy); the electron orbiting → same "electron" id with the orbit preset PLUS slightly different cx/cy keyframes per frame so the orbit precesses.
 - Palette: #10b981 (green), #f59e0b (amber), #ef4444 (red), #6366f1 (indigo), #ec4899 (pink), #06b6d4 (cyan), #8b5cf6 (purple), #0f172a (slate-900 for text). Mix at least 3 hues per frame.
 - For text, use Unicode glyphs freely: subscripts (v₀, t₁), superscripts (m²), symbols (θ, π, Δ, →, ↑, ↓), and inline equations ("F = ma", "v² = u² + 2as"). At least 3 text labels per frame, plus units where applicable ("m/s", "N", "kg").
+- **MATH TYPESETTING — when a text element is a real equation, ALSO emit a "latex" field on it.** The renderer substitutes KaTeX for that text element so the equation renders with proper math typography (fractions, integrals, vectors, matrices). Example: a text element with text "V_out = -(R_f/R_in) * V_in" can carry latex "V_{out} = -\\\\frac{R_f}{R_{in}} \\\\cdot V_{in}". Always set BOTH fields so the plain-text fallback exists if KaTeX is unavailable. Use latex for: fractions \\frac, integrals \\int, sums \\sum, vectors \\vec, derivatives \\frac{d}{dt}, matrices \\begin{pmatrix}…\\end{pmatrix}, Greek (\\theta, \\pi, \\alpha), and any equation with subscripts/superscripts that require visual structure. Skip latex for short labels like axis names or units.
 - duration_ms: 3500..6500. Big visual changes deserve more time.
 
 WORKED EXAMPLES — note the SEMANTIC ids and the domain-specific elements:
@@ -183,6 +185,9 @@ type Element = {
   x?: number; y?: number; width?: number; height?: number;
   x1?: number; y1?: number; x2?: number; y2?: number;
   d?: string; points?: string; text?: string;
+  // Optional KaTeX source — present on `text` elements that should render
+  // as proper math typography. The plain `text` field stays as a fallback.
+  latex?: string;
   // Common props
   fill?: string; stroke?: string; strokeWidth?: number; strokeDasharray?: string;
   opacity?: number; rotate?: number;
@@ -265,6 +270,11 @@ function cleanElement(raw: unknown, depth = 0): Element | null {
     if (num(o.fontSize) !== undefined) el.fontSize = num(o.fontSize);
     const fw = safeStr(o.fontWeight, 16);
     if (fw && /^[0-9a-z]+$/i.test(fw)) el.fontWeight = fw;
+    // Optional LaTeX source for math typesetting. KaTeX is rendered
+    // inside a <foreignObject> on the client; we strip anything that
+    // looks like an HTML / script injection vector here.
+    const lx = safeStr(o.latex, 400);
+    if (lx) el.latex = lx.replace(/[<>]/g, "");
   } else if (type === "group") {
     const kidsRaw = Array.isArray(o.children) ? (o.children as unknown[]) : [];
     el.children = kidsRaw
@@ -353,7 +363,24 @@ export async function POST(req: Request) {
     }
 
     const userPrompt = `Topic: ${topic}\n\nProduce the JSON now. 5 frames, typed elements, ids reused across frames for elements that should tween.`;
-    const raw = await groqJSON(SYSTEM, userPrompt);
+    // Prefer Gemini 2.0 Flash for the keyframe layout — its spatial
+    // reasoning is meaningfully tighter than Groq llama on this prompt.
+    // Fall back to Groq when GEMINI_API_KEY isn't configured (dev) or if
+    // the Gemini call errors out, so the feature still works.
+    let raw: Record<string, unknown>;
+    if (isGeminiConfigured()) {
+      try {
+        raw = await geminiJSON(SYSTEM, userPrompt);
+      } catch (geminiErr) {
+        if (process.env.NODE_ENV !== "production") {
+          // eslint-disable-next-line no-console
+          console.warn("[visualizer] Gemini failed, falling back to Groq:", geminiErr);
+        }
+        raw = await groqJSON(SYSTEM, userPrompt);
+      }
+    } else {
+      raw = await groqJSON(SYSTEM, userPrompt);
+    }
 
     const frames = cleanFrames((raw as { frames?: unknown }).frames);
     if (frames.length < 2) {

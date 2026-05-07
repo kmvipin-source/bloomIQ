@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { AnimatePresence, motion } from "motion/react";
 import { supabaseBrowser } from "@/lib/supabase/client";
+import katex from "katex";
+import "katex/dist/katex.min.css";
 import {
   Film, Sparkles, ArrowLeft, Loader2, Play, Pause,
   ChevronLeft, ChevronRight, History, RotateCcw,
@@ -28,6 +30,10 @@ type Element = {
   x?: number; y?: number; width?: number; height?: number;
   x1?: number; y1?: number; x2?: number; y2?: number;
   d?: string; points?: string; text?: string;
+  // Optional KaTeX source — when present on a `text` element the renderer
+  // typesets it as proper math (fractions, integrals, vectors) inside a
+  // <foreignObject>. Plain `text` is the fallback if KaTeX errors.
+  latex?: string;
   fill?: string; stroke?: string; strokeWidth?: number; strokeDasharray?: string;
   opacity?: number; rotate?: number;
   fontSize?: number; fontWeight?: string;
@@ -246,7 +252,58 @@ function ElementNode({
           {...common}
         />
       );
-    case "text":
+    case "text": {
+      // LaTeX path: render KaTeX HTML inside a <foreignObject>. We catch
+      // KaTeX parse errors so a malformed equation falls back to plain
+      // text rather than crashing the frame. Width/height of the foreign
+      // viewport is overlarge intentionally — KaTeX measures itself.
+      if (el.latex) {
+        let html = "";
+        try {
+          html = katex.renderToString(el.latex, {
+            displayMode: false,
+            throwOnError: false,
+            output: "html",
+          });
+        } catch {
+          html = "";
+        }
+        if (html) {
+          const fontSize = el.fontSize ?? 16;
+          // foreignObject anchors at top-left; shift so x,y reads as the
+          // baseline-ish anchor SVG <text> would have used.
+          const fox = (el.x ?? 0) - 4;
+          const foy = (el.y ?? 0) - fontSize - 4;
+          return (
+            <motion.foreignObject
+              layoutId={layoutKey}
+              key={frameKey + ":" + layoutKey}
+              x={fox}
+              y={foy}
+              width={400}
+              height={fontSize * 3}
+              opacity={el.opacity ?? 1}
+              filter={filterAttr}
+              style={{ transformOrigin: origin, transformBox: "fill-box" as const, overflow: "visible" }}
+              animate={el.emphasize ? PULSE_ANIMATE : undefined}
+              transition={el.emphasize ? PULSE_TRANSITION : SPRING}
+            >
+              <div
+                xmlns="http://www.w3.org/1999/xhtml"
+                style={{
+                  fontSize: `${fontSize}px`,
+                  fontWeight: el.fontWeight ?? "600",
+                  color: fillRef.paint ?? "#0f172a",
+                  display: "inline-block",
+                  whiteSpace: "nowrap",
+                  lineHeight: 1.1,
+                }}
+                dangerouslySetInnerHTML={{ __html: html }}
+              />
+            </motion.foreignObject>
+          );
+        }
+      }
       return (
         <motion.text
           layoutId={layoutKey}
@@ -267,6 +324,7 @@ function ElementNode({
           {el.text}
         </motion.text>
       );
+    }
     case "group":
       return (
         <motion.g
