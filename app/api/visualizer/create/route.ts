@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { groqJSON } from "@/lib/groq";
-import { geminiJSON, isGeminiConfigured } from "@/lib/gemini";
+import { geminiJSON, geminiText, isGeminiConfigured } from "@/lib/gemini";
 import { getBearer, supabaseServer } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
@@ -363,14 +363,45 @@ export async function POST(req: Request) {
     }
 
     const userPrompt = `Topic: ${topic}\n\nProduce the JSON now. 5 frames, typed elements, ids reused across frames for elements that should tween.`;
-    // Prefer Gemini 2.0 Flash for the keyframe layout — its spatial
-    // reasoning is meaningfully tighter than Groq llama on this prompt.
-    // Fall back to Groq when GEMINI_API_KEY isn't configured (dev) or if
-    // the Gemini call errors out, so the feature still works.
+    // Prefer Gemini 2.5 Flash for keyframe layout. When configured, do a
+    // two-pass pipeline:
+    //   Stage A — plan the diagram in plain text. The model has to commit
+    //             to phases, entities, ids, and the takeaway formula
+    //             without the cognitive load of also producing JSON.
+    //   Stage B — convert that plan to the typed-element JSON the
+    //             renderer expects, with the plan in scope as context.
+    // Plan-then-execute consistently outperforms one-shot JSON for spatial
+    // reasoning. If anything in the Gemini path errors we fall back to a
+    // single-pass Groq call so the feature still works.
     let raw: Record<string, unknown>;
     if (isGeminiConfigured()) {
       try {
-        raw = await geminiJSON(SYSTEM, userPrompt);
+        const planSystem = `You are a competitive-exam concept visualizer planning a 5-frame animation. Produce a CONCISE plan in plain text (no JSON). For the given topic, output:
+
+Domain: <mechanics | thermodynamics | electronics | optics | cell biology | organic chemistry | data structures | algebra | calculus | other>
+
+Key formula or rule: <the canonical equation/principle>
+
+Frames (5 total — name each phase with the real domain term, not generic 'intro/middle/end'):
+  Frame 1 [Phase name] — what's on screen, which entities (with semantic ids like piston, electron, succinate, op-amp_triangle), which element gets emphasised, which gets motion (spin/bob/drift/flash/wiggle/flow/orbit).
+  Frame 2 [Phase name] — same shape.
+  Frame 3 [Phase name] — same shape.
+  Frame 4 [Phase name] — same shape.
+  Frame 5 [Phase name] — must include a takeaway rect at y=420..460 carrying the formula.
+
+Persistent ids (entities that exist in multiple frames and tween): <list>.
+
+LaTeX equations: list each equation that should render with KaTeX, in raw LaTeX (e.g. V_{out} = -\\\\frac{R_f}{R_{in}} V_{in}).
+
+Domain-specific elements to include: <axes / circuit symbols / molecule structures / FBD vectors / etc., named explicitly>.
+
+Stay under 350 words. No JSON. No backticks.`;
+        const plan = await geminiText(planSystem, `Topic: ${topic}`);
+        const stage2User =
+          `Topic: ${topic}\n\n` +
+          `Diagram plan (use this as the spec — produce JSON that matches it):\n${plan}\n\n` +
+          `Produce the JSON now. 5 frames, typed elements, ids reused across frames for elements that should tween. Honour the plan's persistent ids and emit the LaTeX equations on text elements via the latex field.`;
+        raw = await geminiJSON(SYSTEM, stage2User);
       } catch (geminiErr) {
         if (process.env.NODE_ENV !== "production") {
           // eslint-disable-next-line no-console
