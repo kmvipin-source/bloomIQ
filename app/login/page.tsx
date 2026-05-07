@@ -56,18 +56,18 @@ export default function LoginFrontDoor() {
             </p>
             <Link
               href="/login/school"
-              className="btn btn-primary w-full inline-flex items-center justify-center gap-1 mt-2"
+              className="btn btn-primary w-full inline-flex items-center justify-center gap-1.5 mt-2 whitespace-nowrap"
             >
-              <LogIn size={14} /> School sign in
+              <LogIn size={14} /> Sign in
             </Link>
             {/* New school onboarding is invite-only, not self-serve. The
                 "sign up" slot on this card is therefore a mailto rather
                 than a /signup link. */}
             <a
               href="mailto:hello@bloomiq.app?subject=BloomIQ%20school%20onboarding"
-              className="btn btn-secondary w-full inline-flex items-center justify-center gap-1"
+              className="btn btn-secondary w-full inline-flex items-center justify-center gap-1.5 whitespace-nowrap"
             >
-              <Mail size={14} /> Talk to us about onboarding
+              <Mail size={14} /> Talk to us
             </a>
             <span className="text-xs text-slate-500 mt-1">
               Admin Head accounts are provisioned by BloomIQ — there is no
@@ -93,15 +93,15 @@ export default function LoginFrontDoor() {
             </p>
             <Link
               href="/login/student"
-              className="btn btn-primary w-full inline-flex items-center justify-center gap-1 mt-2"
+              className="btn btn-primary w-full inline-flex items-center justify-center gap-1.5 mt-2 whitespace-nowrap"
             >
-              <LogIn size={14} /> Student sign in
+              <LogIn size={14} /> Sign in
             </Link>
             <Link
               href="/signup?role=student"
-              className="btn btn-secondary w-full inline-flex items-center justify-center gap-1"
+              className="btn btn-secondary w-full inline-flex items-center justify-center gap-1.5 whitespace-nowrap"
             >
-              <UserPlus size={14} /> Create student account
+              <UserPlus size={14} /> Create account
             </Link>
             <span className="text-xs text-slate-500 mt-1">
               Free to start. Premium plans from ₹300 / year — see{" "}

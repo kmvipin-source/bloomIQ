@@ -20,8 +20,79 @@ function processLock<R>(_name: string, _acquireTimeout: number, fn: () => Promis
   return next;
 }
 
+// Proactively wipe definitely-dead session blobs from localStorage before
+// supabase-js gets a chance to load them and try to refresh.
+// -----------------------------------------------------------------------
+// supabase-js logs `console.error("Invalid Refresh Token: Refresh Token
+// Not Found")` from inside its own internals before our SIGNED_OUT
+// listener (above) gets to run, which scares everyone in the dev console
+// even though the user-facing UX is fine. We can't intercept that log,
+// but we CAN sometimes prevent it from happening by detecting an
+// obviously stale session blob and clearing it before createClient()
+// reads from storage.
+//
+// We're conservative — we only purge a session if it's pathologically
+// dead, never if it's just expired (the refresh flow is supposed to
+// handle that). Specifically:
+//
+//   1. Storage value is unparseable JSON → corruption, wipe.
+//   2. No `refresh_token` field at all → can't refresh, wipe.
+//   3. Access token expired more than 7 days ago → refresh tokens are
+//      rotated on every refresh, so one that hasn't been touched in a
+//      week is overwhelmingly likely to be dead server-side. Wipe.
+//
+// A user who's been actively signed in within the last week keeps
+// their session intact.
+function purgeStaleAuthBlob() {
+  if (typeof window === "undefined") return;
+  try {
+    const keys: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      // Supabase stores the auth session at key sb-<project-ref>-auth-token
+      if (k && /^sb-.+-auth-token$/.test(k)) keys.push(k);
+    }
+    for (const k of keys) {
+      const raw = localStorage.getItem(k);
+      if (!raw) continue;
+
+      let parsed: { refresh_token?: unknown; expires_at?: unknown } | null = null;
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        // Corrupted JSON. Cleanest fix is to remove and let the user re-auth.
+        localStorage.removeItem(k);
+        continue;
+      }
+
+      const refresh = parsed?.refresh_token;
+      if (!refresh || typeof refresh !== "string") {
+        // No refresh token = can't possibly refresh = blob is dead.
+        localStorage.removeItem(k);
+        continue;
+      }
+
+      const expiresAt = parsed?.expires_at;
+      if (typeof expiresAt === "number") {
+        const SEVEN_DAYS_SEC = 7 * 24 * 60 * 60;
+        const nowSec = Math.floor(Date.now() / 1000);
+        if (nowSec - expiresAt > SEVEN_DAYS_SEC) {
+          localStorage.removeItem(k);
+        }
+      }
+    }
+  } catch {
+    /* localStorage unavailable (private mode, quota exceeded, etc.) — best-effort */
+  }
+}
+
 export function supabaseBrowser(): SupabaseClient {
   if (_client) return _client;
+
+  // Pre-flight: clear localStorage entries that supabase-js would
+  // otherwise try to refresh and fail on. Runs once per page load
+  // (gated by the _client memo above).
+  purgeStaleAuthBlob();
 
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;

@@ -5,7 +5,9 @@ import { useEffect, useMemo, useState } from "react";
 import { supabaseBrowser } from "@/lib/supabase/client";
 import { toast } from "@/lib/toast";
 import { BLOOM_LEVELS, BLOOM_META, type BloomLevel } from "@/lib/bloom";
-import { Sparkles, FileText, Image as ImageIcon, GraduationCap, Tag } from "lucide-react";
+import { Sparkles, FileText, Image as ImageIcon, GraduationCap, Tag, Zap, BookOpenCheck, ScanSearch, Trophy, BookMarked, LifeBuoy, Wand2, Users, Briefcase, Cpu, Cloud, ServerCog } from "lucide-react";
+import LearnerProfilePrompt, { type LearnerProfile } from "@/components/LearnerProfilePrompt";
+import { detectSkillFromTopic } from "@/lib/skillDetectors";
 
 type Source = "notes" | "image" | "topic_syllabus" | "topic_only";
 
@@ -38,6 +40,83 @@ function detectExamDefault(topic: string): ExamDefault | null {
   const tokens = topic.toUpperCase().split(/[\s,;.\-/_()]+/).filter(Boolean);
   for (const t of tokens) if (EXAM_DEFAULTS[t]) return EXAM_DEFAULTS[t];
   return null;
+}
+
+// -------------------------------------------------------------------------
+// INTENT PRESETS — narrow the teacher's focus on landing.
+// -------------------------------------------------------------------------
+// The teacher analog of the student's "What are you preparing for?" picker.
+// Modern AI tools (Notion, Linear, Loom) all do this — six outcome-shaped
+// chips at the top, each pre-fills Bloom mix + per-level count + a
+// rationale caption so the teacher can see what the chip "thought" and
+// override fearlessly. Source (notes / image / topic) stays orthogonal —
+// the teacher picks that separately.
+//
+// Defaults were chosen empirically from common K-12 + competitive-exam
+// scenarios. Each chip is a soft narrowing, not a hard gate; once
+// applied, every dial is still editable.
+type Intent = {
+  id: string;
+  label: string;
+  description: string;
+  icon: React.ReactNode;
+  blueprint: {
+    mode: "all" | "custom";
+    pickedLevels: BloomLevel[];
+    perLevel: number;
+    rationale: string;
+  };
+};
+const INTENTS_K12: Intent[] = [
+  { id: "formative", label: "Quick formative check", description: "5-min post-class pulse", icon: <Zap size={16} />,
+    blueprint: { mode: "custom", pickedLevels: ["remember", "understand"], perLevel: 3,
+      rationale: "Short, recall-and-comprehension only — ideal for a 5-minute end-of-class temperature check." } },
+  { id: "chapter_end", label: "Chapter-end test", description: "Balanced 12-question summary", icon: <BookOpenCheck size={16} />,
+    blueprint: { mode: "custom", pickedLevels: ["understand", "apply", "analyze"], perLevel: 4,
+      rationale: "Mid-Bloom mix: confirms students can both grasp and apply the chapter's ideas, not just recall them." } },
+  { id: "diagnostic", label: "Diagnostic — find weak spots", description: "All Bloom levels, evenly", icon: <ScanSearch size={16} />,
+    blueprint: { mode: "all", pickedLevels: [], perLevel: 2,
+      rationale: "Even spread across all six Bloom levels — surfaces exactly which kinds of thinking the class struggles with." } },
+  { id: "mock_paper", label: "Mock paper (competitive exam)", description: "Detects CAT/JEE/NEET/etc. from topic", icon: <Trophy size={16} />,
+    blueprint: { mode: "custom", pickedLevels: ["apply", "analyze", "evaluate"], perLevel: 5,
+      rationale: "Exam-style depth: Apply / Analyze / Evaluate. Type the exam name (CAT, JEE, NEET) in Topic and the form auto-tunes." } },
+  { id: "homework", label: "Homework set", description: "Take-home practice, deeper", icon: <BookMarked size={16} />,
+    blueprint: { mode: "custom", pickedLevels: ["apply", "analyze"], perLevel: 4,
+      rationale: "Apply / Analyze focus — students have time at home for the kind of thinking that doesn't fit a 5-minute window." } },
+  { id: "reteach", label: "Re-teach / remediation", description: "Foundations for struggling students", icon: <LifeBuoy size={16} />,
+    blueprint: { mode: "custom", pickedLevels: ["remember", "understand"], perLevel: 4,
+      rationale: "Foundations only — Remember / Understand levels rebuild basics for students who need a second pass." } },
+];
+
+const INTENTS_CORPORATE: Intent[] = [
+  { id: "onboarding_check", label: "Onboarding skill check", description: "Day-1 baseline for new joiners", icon: <Briefcase size={16} />,
+    blueprint: { mode: "custom", pickedLevels: ["remember", "understand", "apply"], perLevel: 3,
+      rationale: "Light end-to-end coverage of basics — calibrates where to start training new joiners." } },
+  { id: "cert_prep", label: "Certification prep", description: "AWS/Azure/GCP/SAP-style mock", icon: <Trophy size={16} />,
+    blueprint: { mode: "custom", pickedLevels: ["apply", "analyze", "evaluate"], perLevel: 5,
+      rationale: "Cert-style depth: scenario-driven Apply / Analyze. Type the cert name (AWS, GCP, SAP, ServiceNow) in Topic." } },
+  { id: "code_review", label: "Code review drill", description: "Read, find the bug, fix it", icon: <Cpu size={16} />,
+    blueprint: { mode: "custom", pickedLevels: ["analyze", "evaluate"], perLevel: 4,
+      rationale: "Analyze / Evaluate: high-friction code-reading questions. Strong signal for senior-level competence." } },
+  { id: "architecture", label: "Architecture / design scenario", description: "Pick the right approach", icon: <Cloud size={16} />,
+    blueprint: { mode: "custom", pickedLevels: ["analyze", "evaluate", "create"], perLevel: 3,
+      rationale: "Evaluate / Create: real-world scenarios with multiple defensible answers. Tests judgement, not memory." } },
+  { id: "debug_practice", label: "Hands-on debugging", description: "Stack trace → root cause", icon: <ServerCog size={16} />,
+    blueprint: { mode: "custom", pickedLevels: ["apply", "analyze"], perLevel: 4,
+      rationale: "Apply / Analyze: stack traces, error messages, log snippets — diagnose the failure mode." } },
+];
+
+const INTENTS_EXAM: Intent[] = [
+  INTENTS_K12.find((i) => i.id === "mock_paper")!,
+  INTENTS_K12.find((i) => i.id === "diagnostic")!,
+  INTENTS_K12.find((i) => i.id === "formative")!,
+  INTENTS_K12.find((i) => i.id === "reteach")!,
+];
+
+function intentsForProfile(p: LearnerProfile | null): Intent[] {
+  if (p === "corporate") return INTENTS_CORPORATE;
+  if (p === "competitive_exam") return INTENTS_EXAM;
+  return INTENTS_K12;
 }
 
 const MAX_IMAGE_BYTES = 6 * 1024 * 1024; // 6 MB raw upload cap
@@ -114,6 +193,85 @@ export default function GeneratePage() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [summary, setSummary] = useState<Record<BloomLevel, number> | null>(null);
+
+  // Active intent ID (null = no intent picked = current default behavior).
+  // Clicking a chip applies its blueprint; teacher can still tweak
+  // anything after, and the active highlight stays so they can see what
+  // they started from.
+  // ---- Q2: Learner profile (drives intent set + skill detector) --
+  // Declared BEFORE activeIntent useMemo because that useMemo reads
+  // `intents` — TDZ would fire if this came later.
+  const [learnerProfile, setLearnerProfile] = useState<LearnerProfile | null>(null);
+  const intents = useMemo(() => intentsForProfile(learnerProfile), [learnerProfile]);
+  const skillDefault = useMemo(
+    () => (learnerProfile === "corporate" ? detectSkillFromTopic(topic) : null),
+    [topic, learnerProfile],
+  );
+
+  const [activeIntentId, setActiveIntentId] = useState<string | null>(null);
+  const activeIntent = useMemo(
+    () => intents.find((i) => i.id === activeIntentId) || null,
+    [activeIntentId, intents],
+  );
+
+  // ---- Profile-aware topic placeholders -------------------------
+  // Corporate users see "Java Streams" / "AWS Lambda"; competitive-
+  // exam users see "CAT Quant" / "JEE Mechanics"; everyone else
+  // sees the existing K-12 examples.
+  function topicPlaceholder(): string {
+    if (learnerProfile === "corporate") return "e.g. Java Streams";
+    if (learnerProfile === "competitive_exam") return "e.g. CAT Quantitative Aptitude";
+    return "e.g. Photosynthesis";
+  }
+  function syllabusTopicPlaceholder(): string {
+    if (learnerProfile === "corporate") return "e.g. Spring Boot security";
+    if (learnerProfile === "competitive_exam") return "e.g. JEE Mechanics";
+    return "e.g. Newton's Laws of Motion";
+  }
+  function topicOnlyPlaceholder(): string {
+    if (learnerProfile === "corporate") return "e.g. Kubernetes pod scheduling";
+    if (learnerProfile === "competitive_exam") return "e.g. NEET Biology";
+    return "e.g. Mitochondria";
+  }
+
+  function applyIntent(intent: Intent) {
+    setActiveIntentId(intent.id);
+    setMode(intent.blueprint.mode);
+    setPickedLevels(intent.blueprint.pickedLevels);
+    setPerLevel(intent.blueprint.perLevel);
+    setErr(null);
+    setSummary(null);
+  }
+
+  // ---- Q1 V1: Class scope (optional teacher narrowing) -----------
+  type ClassOption = { id: string; name: string; grade?: string | null;
+    section?: string | null; subject?: string | null; myRole?: "primary" | "co" | "acting" };
+  const [teacherClasses, setTeacherClasses] = useState<ClassOption[]>([]);
+  const [targetClassId, setTargetClassId] = useState<string>("");
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const sb = supabaseBrowser();
+        const { data: { session } } = await sb.auth.getSession();
+        if (!session) return;
+        const r = await fetch("/api/teacher/classes", {
+          headers: { Authorization: `Bearer ${session.access_token}` },
+          cache: "no-store",
+        });
+        if (!r.ok) return;
+        const j = await r.json() as { classes?: ClassOption[] };
+        if (!cancelled && Array.isArray(j.classes)) setTeacherClasses(j.classes);
+      } catch { /* silent */ }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+  const targetClass = useMemo(
+    () => teacherClasses.find((c) => c.id === targetClassId) || null,
+    [teacherClasses, targetClassId],
+  );
+
+
 
   function onPickImage(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0] || null;
@@ -203,18 +361,109 @@ export default function GeneratePage() {
   }
 
   const tabs: Array<{ id: Source; icon: React.ReactNode; label: string; desc: string }> = [
-    { id: "notes",           icon: <FileText size={18} />,        label: "From notes",                desc: "Paste a chapter or lesson plan" },
-    { id: "image",           icon: <ImageIcon size={18} />,       label: "From an image",             desc: "Photo of a page or diagram" },
+    // Order matters: teachers reach for "Topic + syllabus" most often
+    // (curriculum-driven), then "Just a topic" (quick), then notes/image
+    // (more advanced source flows). Keep this order in sync with the
+    // student generate page below.
     { id: "topic_syllabus",  icon: <GraduationCap size={18} />,   label: "Topic + class + syllabus",  desc: "Aligned to a board / curriculum" },
     { id: "topic_only",      icon: <Tag size={18} />,             label: "Just a topic",              desc: "Quick generation by subject" },
+    { id: "notes",           icon: <FileText size={18} />,        label: "From notes",                desc: "Paste a chapter or lesson plan" },
+    { id: "image",           icon: <ImageIcon size={18} />,       label: "From an image",             desc: "Photo of a page or diagram" },
   ];
 
   return (
     <div className="max-w-4xl mx-auto fade-in">
       <h1 className="h1">Generate questions</h1>
-      <p className="muted mt-1">
-        Choose a source. AI writes multiple-choice questions tagged by Bloom level — you&apos;ll review them next.
+      <p className="muted mt-1 text-sm">
+        AI writes new multiple-choice questions for you. They land in <strong>Review Pending</strong> first; once you approve them they&apos;re available to <strong>Build &amp; Assign Tests</strong>.
       </p>
+
+      {/* ---------- Q2: First-time learner-profile prompt ---------- */}
+      <LearnerProfilePrompt onChange={(p) => setLearnerProfile(p)} />
+
+      {/* ---------- Q1 V1: Class scope (optional) ---------- */}
+      {teacherClasses.length > 0 && (
+        <div className="card mt-5">
+          <div className="flex items-center gap-2 mb-2">
+            <Users size={16} className="text-emerald-600" />
+            <h2 className="font-semibold text-sm">Which class is this for?</h2>
+            <span className="text-xs muted ml-auto">Optional — focuses what we generate</span>
+          </div>
+          <select
+            className="select w-full text-sm"
+            value={targetClassId}
+            onChange={(e) => setTargetClassId(e.target.value)}
+          >
+            <option value="">All classes (general library)</option>
+            {teacherClasses.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}{c.section ? ` · ${c.section}` : ""}{c.grade ? ` · Grade ${c.grade}` : ""}
+                {c.myRole && c.myRole !== "primary" ? ` (${c.myRole})` : ""}
+              </option>
+            ))}
+          </select>
+          {targetClass && (
+            <div className="mt-2 text-xs text-emerald-800 bg-emerald-50/60 border border-emerald-200 rounded-lg px-3 py-2">
+              <strong>Generating for {targetClass.name}{targetClass.section ? " · " + targetClass.section : ""}.</strong>{" "}
+              Future versions will surface topic suggestions from this class's recent tests; for now this is just a focus reminder.
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ---------- INTENT PICKER (Q1) ----------
+          Outcome-shaped chips that pre-fill Bloom mode + level mix +
+          per-level count. Soft narrowing — the teacher can still edit
+          anything below. Hidden in the most subtle way: collapsed to a
+          one-line "Skip — set everything yourself" link if they don't
+          want guidance. Default is to show. */}
+      <div className="card mt-5">
+        <div className="flex items-center gap-2 mb-3">
+          <Wand2 size={16} className="text-emerald-600" />
+          <h2 className="font-semibold text-sm">What kind of test are you making?</h2>
+          <span className="text-xs muted ml-auto">Optional — pre-fills the form below</span>
+        </div>
+
+        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
+          {intents.map((intent) => {
+            const on = activeIntentId === intent.id;
+            return (
+              <button
+                key={intent.id}
+                type="button"
+                onClick={() => applyIntent(intent)}
+                className={`text-left p-3 rounded-lg border transition ${
+                  on
+                    ? "border-emerald-500 bg-emerald-50 ring-2 ring-emerald-200"
+                    : "border-slate-200 hover:bg-slate-50"
+                }`}
+                aria-pressed={on}
+              >
+                <div className="flex items-center gap-1.5 font-semibold text-sm mb-0.5">
+                  <span className={on ? "text-emerald-700" : "text-slate-500"}>{intent.icon}</span>
+                  {intent.label}
+                </div>
+                <div className="text-xs muted">{intent.description}</div>
+              </button>
+            );
+          })}
+        </div>
+
+        {activeIntent && (
+          <div className="mt-3 text-xs text-slate-700 bg-emerald-50/60 border border-emerald-200 rounded-lg px-3 py-2">
+            <strong className="text-emerald-800">Why this setup:</strong>{" "}
+            {activeIntent.blueprint.rationale}{" "}
+            <button
+              type="button"
+              className="text-emerald-700 font-semibold hover:underline ml-1"
+              onClick={() => setActiveIntentId(null)}
+              title="Drop the preset and start from scratch"
+            >
+              Clear
+            </button>
+          </div>
+        )}
+      </div>
 
       {/* Source picker */}
       <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 mt-6">
@@ -244,7 +493,7 @@ export default function GeneratePage() {
           <>
             <div>
               <label className="label">Topic (optional)</label>
-              <input className="input" placeholder="e.g. Photosynthesis"
+              <input className="input" placeholder={topicPlaceholder()}
                      value={topic} onChange={(e) => setTopic(e.target.value)} />
             </div>
             <div>
@@ -261,7 +510,7 @@ export default function GeneratePage() {
           <>
             <div>
               <label className="label">Topic (optional)</label>
-              <input className="input" placeholder="Helps anchor the questions"
+              <input className="input" placeholder={`Topic — ${topicPlaceholder().replace(/^e\.g\. /, "")}`}
                      value={topic} onChange={(e) => setTopic(e.target.value)} />
             </div>
             <div>
@@ -290,7 +539,7 @@ export default function GeneratePage() {
             <div className="grid sm:grid-cols-2 gap-3">
               <div>
                 <label className="label">Topic</label>
-                <input className="input" placeholder="e.g. Newton's Laws of Motion"
+                <input className="input" placeholder={syllabusTopicPlaceholder()}
                        value={topic} onChange={(e) => setTopic(e.target.value)} />
               </div>
               <div>
@@ -311,7 +560,7 @@ export default function GeneratePage() {
         {source === "topic_only" && (
           <div>
             <label className="label">Topic</label>
-            <input className="input" placeholder="e.g. Mitochondria"
+            <input className="input" placeholder={topicOnlyPlaceholder()}
                    value={topic} onChange={(e) => setTopic(e.target.value)} />
             <p className="text-xs muted mt-1">No notes or syllabus — questions are written from general knowledge of the topic.</p>
           </div>
@@ -376,6 +625,11 @@ export default function GeneratePage() {
               </p>
             );
           })()}
+          {skillDefault && (
+            <p className="text-xs mt-2" style={{ color: "var(--brand-700, #047857)" }}>
+              <strong>Detected:</strong> {skillDefault.displayName} — {skillDefault.rationale}
+            </p>
+          )}
         </div>
 
         <div>

@@ -6,6 +6,8 @@ import { supabaseBrowser } from "@/lib/supabase/client";
 import { toast } from "@/lib/toast";
 import { BLOOM_LEVELS, BLOOM_META, recommendedQuizMinutes, type BloomLevel } from "@/lib/bloom";
 import { Sparkles, FileText, Image as ImageIcon, GraduationCap, Tag, Play, ScrollText } from "lucide-react";
+import LearnerProfilePrompt, { type LearnerProfile } from "@/components/LearnerProfilePrompt";
+import { detectSkillFromTopic } from "@/lib/skillDetectors";
 
 type Source = "topic_only" | "topic_syllabus" | "notes" | "image" | "past_paper";
 
@@ -148,6 +150,41 @@ export default function StudentGeneratePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [examDefault]);
 
+  // ---- Q2: Learner profile drives skill detection (corporate only) -
+  // K-12 / competitive_exam students see the existing flow unchanged.
+  // Corporate students additionally get tech-skill detection for
+  // topics like "Java", "AWS", "JCL", "Kubernetes" etc.
+  const [learnerProfile, setLearnerProfile] = useState<LearnerProfile | null>(null);
+  const skillDefault = useMemo(
+    () => (learnerProfile === "corporate" ? detectSkillFromTopic(topic) : null),
+    [topic, learnerProfile],
+  );
+  // ---- Profile-aware topic placeholders -------------------------
+  // Same pattern as /teacher/generate. Adapts the example text the
+  // student sees in topic fields based on their learner_profile.
+  // is_school_student is INTENTIONALLY not consulted here — a
+  // corporate trainee enrolled by their L&D logs in as a school
+  // student in our schema, but their learner_profile is "corporate".
+  function topicPlaceholder(): string {
+    if (learnerProfile === "corporate") return "e.g. Java Streams";
+    if (learnerProfile === "competitive_exam") return "e.g. CAT Quantitative Aptitude";
+    return "e.g. Photosynthesis";
+  }
+  function syllabusTopicPlaceholder(): string {
+    if (learnerProfile === "corporate") return "e.g. Spring Boot security";
+    if (learnerProfile === "competitive_exam") return "e.g. JEE Mechanics";
+    return "e.g. Newton's Laws of Motion";
+  }
+  function topicOnlyPlaceholder(): string {
+    if (learnerProfile === "corporate") return "e.g. Kubernetes pod scheduling";
+    if (learnerProfile === "competitive_exam") return "e.g. NEET Biology";
+    return "e.g. Mitochondria";
+  }
+  function subjectPlaceholder(): string {
+    if (learnerProfile === "corporate") return "e.g. AWS, Java, Mainframe";
+    return "e.g. Algebra, World History";
+  }
+
   // "Pick how long" mode — derive a NON-UNIFORM per-level question count
   // from the student's target time. Each Bloom level takes a different
   // amount of time per question (Remember = 30s, Create = 180s), so a
@@ -278,10 +315,18 @@ export default function StudentGeneratePage() {
   }
 
   const tabs: Array<{ id: Source; icon: React.ReactNode; label: string; desc: string; badge?: string }> = [
-    { id: "past_paper",     icon: <ScrollText size={18} />,      label: "Past question paper",     desc: "Upload last year’s exam — get questions in the same style", badge: "🎯 Exam prep" },
-    { id: "topic_only",     icon: <Tag size={18} />,             label: "Just a topic",            desc: "Quick practice on any subject" },
+    // Past paper stays first (flagship exam-prep affordance for indie
+    // students). Remaining four match the order on /teacher/generate:
+    // syllabus → just-a-topic → notes → image.
+    // Order picked deliberately for school students:
+    //   curriculum-driven first, then quick topic, then notes — these are
+    //   the dominant K-12 study patterns. Past paper sits 4th because
+    //   most school students aren't doing exam prep on day one (the
+    //   ones who ARE will recognize it instantly anyway). Image last.
     { id: "topic_syllabus", icon: <GraduationCap size={18} />,   label: "Topic + class + syllabus",desc: "Aligned to your curriculum" },
+    { id: "topic_only",     icon: <Tag size={18} />,             label: "Just a topic",            desc: "Quick practice on any subject" },
     { id: "notes",          icon: <FileText size={18} />,        label: "From your notes",         desc: "Paste class notes or a chapter" },
+    { id: "past_paper",     icon: <ScrollText size={18} />,      label: "Past question paper",     desc: "Upload last year’s exam — get questions in the same style", badge: "🎯 Exam prep" },
     { id: "image",          icon: <ImageIcon size={18} />,       label: "From an image",           desc: "Photo of a textbook page, diagram, or notes" },
   ];
 
@@ -290,6 +335,10 @@ export default function StudentGeneratePage() {
   return (
     <div className="max-w-4xl mx-auto fade-in">
       <h1 className="h1">New practice test</h1>
+
+      {/* ---------- Q2: First-time learner-profile prompt ---------- */}
+      <LearnerProfilePrompt onChange={(p) => setLearnerProfile(p)} />
+
       <p className="muted mt-1">
         Pick a source, choose Bloom levels, generate. You&apos;ll start the test immediately after.
       </p>
@@ -332,7 +381,7 @@ export default function StudentGeneratePage() {
         {source === "topic_only" && (
           <div>
             <label className="label">Topic</label>
-            <input className="input" placeholder="e.g. Mitochondria"
+            <input className="input" placeholder={topicOnlyPlaceholder()}
                    value={topic} onChange={(e) => setTopic(e.target.value)} />
             <p className="text-xs muted mt-1">Questions are written from general knowledge of the topic.</p>
           </div>
@@ -343,7 +392,7 @@ export default function StudentGeneratePage() {
             <div className="grid sm:grid-cols-2 gap-3">
               <div>
                 <label className="label">Topic</label>
-                <input className="input" placeholder="e.g. Newton's Laws of Motion"
+                <input className="input" placeholder={syllabusTopicPlaceholder()}
                        value={topic} onChange={(e) => setTopic(e.target.value)} />
               </div>
               <div>
@@ -364,7 +413,7 @@ export default function StudentGeneratePage() {
           <>
             <div>
               <label className="label">Topic <span className="muted text-xs">(optional)</span></label>
-              <input className="input" placeholder="e.g. Photosynthesis"
+              <input className="input" placeholder={topicPlaceholder()}
                      value={topic} onChange={(e) => setTopic(e.target.value)} />
             </div>
             <div>
@@ -381,7 +430,7 @@ export default function StudentGeneratePage() {
           <>
             <div>
               <label className="label">Topic <span className="muted text-xs">(optional)</span></label>
-              <input className="input" placeholder="Helps anchor the questions"
+              <input className="input" placeholder={`Topic — ${topicPlaceholder().replace(/^e\.g\. /, "")}`}
                      value={topic} onChange={(e) => setTopic(e.target.value)} />
             </div>
             <div>
@@ -415,7 +464,7 @@ export default function StudentGeneratePage() {
             </div>
             <div>
               <label className="label">Topic <span className="muted text-xs">(optional)</span></label>
-              <input className="input" placeholder="e.g. Algebra, World History"
+              <input className="input" placeholder={subjectPlaceholder()}
                      value={topic} onChange={(e) => setTopic(e.target.value)} />
             </div>
             <div>
@@ -516,6 +565,11 @@ export default function StudentGeneratePage() {
               </p>
             );
           })()}
+          {skillDefault && (
+            <p className="text-xs mt-2" style={{ color: "var(--brand-700, #047857)" }}>
+              <strong>Detected:</strong> {skillDefault.displayName} — {skillDefault.rationale}
+            </p>
+          )}
         </div>
 
         {/* Mode toggle — students/teachers pick whichever framing matches
@@ -663,6 +717,7 @@ export default function StudentGeneratePage() {
           </button>
         </div>
       </div>
+
 
       <p className="muted text-xs mt-4 text-center flex items-center justify-center gap-1">
         <Sparkles size={12} /> Tests are saved to your library — find them again under <strong className="text-slate-600">My Tests</strong>.

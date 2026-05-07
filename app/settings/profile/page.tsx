@@ -8,6 +8,7 @@ import {
   User as UserIcon, Mail, Building2, GraduationCap, Users,
   ShieldCheck, KeyRound, Palette, Copy, Check, Save, ArrowRight, ArrowLeft, Image as ImageIcon, Trash2,
 } from "lucide-react";
+import type { LearnerProfile } from "@/components/LearnerProfilePrompt";
 import CurrentPlanBadge from "@/components/CurrentPlanBadge";
 import { STUDENT_GOALS } from "@/components/StudentGoalPicker";
 
@@ -37,6 +38,7 @@ type Profile = {
   full_name: string | null;
   is_school_student: boolean | null;
   exam_goal: string | null;
+  learner_profile: LearnerProfile | null;
   school_id: string | null;
   platform_admin: boolean | null;
 };
@@ -62,6 +64,7 @@ export default function ProfilePage() {
   const router = useRouter();
   const [draftName, setDraftName] = useState("");
   const [draftGoal, setDraftGoal] = useState<string>("");
+  const [draftLearnerProfile, setDraftLearnerProfile] = useState<LearnerProfile>("k12");
   const [saving, setSaving] = useState(false);
   const [saveOk, setSaveOk] = useState(false);
   const [saveErr, setSaveErr] = useState<string | null>(null);
@@ -93,6 +96,7 @@ export default function ProfilePage() {
       school_id: string | null;
       full_name: string | null;
       exam_goal: string | null;
+      learner_profile?: string | null;
     };
     setEmail(me.email || "");
     const p: Profile = {
@@ -101,12 +105,14 @@ export default function ProfilePage() {
       full_name: me.full_name,
       is_school_student: me.is_school_student,
       exam_goal: me.exam_goal,
+      learner_profile: ((me as { learner_profile?: string }).learner_profile === "k12" || (me as { learner_profile?: string }).learner_profile === "competitive_exam" || (me as { learner_profile?: string }).learner_profile === "corporate") ? (me as { learner_profile: LearnerProfile }).learner_profile : "k12",
       school_id: me.school_id,
       platform_admin: me.platform_admin,
     };
     setProfile(p);
     setDraftName(p.full_name || "");
     setDraftGoal(p.exam_goal || "");
+    setDraftLearnerProfile(p.learner_profile || "k12");
     const user = { id: me.uid };
 
     if (p?.school_id) {
@@ -168,6 +174,7 @@ export default function ProfilePage() {
       if (profile.role === "student" && !profile.is_school_student) {
         patch.exam_goal = draftGoal || null;
       }
+      patch.learner_profile = draftLearnerProfile;
       const { error } = await sb.from("profiles").update(patch).eq("id", profile.id);
       if (error) throw new Error(error.message);
       setSaveOk(true);
@@ -376,6 +383,23 @@ export default function ProfilePage() {
             </p>
           </div>
         )}
+
+        {/* Q2: learner profile dropdown — visible to all roles. */}
+        <div className="mt-4">
+          <label className="label">What kind of learning are you here for?</label>
+          <select
+            className="input"
+            value={draftLearnerProfile}
+            onChange={(e) => setDraftLearnerProfile(e.target.value as LearnerProfile)}
+          >
+            <option value="k12">K-12 / school</option>
+            <option value="competitive_exam">Competitive exam (CAT, JEE, NEET, GRE…)</option>
+            <option value="corporate">Professional / training (Java, AWS, mainframe…)</option>
+          </select>
+          <p className="text-xs muted mt-1">
+            Tunes the &quot;What kind of test are you making?&quot; suggestions on the generate page. Doesn&apos;t change any other vocabulary.
+          </p>
+        </div>
 
         {(nameEditable || isIndependentStudent) && (
           <div className="mt-4 flex items-center gap-3">

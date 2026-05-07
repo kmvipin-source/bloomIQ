@@ -25,9 +25,9 @@ const TEACHER: ItemGroup[] = [
   { items: [
     { href: "/teacher",          label: "Home",            icon: Home },
     { href: "/teacher/classes",  label: "Classes",         icon: Users },
-    { href: "/teacher/generate", label: "Generate",        icon: Sparkles },
-    { href: "/teacher/review",   label: "Review",          icon: ClipboardCheck },
-    { href: "/teacher/quizzes",  label: "Tests",           icon: ListChecks },
+    { href: "/teacher/generate", label: "Generate Questions", icon: Sparkles },
+    { href: "/teacher/review",   label: "Review Pending",     icon: ClipboardCheck },
+    { href: "/teacher/quizzes",  label: "Build & Assign Tests", icon: ListChecks },
     { href: "/teacher/live",     label: "Live class quiz", icon: Radio },
     { href: "/teacher/papers",   label: "Exam Papers",     icon: FileEdit },
     { href: "/teacher/analytics", label: "Analytics",      icon: BarChart3 },

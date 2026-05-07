@@ -1,12 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { supabaseBrowser } from "@/lib/supabase/client";
-import type { Quiz, QuizAttempt, Class, QuizAssignment } from "@/lib/types";
-import { Copy, Download, FileText, Send, X, Users, User as UserIcon } from "lucide-react";
+import type { Quiz, QuizAttempt, Class, QuizAssignment, Question } from "@/lib/types";
+import { Copy, Download, FileText, Send, X, Users, User as UserIcon, Eye, ChevronDown, ChevronUp, Pencil, Printer } from "lucide-react";
+import AssignTestModal from "@/components/AssignTestModal";
 import { pct } from "@/lib/utils";
+import BloomBadge from "@/components/BloomBadge";
 
 type AttemptRow = QuizAttempt & { profile?: { full_name: string | null } };
 type AssignmentRow = QuizAssignment & {
@@ -15,6 +17,15 @@ type AssignmentRow = QuizAssignment & {
 };
 type ClassWithMembers = Class & { members: { id: string; full_name: string | null }[] };
 
+// What we render in the test preview section. Comes from joining
+// quiz_questions (which holds position) to question_bank (which holds
+// the actual stem/options/explanation/Bloom level). One row per
+// question, ordered the same way the student will see them.
+type PreviewQuestion = Pick<
+  Question,
+  "id" | "stem" | "options" | "correct_index" | "explanation" | "bloom_level" | "topic"
+> & { position: number };
+
 export default function QuizDetailPage() {
   const { id } = useParams<{ id: string }>();
   const [quiz, setQuiz] = useState<Quiz | null>(null);
@@ -22,16 +33,20 @@ export default function QuizDetailPage() {
   const [attempts, setAttempts] = useState<AttemptRow[]>([]);
   const [shareUrl, setShareUrl] = useState("");
 
+  // ---- Preview state -------------------------------------------------
+  // The actual questions (stems / options / etc), loaded in load() via
+  // a join through quiz_questions. previewOpen toggles the section
+  // between collapsed (header only) and expanded (full list visible).
+  // Defaults to expanded the first time the page loads — the dominant
+  // need is "let me see what I built before I send it out."
+  const [previewQs, setPreviewQs] = useState<PreviewQuestion[]>([]);
+  const [previewOpen, setPreviewOpen] = useState<boolean>(true);
+  const [showAnswers, setShowAnswers] = useState<boolean>(true);
+
   // Assignment state
   const [classes, setClasses] = useState<ClassWithMembers[]>([]);
   const [assignments, setAssignments] = useState<AssignmentRow[]>([]);
   const [showAssign, setShowAssign] = useState(false);
-  const [pickedClassId, setPickedClassId] = useState<string>("");
-  const [scope, setScope] = useState<"whole" | "specific">("whole");
-  const [pickedStudents, setPickedStudents] = useState<Set<string>>(new Set());
-  const [dueAt, setDueAt] = useState<string>("");
-  const [assignBusy, setAssignBusy] = useState(false);
-  const [assignErr, setAssignErr] = useState<string | null>(null);
 
   async function load() {
     const sb = supabaseBrowser();
@@ -40,6 +55,25 @@ export default function QuizDetailPage() {
 
     const { count } = await sb.from("quiz_questions").select("question_id", { count: "exact", head: true }).eq("quiz_id", id);
     setQuestions(count || 0);
+
+    // Pull the actual questions for the preview section. Joined via
+    // quiz_questions → question_bank, ordered by position so the
+    // teacher sees them in the same order students will. RLS already
+    // permits the test owner to read their own questions, so no
+    // service-role hop needed.
+    type QqRow = {
+      position: number;
+      question: Pick<Question, "id" | "stem" | "options" | "correct_index" | "explanation" | "bloom_level" | "topic"> | null;
+    };
+    const { data: qqRows } = await sb
+      .from("quiz_questions")
+      .select("position, question:question_bank(id, stem, options, correct_index, explanation, bloom_level, topic)")
+      .eq("quiz_id", id)
+      .order("position", { ascending: true });
+    const items: PreviewQuestion[] = ((qqRows as unknown as QqRow[]) || [])
+      .filter((r) => r.question)
+      .map((r) => ({ ...(r.question as PreviewQuestion), position: r.position }));
+    setPreviewQs(items);
 
     const { data: atts } = await sb
       .from("quiz_attempts")
@@ -112,86 +146,6 @@ export default function QuizDetailPage() {
     URL.revokeObjectURL(url);
   }
 
-  // -------- Assignment helpers --------
-  const pickedClass = useMemo(() => classes.find((c) => c.id === pickedClassId) || null, [classes, pickedClassId]);
-
-  function toggleStudent(sid: string) {
-    setPickedStudents((s) => {
-      const n = new Set(s);
-      if (n.has(sid)) n.delete(sid); else n.add(sid);
-      return n;
-    });
-  }
-
-  function resetAssignForm() {
-    setShowAssign(false);
-    setPickedClassId("");
-    setScope("whole");
-    setPickedStudents(new Set());
-    setDueAt("");
-    setAssignErr(null);
-  }
-
-  async function saveAssignment() {
-    setAssignErr(null);
-    if (!pickedClassId) return setAssignErr("Pick a class first.");
-    if (scope === "specific" && pickedStudents.size === 0) {
-      return setAssignErr("Select at least one student, or switch to whole-class.");
-    }
-    // Due date+time is now mandatory — every assignment must have a
-    // deadline so the student knows when to submit and so the
-    // extension-request flow has a clear "by when" to extend.
-    if (!dueAt) {
-      return setAssignErr("Pick a due date and time.");
-    }
-    const dueMs = Date.parse(dueAt);
-    if (Number.isNaN(dueMs) || dueMs <= Date.now()) {
-      return setAssignErr("Due date must be in the future.");
-    }
-
-    // Duplicate-assignment guard. If this exact (quiz, class) or
-    // (quiz, student) pair already has an assignment row, prompt
-    // before inserting a second one — multiple silent duplicates
-    // confuse students ("which one do I answer?") and inflate the
-    // teacher's analytics. Confirm and proceed if intentional
-    // (e.g., different due dates for two cohorts).
-    const dupes = scope === "whole"
-      ? assignments.filter((a) => a.class_id === pickedClassId)
-      : assignments.filter((a) => a.student_id !== null && pickedStudents.has(a.student_id));
-    if (dupes.length > 0) {
-      const who = scope === "whole"
-        ? `the class "${pickedClass?.name || ""}"`
-        : `${dupes.length} student${dupes.length === 1 ? "" : "s"}`;
-      const ok = window.confirm(
-        `This test is already assigned to ${who}. Assign again with the new due date?`,
-      );
-      if (!ok) return;
-    }
-
-    setAssignBusy(true);
-    try {
-      const sb = supabaseBrowser();
-      const { data: { user } } = await sb.auth.getUser();
-      if (!user) throw new Error("Not signed in");
-
-      const due_at = new Date(dueMs).toISOString();
-      const rows = scope === "whole"
-        ? [{ quiz_id: id, class_id: pickedClassId, student_id: null, assigned_by: user.id, due_at }]
-        : Array.from(pickedStudents).map((sid) => ({
-            quiz_id: id, class_id: null, student_id: sid, assigned_by: user.id, due_at,
-          }));
-
-      const { error } = await sb.from("quiz_assignments").insert(rows);
-      if (error) throw error;
-      resetAssignForm();
-      await loadClassesAndAssignments();
-    } catch (e) {
-      setAssignErr(e instanceof Error ? e.message : "Could not assign");
-    } finally {
-      setAssignBusy(false);
-    }
-  }
-
   async function deleteAssignment(aid: string) {
     if (!confirm("Remove this assignment? The students will no longer see it as assigned.")) return;
     const sb = supabaseBrowser();
@@ -211,7 +165,23 @@ export default function QuizDetailPage() {
   return (
     <div className="max-w-5xl mx-auto fade-in">
       <Link href="/teacher/quizzes" className="text-sm text-emerald-700 font-semibold">← All tests</Link>
-      <h1 className="h1 mt-2">{quiz.name}</h1>
+      <div className="flex items-start justify-between gap-3 mt-2 flex-wrap">
+        <h1 className="h1">{quiz.name}</h1>
+        {classes.length > 0 ? (
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={() => setShowAssign(true)}
+            title="Assign this test to a class or specific students"
+          >
+            <Send size={16} /> Assign to class
+          </button>
+        ) : (
+          <Link className="btn btn-secondary" href="/teacher/classes">
+            <Users size={16} /> Create a class to assign
+          </Link>
+        )}
+      </div>
 
       <div className="grid sm:grid-cols-3 gap-4 mt-5">
         <div className="card">
@@ -235,6 +205,122 @@ export default function QuizDetailPage() {
           <div className="text-2xl font-bold mt-2">{completed.length ? `${avg}%` : "—"}</div>
           <div className="text-sm muted">{completed.length} of {attempts.length} submitted</div>
         </div>
+      </div>
+
+      {/* ============ PREVIEW (questions in this test) ============ */}
+      {/* Renders the actual questions in the same order students will see
+          them, with the correct option highlighted. Lets the teacher
+          sanity-check the test before assigning — previously the page
+          only showed a question count, not the questions themselves. */}
+      <div className="card mt-8">
+        <div className="flex items-center gap-3 flex-wrap">
+          <button
+            type="button"
+            onClick={() => setPreviewOpen((v) => !v)}
+            className="flex items-center gap-2 font-semibold text-slate-800"
+            aria-expanded={previewOpen}
+          >
+            <Eye size={16} className="text-emerald-600" />
+            Preview test
+            <span className="text-sm muted font-normal">
+              ({previewQs.length} {previewQs.length === 1 ? "question" : "questions"})
+            </span>
+            {previewOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+          </button>
+
+          <div className="ml-auto flex items-center gap-2 flex-wrap">
+            {previewOpen && previewQs.length > 0 && (
+              <label className="text-xs muted inline-flex items-center gap-1.5 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={showAnswers}
+                  onChange={(e) => setShowAnswers(e.target.checked)}
+                />
+                Show correct answers
+              </label>
+            )}
+            {previewQs.length > 0 && (
+              <button
+                type="button"
+                className="btn btn-ghost text-sm"
+                onClick={() => window.print()}
+                title="Open the browser's print dialog (the page is print-friendly)"
+              >
+                <Printer size={14} /> Print
+              </button>
+            )}
+            <Link
+              href={`/teacher/quizzes/new?ids=${previewQs.map((q) => q.id).join(",")}`}
+              className="btn btn-secondary text-sm"
+              title="Open the composer with these questions pre-selected so you can swap or reorder them."
+            >
+              <Pencil size={14} /> Edit questions
+            </Link>
+          </div>
+        </div>
+
+        {previewOpen && (
+          <div className="mt-3">
+            {previewQs.length === 0 ? (
+              <div className="text-sm muted text-center py-6">
+                No questions in this test. Use Edit questions to add some.
+              </div>
+            ) : (
+              <ol className="space-y-3">
+                {previewQs.map((q, idx) => (
+                  <li
+                    key={q.id}
+                    className="border border-slate-200 rounded-lg p-3 bg-white"
+                  >
+                    <div className="flex items-start gap-3">
+                      <div className="text-sm font-bold text-slate-400 w-6 mt-0.5 shrink-0">
+                        {idx + 1}.
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1 flex-wrap">
+                          <BloomBadge level={q.bloom_level} />
+                          {q.topic && <span className="text-xs muted">{q.topic}</span>}
+                        </div>
+                        <div className="text-sm font-medium">{q.stem}</div>
+                        <ul className="grid sm:grid-cols-2 gap-x-4 gap-y-1 mt-2 text-sm">
+                          {q.options.map((o, i) => {
+                            const isCorrect = i === q.correct_index;
+                            const highlight = showAnswers && isCorrect;
+                            return (
+                              <li
+                                key={i}
+                                className={
+                                  highlight
+                                    ? "text-emerald-700 font-semibold"
+                                    : "text-slate-600"
+                                }
+                              >
+                                <span className="text-xs uppercase tracking-wide opacity-70 mr-1">
+                                  {String.fromCharCode(65 + i)}.
+                                </span>
+                                {o}
+                                {highlight && (
+                                  <span className="ml-1.5 text-[10px] font-bold uppercase tracking-wide text-emerald-700/80">
+                                    ✓ correct
+                                  </span>
+                                )}
+                              </li>
+                            );
+                          })}
+                        </ul>
+                        {showAnswers && q.explanation && (
+                          <p className="text-xs muted mt-2">
+                            <strong className="text-slate-600">Why:</strong> {q.explanation}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  </li>
+                ))}
+              </ol>
+            )}
+          </div>
+        )}
       </div>
 
       {/* ============ ASSIGNMENTS ============ */}
@@ -283,96 +369,13 @@ export default function QuizDetailPage() {
 
       {/* ============ ASSIGN MODAL ============ */}
       {showAssign && (
-        <div className="fixed inset-0 bg-black/40 grid place-items-center z-50 p-4" onClick={resetAssignForm}>
-          <div
-            className="card max-w-lg w-full overflow-y-auto"
-            style={{ maxHeight: "calc(100vh - 2rem)" }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="h2">Assign test</h3>
-              <button onClick={resetAssignForm} className="btn btn-ghost"><X size={16} /></button>
-            </div>
-
-            <label className="label">Class</label>
-            <select
-              className="select"
-              value={pickedClassId}
-              onChange={(e) => { setPickedClassId(e.target.value); setPickedStudents(new Set()); }}
-            >
-              <option value="">— Pick a class —</option>
-              {classes.map((c) => (
-                <option key={c.id} value={c.id}>{c.name} ({c.members.length} student{c.members.length === 1 ? "" : "s"})</option>
-              ))}
-            </select>
-
-            {pickedClass && (
-              <>
-                <label className="label mt-4">Who in {pickedClass.name}?</label>
-                <div className="flex gap-2 mb-3">
-                  <button
-                    type="button"
-                    className={`btn ${scope === "whole" ? "btn-primary" : "btn-secondary"}`}
-                    onClick={() => setScope("whole")}
-                  >
-                    Entire class ({pickedClass.members.length})
-                  </button>
-                  <button
-                    type="button"
-                    className={`btn ${scope === "specific" ? "btn-primary" : "btn-secondary"}`}
-                    onClick={() => setScope("specific")}
-                    disabled={pickedClass.members.length === 0}
-                  >
-                    Specific students
-                  </button>
-                </div>
-
-                {scope === "specific" && (
-                  pickedClass.members.length === 0 ? (
-                    <div className="text-sm muted">This class has no members yet.</div>
-                  ) : (
-                    <div className="border border-slate-200 rounded-lg max-h-56 overflow-y-auto divide-y divide-slate-100">
-                      {pickedClass.members.map((m) => {
-                        const on = pickedStudents.has(m.id);
-                        return (
-                          <label key={m.id} className="flex items-center gap-3 px-3 py-2 cursor-pointer hover:bg-slate-50">
-                            <input
-                              type="checkbox"
-                              checked={on}
-                              onChange={() => toggleStudent(m.id)}
-                              className="h-4 w-4 accent-emerald-600"
-                            />
-                            <span className="text-sm">{m.full_name || "Unknown student"}</span>
-                          </label>
-                        );
-                      })}
-                    </div>
-                  )
-                )}
-              </>
-            )}
-
-            <label className="label mt-4">
-              Due date &amp; time <span className="text-red-600">*</span>
-            </label>
-            <input
-              type="datetime-local"
-              className="input"
-              required
-              value={dueAt}
-              onChange={(e) => setDueAt(e.target.value)}
-            />
-
-            {assignErr && <div className="mt-3 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{assignErr}</div>}
-
-            <div className="flex justify-end gap-2 mt-5">
-              <button className="btn btn-ghost" onClick={resetAssignForm}>Cancel</button>
-              <button className="btn btn-primary" onClick={saveAssignment} disabled={assignBusy}>
-                {assignBusy ? <><span className="spinner" /> Assigning…</> : "Assign"}
-              </button>
-            </div>
-          </div>
-        </div>
+        <AssignTestModal
+          quizId={id}
+          classes={classes}
+          existingAssignments={assignments}
+          onClose={() => setShowAssign(false)}
+          onAssigned={() => loadClassesAndAssignments()}
+        />
       )}
 
       {/* ============ ATTEMPTS ============ */}
