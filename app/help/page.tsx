@@ -257,6 +257,31 @@ function TeacherHelp() {
       ),
     },
     {
+      icon: Users,
+      q: "Why is there an Assign button on a test that's already assigned?",
+      body: (
+        <>
+          The button changes to <strong>Assign more</strong> after the first
+          assignment, and clicking it adds <em>another</em> assignment row &mdash;
+          it doesn&apos;t replace the previous one. Three legitimate reasons to
+          re-assign:
+          <ul className="mt-2 space-y-1 list-disc list-inside">
+            <li>
+              <strong>Push to a second class</strong> &mdash; same test, e.g. Section A and Section B both take it.
+            </li>
+            <li>
+              <strong>Add specific students</strong> &mdash; extend access to a transfer student or anyone not on the original class roster.
+            </li>
+            <li>
+              <strong>Re-assign with a new due date</strong> &mdash; for makeup days, extensions, or a parent-meeting deadline.
+            </li>
+          </ul>
+          The full assignment list lives on the test detail page if you want
+          to audit or remove individual ones.
+        </>
+      ),
+    },
+    {
       icon: Radio,
       q: "What is Live class quiz?",
       body: (
@@ -271,14 +296,42 @@ function TeacherHelp() {
       ),
     },
     {
+      icon: Radio,
+      q: "What's the point of Host live for a test I've already assigned?",
+      body: (
+        <>
+          Live and Assign are orthogonal &mdash; the same test can serve both
+          purposes within a single week. Common reasons to host an
+          already-assigned test live:
+          <ul className="mt-2 space-y-1 list-disc list-inside">
+            <li><strong>Pre-test warmup</strong> &mdash; run it live the day before so students see the question style and can talk through tricky ones together.</li>
+            <li><strong>Post-test review</strong> &mdash; once submissions are in, re-host to walk the class through the same questions for reinforcement, gamified, without re-grading anyone.</li>
+            <li><strong>Quick formative check</strong> &mdash; pull up an existing test mid-lesson as an exit ticket without polluting the gradebook.</li>
+            <li><strong>Misconception drill</strong> &mdash; re-host a weak-topic test until comprehension is solid.</li>
+            <li><strong>Substitute / filler</strong> &mdash; pre-built test, zero prep, productive class time.</li>
+          </ul>
+          Live runs are stored separately from the official record &mdash; they
+          don&apos;t affect class averages, Bloom mastery, or admin reports,
+          regardless of how many times you host the same test.{" "}
+          <strong>Note:</strong> only the test owner can host live. If a
+          colleague created the test and assigned it to your class, you&apos;ll
+          see it but the Host live button is hidden &mdash; ask them to host,
+          or copy the test and host the copy.
+        </>
+      ),
+    },
+    {
       icon: BarChart3,
       q: "Where do I see student attempts?",
       body: (
         <>
-          Sidebar &rarr; Insights &rarr; <strong>Analytics</strong> shows
+          Sidebar &rarr; Insights &rarr; <strong>Test analytics</strong> shows
           per-test breakdowns: who took it, scores, Bloom-level performance,
-          per-question difficulty. <strong>Reports</strong> exports the same
-          data for offline review.
+          per-question difficulty. <strong>Class analytics</strong> (on each
+          class page) gives the cross-test view of one class &mdash; student
+          trajectories, pp change between first and latest attempt.{" "}
+          <strong>Reports</strong> is the term-wide cross-class summary with
+          Excel/PDF exports.
         </>
       ),
     },
@@ -337,11 +390,79 @@ function TeacherHelp() {
     },
   ];
 
+  const visibility: Topic[] = [
+    {
+      icon: Users,
+      q: "Which tests do I see on Home / Reports / Test analytics?",
+      body: (
+        <>
+          You see a test if any of these are true:
+          <ul className="mt-2 space-y-1 list-disc list-inside">
+            <li>You <strong>own</strong> the test (you created it).</li>
+            <li>You&apos;re the <strong>primary teacher</strong> on a class it&apos;s assigned to &mdash; you see every test pushed to your class, regardless of who created or assigned it.</li>
+            <li>You <strong>personally assigned</strong> the test, even on a class where you&apos;re only a co-teacher.</li>
+          </ul>
+          Subject co-teachers don&apos;t see tests they didn&apos;t push, so a
+          Math co-teacher isn&apos;t flooded with the Biology primary&apos;s
+          assessments.
+        </>
+      ),
+    },
+    {
+      icon: BarChart3,
+      q: "What's actually in the Home tile numbers?",
+      body: (
+        <>
+          The four Home tiles use two different scope rules:
+          <ul className="mt-2 space-y-1 list-disc list-inside">
+            <li><strong>Approved questions</strong> &amp; <strong>Awaiting review</strong>: your private question bank &mdash; every teacher has their own, so other teachers&apos; questions never show up here.</li>
+            <li><strong>Tests created</strong> &amp; <strong>Student attempts</strong>: tests on classes where you&apos;re the primary teacher, plus any tests you personally assigned (even on co-teacher classes). Tests other teachers assigned to your co-teacher classes are excluded.</li>
+          </ul>
+          Live class engagement is always tracked separately &mdash; it never
+          counts toward these numbers.
+        </>
+      ),
+    },
+    {
+      icon: ListChecks,
+      q: "What do the \"Assigned by\" labels mean?",
+      body: (
+        <>
+          On Home, Reports, Test analytics, and Class analytics, every test
+          shows who pushed it: <strong>by you</strong> or{" "}
+          <strong>by [Teacher Name]</strong>. This matters in two-teacher
+          classes where the same test can be assigned by either person, and
+          the assigner is responsible for follow-up: due-date extensions,
+          retake requests, parent communication. On the Class analytics
+          &ldquo;Tests in this class&rdquo; table, the column doubles as a
+          delegation map &mdash; you can see at a glance which tests are yours
+          to follow up on and which are your colleague&apos;s.
+        </>
+      ),
+    },
+    {
+      icon: Building2,
+      q: "What does the Admin Head see compared to me?",
+      body: (
+        <>
+          The Admin Head and any Deputies see <strong>everything in the
+          school</strong> &mdash; all teachers, all classes, all submitted
+          attempts. They use this view for term reviews, year-end audits, and
+          school-wide AI Coach questions. Your view is scoped to what you
+          teach or assigned, so the same test can show up in both places
+          (yours and theirs) but the totals will differ &mdash; that&apos;s
+          expected.
+        </>
+      ),
+    },
+  ];
+
   return (
     <>
       <Section title="Getting started" icon={BookOpen} topics={gettingStarted} />
       <Section title="Build content" icon={Sparkles} topics={buildContent} />
       <Section title="Run your class" icon={Users} topics={runClass} />
+      <Section title="Visibility & what's in your numbers" icon={BarChart3} topics={visibility} />
       <Section title="AI helpers" icon={MessageCircle} topics={aiHelpers} />
       <Section title="Troubleshooting" icon={ShieldCheck} topics={troubleshoot} />
     </>
@@ -434,6 +555,24 @@ function SchoolAdminHelp() {
           per-class performance grid. Filter by date range and class. All numbers
           are scoped to <em>class-assigned tests only</em> &mdash; personal
           practice never affects what you see here.
+        </>
+      ),
+    },
+    {
+      icon: Users,
+      q: "How does my view differ from a teacher's view?",
+      body: (
+        <>
+          You and any Deputies see <strong>everything in the school</strong>{" "}
+          &mdash; every test, every class, every submitted attempt, regardless
+          of which teacher created or assigned it. A regular teacher only sees
+          tests on their primary classes plus tests they personally assigned.
+          So the same test can appear in both your reports and theirs but the
+          totals can differ &mdash; that&apos;s expected.{" "}
+          <strong>Live class engagement</strong> is excluded from your school
+          totals (it&apos;s tracked separately and doesn&apos;t affect the
+          class record). Only the Admin Head can transfer the Admin Head role;
+          everything else is identical between Head and Deputy.
         </>
       ),
     },

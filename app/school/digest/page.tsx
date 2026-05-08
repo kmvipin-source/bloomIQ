@@ -116,7 +116,7 @@ export default function PrincipalDigestPage() {
           <h1 className="h1 flex items-center gap-2 mt-1">
             <Sparkles size={28} /> This Week
           </h1>
-          <p className="muted mt-1">Auto-generated weekly briefing.</p>
+          <p className="muted mt-1">Auto-generated weekly briefing across every teacher, class, and student in your school.</p>
         </div>
         <div className="flex items-center gap-3 flex-wrap">
           {data?.asOf && (
@@ -124,7 +124,7 @@ export default function PrincipalDigestPage() {
               Last refreshed {relativeFromNow(data.asOf)}
             </span>
           )}
-          <button
+          <button type="button"
             className="btn btn-secondary"
             onClick={() => fetchDigest({ isRefresh: true })}
             disabled={loading || refreshing}
@@ -144,7 +144,7 @@ export default function PrincipalDigestPage() {
             <div className="font-semibold">Couldn&rsquo;t generate the brief</div>
             <div className="text-xs mt-0.5">{err}</div>
           </div>
-          <button
+          <button type="button"
             className="btn btn-ghost text-xs"
             onClick={() => fetchDigest({ isRefresh: true })}
             disabled={refreshing}

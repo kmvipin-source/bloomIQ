@@ -138,11 +138,13 @@ export default function QuizzesPage() {
       </div>
 
       {items.length === 0 ? (
+        // Empty state previously had a duplicate CTA. The header above
+        // already exposes a primary "Create new test" button always
+        // visible on the same screen — duplicating it added clutter.
         <Empty
           icon="📝"
           title="No tests yet"
-          body="Create a test from your approved questions to get a code you can share with students."
-          action={<Link href="/teacher/quizzes/new" className="btn btn-primary">Create your first test</Link>}
+          body="Create a test from your approved questions to get a code you can share with students — use the Create new test button above."
         />
       ) : (
         <div className="grid gap-3 mt-6">
@@ -173,7 +175,7 @@ export default function QuizzesPage() {
                 </div>
                 <div className="flex items-center gap-2 flex-wrap">
                   <code className="text-sm px-3 py-1.5 bg-slate-100 rounded font-mono">{q.code}</code>
-                  <button
+                  <button type="button"
                     onClick={(e) => { e.preventDefault(); e.stopPropagation(); copyCode(q.code); }}
                     className="btn btn-ghost"
                     title="Copy code"
@@ -182,16 +184,20 @@ export default function QuizzesPage() {
                     <Copy size={16} />
                   </button>
                   {classes.length > 0 ? (
-                    <button
+                    <button type="button"
                       onClick={(e) => {
                         e.preventDefault();
                         e.stopPropagation();
                         setAssigningQuizId(q.id);
                       }}
                       className={`btn ${unassigned ? "btn-primary" : "btn-secondary"} text-sm`}
-                      title="Assign this test to a class or specific students"
+                      title={
+                        unassigned
+                          ? "Assign this test to a class or specific students"
+                          : "Add another assignment — push this test to a different class, specific students, or with a new due date"
+                      }
                     >
-                      <Send size={14} /> Assign
+                      <Send size={14} /> {unassigned ? "Assign" : "Assign more"}
                     </button>
                   ) : null}
                 </div>

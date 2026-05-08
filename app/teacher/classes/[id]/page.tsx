@@ -6,7 +6,7 @@ import Link from "next/link";
 import { supabaseBrowser } from "@/lib/supabase/client";
 import { toast } from "@/lib/toast";
 import type { Class, Profile } from "@/lib/types";
-import { Copy, UserMinus, Users, UserPlus, KeyRound, ShieldAlert, UserCog, X, Trash2, Upload } from "lucide-react";
+import { Copy, UserMinus, Users, UserPlus, KeyRound, ShieldAlert, UserCog, X, Trash2, Upload, BarChart3 } from "lucide-react";
 import BulkAddStudents from "@/components/BulkAddStudents";
 
 type Member = Pick<Profile, "id" | "full_name"> & {
@@ -529,8 +529,21 @@ export default function ClassDetailPage() {
   return (
     <div className="max-w-4xl mx-auto fade-in">
       <Link href="/teacher/classes" className="text-sm text-emerald-700 font-semibold">← All classes</Link>
-      <h1 className="h1 mt-2">{cls.name}</h1>
-      {cls.grade && <p className="muted mt-1">Grade {cls.grade}</p>}
+      <div className="flex items-start justify-between gap-3 flex-wrap mt-2">
+        <div>
+          <h1 className="h1">{cls.name}</h1>
+          {cls.grade && <p className="muted mt-1">Grade {cls.grade}</p>}
+        </div>
+        {/* Class-wide cross-test analytics. Lives one route deeper so it's
+            discoverable from the roster but doesn't crowd the roster page. */}
+        <Link
+          href={`/teacher/classes/${cls.id}/analytics`}
+          className="btn btn-secondary inline-flex items-center gap-2"
+          title="Cross-test class analytics — Bloom rollup, per-student trajectory, class average"
+        >
+          <BarChart3 size={16} /> Class analytics
+        </Link>
+      </div>
 
       {/* Bulk-add roster dialog - paste names, preview, commit. Owns its
           own multi-stage state; we just refresh the roster on success. */}
@@ -552,14 +565,14 @@ export default function ClassDetailPage() {
             Their account and quiz history are kept.
           </div>
           <div className="flex items-center gap-2">
-            <button
+            <button type="button"
               className="btn btn-primary"
               onClick={restoreLastRemoved}
               disabled={restoreBusy}
             >
               {restoreBusy ? <span className="spinner" /> : "Undo"}
             </button>
-            <button className="btn btn-ghost" onClick={dismissUndo} disabled={restoreBusy}>
+            <button type="button" className="btn btn-ghost" onClick={dismissUndo} disabled={restoreBusy}>
               Dismiss
             </button>
           </div>
@@ -571,7 +584,7 @@ export default function ClassDetailPage() {
           <div className="text-xs muted uppercase font-semibold">Join code</div>
           <div className="flex items-center gap-2 mt-2">
             <code className="text-2xl font-mono font-bold">{cls.join_code}</code>
-            <button className="btn btn-ghost" onClick={copyCode} title="Copy">
+            <button type="button" className="btn btn-ghost" onClick={copyCode} title="Copy">
               <Copy size={16} />
             </button>
             {copied && <span className="text-xs text-emerald-700">Copied</span>}
@@ -598,7 +611,7 @@ export default function ClassDetailPage() {
           )}
         </h2>
         {isPrimary && (
-          <button className="btn btn-secondary" onClick={() => { setShowInvite((v) => !v); setInviteErr(null); }}>
+          <button type="button" className="btn btn-secondary" onClick={() => { setShowInvite((v) => !v); setInviteErr(null); }}>
             <UserPlus size={16} /> Invite co-teacher
           </button>
         )}
@@ -631,7 +644,7 @@ export default function ClassDetailPage() {
               <label className="label">Subject <span className="muted text-xs">(optional)</span></label>
               <input className="input" value={inviteSubject} onChange={(e) => setInviteSubject(e.target.value)} placeholder="e.g. Science" />
             </div>
-            <button className="btn btn-primary" onClick={inviteCoTeacher} disabled={inviteBusy}>
+            <button type="button" className="btn btn-primary" onClick={inviteCoTeacher} disabled={inviteBusy}>
               {inviteBusy ? <><span className="spinner" /> Inviting…</> : "Invite"}
             </button>
           </div>
@@ -673,7 +686,7 @@ export default function ClassDetailPage() {
                   <td className="px-4 py-3 text-right whitespace-nowrap">
                     {isPending && t.pendingEmail && (
                       <>
-                        <button
+                        <button type="button"
                           className="btn btn-ghost text-xs mr-1"
                           onClick={() => copyCoInvite(t.pendingEmail!)}
                           title="Copy invite message"
@@ -681,7 +694,7 @@ export default function ClassDetailPage() {
                           {coCopied === t.pendingEmail ? "Copied" : "Copy invite"}
                         </button>
                         {isPrimary && (
-                          <button
+                          <button type="button"
                             className="btn btn-ghost text-red-600 text-xs"
                             onClick={() => removePendingInvite(t.pendingEmail!)}
                             title="Cancel invite"
@@ -692,7 +705,7 @@ export default function ClassDetailPage() {
                       </>
                     )}
                     {isDeclined && t.declinedEmail && isPrimary && (
-                      <button
+                      <button type="button"
                         className="btn btn-ghost text-red-600 text-xs"
                         onClick={() => removePendingInvite(t.declinedEmail!)}
                         title="Remove rejected invite"
@@ -702,14 +715,14 @@ export default function ClassDetailPage() {
                     )}
                     {!isPending && isPrimary && t.role === "co" && t.teacher_id && (
                       <>
-                        <button
+                        <button type="button"
                           className="btn btn-ghost text-xs mr-1"
                           onClick={() => makePrimary(t.teacher_id!, t.full_name || "this teacher")}
                           title="Promote to primary teacher (you become co-teacher)"
                         >
                           Make primary
                         </button>
-                        <button
+                        <button type="button"
                           className="btn btn-ghost text-red-600 text-xs"
                           onClick={() => removeCoTeacher(t.teacher_id!, t.full_name || "this teacher")}
                           title="Remove from class"
@@ -731,14 +744,14 @@ export default function ClassDetailPage() {
         <h2 className="h2 flex items-center gap-2"><Users size={20} /> Students</h2>
         {isPrimary ? (
           <div className="flex gap-2">
-            <button
+            <button type="button"
               className="btn btn-secondary"
               onClick={() => setShowBulk(true)}
               title="Paste a list of student names and create them in one go"
             >
               <Upload size={16} /> Bulk add
             </button>
-            <button
+            <button type="button"
               className="btn btn-primary"
               onClick={() => {
                 setShowAdd((v) => !v);
@@ -860,7 +873,7 @@ export default function ClassDetailPage() {
                             </div>
                           )}
                         </div>
-                        <button
+                        <button type="button"
                           className="btn btn-primary text-xs whitespace-nowrap"
                           onClick={() => reuseExisting(m.id)}
                           disabled={addBusy || inThisClass}
@@ -903,10 +916,10 @@ export default function ClassDetailPage() {
               </div>
 
               <div className="mt-4 flex flex-wrap justify-end gap-2 pt-3 border-t border-amber-200">
-                <button className="btn btn-ghost text-xs" onClick={() => setDupMatches(null)} disabled={addBusy}>
+                <button type="button" className="btn btn-ghost text-xs" onClick={() => setDupMatches(null)} disabled={addBusy}>
                   ← Back to form
                 </button>
-                <button
+                <button type="button"
                   className="btn btn-secondary text-xs"
                   onClick={() => submitAddStudent(true)}
                   disabled={addBusy}
@@ -917,8 +930,8 @@ export default function ClassDetailPage() {
             </div>
           )}
           <div className="flex justify-end gap-2 mt-4">
-            <button className="btn btn-ghost" onClick={() => setShowAdd(false)}>Close</button>
-            <button className="btn btn-primary" onClick={addStudent} disabled={addBusy}>
+            <button type="button" className="btn btn-ghost" onClick={() => setShowAdd(false)}>Close</button>
+            <button type="button" className="btn btn-primary" onClick={addStudent} disabled={addBusy}>
               {addBusy ? <><span className="spinner" /> Creating…</> : "Create account"}
             </button>
           </div>
@@ -971,7 +984,7 @@ export default function ClassDetailPage() {
                     </td>
                     <td className="px-4 py-3 text-right whitespace-nowrap">
                       {isPrimary && m.username && (
-                        <button
+                        <button type="button"
                           className="btn btn-ghost"
                           onClick={() => resetPassword(m.id, m.full_name || m.username!)}
                           title="Reset password (signs them out everywhere)"
@@ -980,7 +993,7 @@ export default function ClassDetailPage() {
                         </button>
                       )}
                       {isPrimary && (
-                        <button
+                        <button type="button"
                           className="btn btn-ghost text-red-600"
                           onClick={() => removeMember(m.id)}
                           title="Remove from class"
@@ -1006,7 +1019,7 @@ export default function ClassDetailPage() {
             <div className="text-sm text-red-900/80">
               Delete this class permanently. Student accounts and quiz results are kept; only this class, its memberships and assignments are removed.
             </div>
-            <button className="btn btn-danger" onClick={deleteClass}>
+            <button type="button" className="btn btn-danger" onClick={deleteClass}>
               <Trash2 size={14} /> Delete class
             </button>
           </div>

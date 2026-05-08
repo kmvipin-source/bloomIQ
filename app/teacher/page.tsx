@@ -36,6 +36,13 @@ type RecentQuiz = {
   questionCount: number;
   attemptCount: number;
   lastAttemptAt: string | null;
+  assignedByName: string | null; // null when not assigned anywhere I can see
+  assignedByMe: boolean;
+  // Live hosting requires quiz ownership (the live picker + API filter
+  // by owner_id). On a co-teacher's view this is false for tests
+  // assigned to their class but owned by another teacher; we hide the
+  // "Host live" button in that case so it isn't a dead-end click.
+  ownedByMe: boolean;
 };
 
 export default function TeacherHome() {
@@ -43,6 +50,12 @@ export default function TeacherHome() {
   const [recent, setRecent] = useState<RecentQuiz[]>([]);
   const [name, setName] = useState("");
   const [schoolId, setSchoolId] = useState<string | null>(null);
+  // Guards the "Join your school" card from flashing during the
+  // initial profile fetch. Without this, every navigation back to /teacher
+  // briefly renders the join-school branch (because schoolId starts as
+  // null) before /api/auth/me resolves and the dashboard hydrates.
+  // Same pattern Defect 7 used on /teacher/analytics.
+  const [profileLoaded, setProfileLoaded] = useState(false);
   const [joinCode, setJoinCode] = useState("");
   const [joinBusy, setJoinBusy] = useState(false);
   const [joinErr, setJoinErr] = useState<string | null>(null);
@@ -60,10 +73,14 @@ export default function TeacherHome() {
       headers: { Authorization: `Bearer ${token}` },
       cache: "no-store",
     });
-    if (!r.ok) return null;
+    if (!r.ok) {
+      setProfileLoaded(true);
+      return null;
+    }
     const me = await r.json() as { uid: string; email: string | null; full_name: string | null; school_id: string | null };
     setName(me.full_name || "");
     setSchoolId(me.school_id);
+    setProfileLoaded(true);
     return { id: me.uid, email: me.email };
   }
 
@@ -117,13 +134,79 @@ export default function TeacherHome() {
       if (!user) return;
       const sb = supabaseBrowser();
 
-      const [pend, appr, qz] = await Promise.all([
+      const [pend, appr] = await Promise.all([
         sb.from("question_bank").select("id", { count: "exact", head: true }).eq("status", "pending").eq("owner_id", user.id),
         sb.from("question_bank").select("id", { count: "exact", head: true }).eq("status", "approved").eq("owner_id", user.id),
-        sb.from("quizzes").select("id, name, code, subject", { count: "exact" }).eq("owner_id", user.id).order("created_at", { ascending: false }).limit(5),
       ]);
-      type QzRow = { id: string; name: string; code: string; subject: string | null };
-      const qzList = ((qz.data as QzRow[]) || []);
+
+      // Recent tests = visibility-filtered union (owned ∪ primary-class
+      // ∪ I-assigned). Mirrors the rule used by /teacher/reports and
+      // /teacher/analytics so the home page agrees with what those pages
+      // show. We also pull the assigner per quiz for the "Assigned by"
+      // sub-line.
+      const { data: cts } = await sb
+        .from("class_teachers")
+        .select("role, class_id")
+        .eq("teacher_id", user.id);
+      const ctRows = ((cts as Array<{ role: string; class_id: string }> | null) || []);
+      const taughtClassIds = ctRows.map((r) => r.class_id);
+      const primaryClassIds = new Set(
+        ctRows.filter((r) => r.role === "primary" || r.role === "acting").map((r) => r.class_id)
+      );
+
+      type AsgHomeRow = {
+        quiz_id: string;
+        class_id: string | null;
+        assigned_by: string | null;
+        assigner: { full_name: string | null } | null;
+      };
+      const asgsAll: AsgHomeRow[] = [];
+      const SELECT = "quiz_id, class_id, assigned_by, assigner:profiles!quiz_assignments_assigned_by_fkey(full_name)";
+      {
+        const { data } = await sb.from("quiz_assignments").select(SELECT).eq("assigned_by", user.id);
+        asgsAll.push(...(((data as unknown) as AsgHomeRow[]) || []));
+      }
+      if (taughtClassIds.length > 0) {
+        const { data } = await sb.from("quiz_assignments").select(SELECT).in("class_id", taughtClassIds);
+        asgsAll.push(...(((data as unknown) as AsgHomeRow[]) || []));
+      }
+      const assignerByQuiz = new Map<string, { name: string; isMe: boolean }>();
+      const visibleAssignedIds = new Set<string>();
+      for (const r of asgsAll) {
+        if (!r.quiz_id) continue;
+        const meAssigned = r.assigned_by === user.id;
+        const primaryHere = !!(r.class_id && primaryClassIds.has(r.class_id));
+        if (!meAssigned && !primaryHere) continue;
+        visibleAssignedIds.add(r.quiz_id);
+        const name = r.assigner?.full_name || "Unknown";
+        const cur = assignerByQuiz.get(r.quiz_id);
+        if (!cur || (meAssigned && !cur.isMe)) assignerByQuiz.set(r.quiz_id, { name, isMe: meAssigned });
+      }
+
+      // Owned quizzes — always in scope.
+      const { data: ownedQz } = await sb
+        .from("quizzes").select("id, name, code, subject, created_at")
+        .eq("owner_id", user.id);
+      type QzRow = { id: string; name: string; code: string; subject: string | null; created_at: string | null };
+      const ownedList = (ownedQz as QzRow[]) || [];
+
+      // Assigned-not-owned quizzes I can still see (primary or assigner).
+      let extraList: QzRow[] = [];
+      const ownedSet = new Set(ownedList.map((q) => q.id));
+      const missing = Array.from(visibleAssignedIds).filter((id) => !ownedSet.has(id));
+      if (missing.length > 0) {
+        const { data: extra } = await sb
+          .from("quizzes").select("id, name, code, subject, created_at")
+          .in("id", missing);
+        extraList = (extra as QzRow[]) || [];
+      }
+      const qzList: QzRow[] = [...ownedList, ...extraList]
+        .sort((a, b) => Date.parse(b.created_at || "1970-01-01") - Date.parse(a.created_at || "1970-01-01"))
+        .slice(0, 5);
+
+      // Total visible count (for the stats tile) — union, not just owned.
+      const totalVisibleCount = new Set([...ownedList.map((q) => q.id), ...visibleAssignedIds]).size;
+
       const quizIds = qzList.map((q) => q.id);
       let attempts = 0;
       if (quizIds.length) {
@@ -131,6 +214,7 @@ export default function TeacherHome() {
         attempts = count || 0;
       }
 
+      const ownedQuizIdSet = new Set(ownedList.map((q) => q.id));
       const enriched: RecentQuiz[] = await Promise.all(qzList.map(async (q) => {
         const [{ count: qCount }, { data: lastAtt }, { count: aCount }] = await Promise.all([
           sb.from("quiz_questions").select("question_id", { count: "exact", head: true }).eq("quiz_id", q.id),
@@ -138,6 +222,7 @@ export default function TeacherHome() {
           sb.from("quiz_attempts").select("id", { count: "exact", head: true }).eq("quiz_id", q.id),
         ]);
         const last = ((lastAtt as Array<{ submitted_at: string }> | null) || [])[0];
+        const a = assignerByQuiz.get(q.id);
         return {
           id: q.id,
           name: q.name,
@@ -146,6 +231,9 @@ export default function TeacherHome() {
           questionCount: qCount || 0,
           attemptCount: aCount || 0,
           lastAttemptAt: last?.submitted_at || null,
+          assignedByName: a?.name ?? null,
+          assignedByMe: !!a?.isMe,
+          ownedByMe: ownedQuizIdSet.has(q.id),
         };
       }));
 
@@ -165,7 +253,7 @@ export default function TeacherHome() {
       setStats({
         pending: pend.count || 0,
         approved: appr.count || 0,
-        quizzes: qz.count || 0,
+        quizzes: totalVisibleCount,
         attempts,
         retakePending,
       });
@@ -243,7 +331,7 @@ export default function TeacherHome() {
           <div className="flex items-center gap-2 flex-wrap">
             <CurrentPlanBadge />
             {schoolId && (
-              <button
+              <button type="button"
                 onClick={leaveSchool}
                 className="text-[11px] muted hover:text-red-600 inline-flex items-center gap-1"
                 title="Leave this school"
@@ -257,7 +345,15 @@ export default function TeacherHome() {
 
       <TeacherInvites onChanged={() => loadProfile()} />
 
-      {!schoolId && (
+      {/* Wait for the profile fetch to resolve before deciding which
+          branch to render. Without this guard, schoolId is briefly
+          null on every navigation here and the join-school card
+          flashes for one frame before the dashboard hydrates. */}
+      {!profileLoaded && (
+        <div className="mt-6 grid place-items-center py-12"><div className="spinner" /></div>
+      )}
+
+      {profileLoaded && !schoolId && (
         <div className="mt-4 card">
           <h3 className="font-semibold flex items-center gap-2 mb-1"><Building2 size={16} /> Join your school</h3>
           <p className="text-xs muted mb-3">If your school&apos;s Admin Head has set up BloomIQ, ask them for the school code and enter it here. Your classes and analytics will roll up to their dashboard. Skip this if you&apos;re using BloomIQ on your own.</p>
@@ -270,7 +366,7 @@ export default function TeacherHome() {
               onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
               onKeyDown={(e) => e.key === "Enter" && joinSchool()}
             />
-            <button className="btn btn-primary" onClick={joinSchool} disabled={joinBusy}>
+            <button type="button" className="btn btn-primary" onClick={joinSchool} disabled={joinBusy}>
               {joinBusy ? <span className="spinner" /> : "Join"}
             </button>
           </div>
@@ -282,8 +378,10 @@ export default function TeacherHome() {
       {/* Everything below is gated on school membership. Without a
           school the teacher has no plan; we already redirect any
           sub-route here, so suppress the dashboard chrome too. The
-          join card above stays visible until they enrol. */}
-      {schoolId && (
+          join card above stays visible until they enrol. Also gated
+          on profileLoaded so the dashboard chrome doesn't render
+          before the profile fetch resolves. */}
+      {profileLoaded && schoolId && (
       <>
 
       <div className={`rounded-2xl px-5 py-4 mt-5 border bg-gradient-to-br ${focusTone.bg} ${focusTone.border} flex items-start justify-between gap-4 flex-wrap`}>
@@ -296,7 +394,23 @@ export default function TeacherHome() {
         </Link>
       </div>
 
-      <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 mt-6">
+      {/* Scope note. Each of the four tiles uses a different scope rule
+          and that's confusing, so spell it out per metric. Question
+          bank is per-teacher (private). Tests/Attempts use the union
+          visibility rule (own + primary class + I-assigned). */}
+      <div className="mt-4 rounded-lg bg-slate-50/80 border border-slate-200 px-3 py-2 text-xs text-slate-600">
+        <strong className="text-slate-800">What&apos;s counted in these tiles:</strong>
+        <ul className="mt-1 space-y-0.5 list-disc list-inside">
+          <li>
+            <strong>Approved questions</strong> &amp; <strong>Awaiting review</strong>: your own question bank — every teacher has a private bank, so other teachers&apos; questions don&apos;t show up here.
+          </li>
+          <li>
+            <strong>Tests created</strong> &amp; <strong>Student attempts</strong>: tests on classes where you&apos;re the <strong>primary teacher</strong>, plus any tests <strong>you personally assigned</strong> (even on classes where you&apos;re only a co-teacher). Tests other teachers assigned to your co-teacher classes are not counted.
+          </li>
+        </ul>
+      </div>
+
+      <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 mt-3">
         {tiles.map(({ label, hint, value, icon: Icon, iconBg, iconFg, href }) => (
           <Link
             key={label}
@@ -361,12 +475,29 @@ export default function TeacherHome() {
                         </span>
                       </>
                     )}
+                    {q.assignedByName && (
+                      <>
+                        <span aria-hidden>&middot;</span>
+                        <span className="inline-flex items-center gap-1">
+                          Assigned by{" "}
+                          <span className={q.assignedByMe ? "text-emerald-700 font-semibold" : "font-medium"}>
+                            {q.assignedByMe ? "you" : q.assignedByName}
+                          </span>
+                        </span>
+                      </>
+                    )}
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Link href="/teacher/live" className="btn btn-ghost text-xs" title="Host this test as a live class session">
-                    <Radio size={12} /> Host live
-                  </Link>
+                  {/* Host live requires quiz ownership (live picker filters by
+                      owner_id, live API requires owner). Hide the button on
+                      tests this teacher doesn't own — otherwise clicking it
+                      lands on a picker where the test isn't there, dead-end. */}
+                  {q.ownedByMe && (
+                    <Link href="/teacher/live" className="btn btn-ghost text-xs" title="Host this test as a live class session">
+                      <Radio size={12} /> Host live
+                    </Link>
+                  )}
                   <Link href={`/teacher/quizzes/${q.id}`} className="btn btn-secondary text-xs">
                     View
                   </Link>

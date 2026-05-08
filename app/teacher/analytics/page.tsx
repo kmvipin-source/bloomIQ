@@ -43,6 +43,18 @@ type AssignmentMeta = {
 function AnalyticsInner() {
   const search = useSearchParams();
   const [quizzes, setQuizzes] = useState<Quiz[]>([]);
+  // Guards the "No quizzes yet" empty-state from flashing during initial
+  // load. Without it, a teacher who has 5 quizzes briefly sees the
+  // create-your-first-quiz empty state on every navigation here, which
+  // looks broken.
+  const [quizzesLoaded, setQuizzesLoaded] = useState(false);
+  // quizId → comma-separated class labels. Used to disambiguate the
+  // dropdown when the same test name exists across two classes (e.g. a
+  // co-teacher seeing both Math A's and Biology B's "Photosynthesis Quiz").
+  const [quizClassLabels, setQuizClassLabels] = useState<Map<string, string>>(new Map());
+  // quizId → assigner display. isMe=true => render as "you" so the
+  // teacher can spot tests they pushed at a glance.
+  const [quizAssignerInfo, setQuizAssignerInfo] = useState<Map<string, { name: string; isMe: boolean }>>(new Map());
   const [quizId, setQuizId] = useState<string>(search.get("quiz") || "");
   const [quiz, setQuiz] = useState<Quiz | null>(null);
   const [questionCount, setQuestionCount] = useState(0);
@@ -61,15 +73,121 @@ function AnalyticsInner() {
   const [showMoreAnalytics, setShowMoreAnalytics] = useState(false);
   const [showFullStudentTable, setShowFullStudentTable] = useState(false);
 
-  // 1) Load the teacher's quizzes (for the dropdown)
+  // 1) Load the teacher's in-scope quizzes (for the dropdown).
+  //
+  // Visibility rule (matches RLS migration 58 and /teacher/reports):
+  //   I see a quiz iff
+  //     (a) I own it, OR
+  //     (b) I'm PRIMARY on a class it's assigned to (full class
+  //         visibility — primary owns the class), OR
+  //     (c) I personally assigned it (assigned_by = me) — covers the
+  //         "I pushed this test as a co-teacher" case.
+  //
+  // Subject co-teachers don't see tests they didn't push.
   useEffect(() => {
     (async () => {
       const sb = supabaseBrowser();
       const { data: { user } } = await sb.auth.getUser();
       if (!user) return;
-      const { data: qs } = await sb.from("quizzes").select("*").eq("owner_id", user.id).order("created_at", { ascending: false });
-      const list = (qs as Quiz[]) || [];
+
+      // Classes I'm on, with my role.
+      const { data: cts } = await sb
+        .from("class_teachers")
+        .select("role, class:classes(id, name)")
+        .eq("teacher_id", user.id);
+      type CtRow = { role: "primary" | "co" | "acting"; class: { id: string; name: string } | null };
+      const ctRows = ((cts as unknown as CtRow[]) || []).filter((r) => r.class);
+      const taughtClassIds = ctRows.map((r) => r.class!.id);
+      const primaryClassIds = new Set(
+        ctRows.filter((r) => r.role === "primary" || r.role === "acting").map((r) => r.class!.id)
+      );
+
+      // Pull assignments touching me — class I teach OR I am the assigner.
+      type AsgRow = {
+        quiz_id: string;
+        class_id: string | null;
+        assigned_by: string | null;
+        class: { name: string } | null;
+        assigner: { full_name: string | null } | null;
+      };
+      let asgs: AsgRow[] = [];
+      const SELECT = "quiz_id, class_id, assigned_by, class:classes(name), assigner:profiles!quiz_assignments_assigned_by_fkey(full_name)";
+      {
+        const { data } = await sb.from("quiz_assignments").select(SELECT).eq("assigned_by", user.id);
+        asgs.push(...(((data as unknown) as AsgRow[]) || []));
+      }
+      if (taughtClassIds.length > 0) {
+        const { data } = await sb.from("quiz_assignments").select(SELECT).in("class_id", taughtClassIds);
+        asgs.push(...(((data as unknown) as AsgRow[]) || []));
+      }
+      // Dedupe (same row may match both predicates).
+      {
+        const seen = new Set<string>();
+        asgs = asgs.filter((r) => {
+          const k = `${r.quiz_id}|${r.class_id}|${r.assigned_by}`;
+          if (seen.has(k)) return false;
+          seen.add(k);
+          return true;
+        });
+      }
+
+      // Apply the visibility rule per row → set of visible quiz ids,
+      // plus class-label and assigner-name maps for the dropdown.
+      const visibleAssignedIds = new Set<string>();
+      const classLabelMap = new Map<string, Set<string>>(); // quiz → class names
+      const assignerInfo = new Map<string, { name: string; isMe: boolean }>();
+      const upgrade = (qid: string, name: string, isMe: boolean) => {
+        const cur = assignerInfo.get(qid);
+        if (!cur || (isMe && !cur.isMe)) assignerInfo.set(qid, { name, isMe });
+      };
+      for (const r of asgs) {
+        if (!r.quiz_id) continue;
+        const meAssigned = r.assigned_by === user.id;
+        const primaryHere = !!(r.class_id && primaryClassIds.has(r.class_id));
+        if (!meAssigned && !primaryHere) continue;
+        visibleAssignedIds.add(r.quiz_id);
+        if (r.class?.name) {
+          if (!classLabelMap.has(r.quiz_id)) classLabelMap.set(r.quiz_id, new Set());
+          classLabelMap.get(r.quiz_id)!.add(r.class.name);
+        }
+        upgrade(r.quiz_id, r.assigner?.full_name || "Unknown", meAssigned);
+      }
+
+      // Owned quizzes (always visible).
+      const { data: ownedRaw } = await sb
+        .from("quizzes").select("*").eq("owner_id", user.id)
+        .order("created_at", { ascending: false });
+      const owned = (ownedRaw as Quiz[]) || [];
+
+      // Assigned-but-not-owned quizzes.
+      let extraAssigned: Quiz[] = [];
+      if (visibleAssignedIds.size > 0) {
+        const ownedIds = new Set(owned.map((q) => q.id));
+        const missing = Array.from(visibleAssignedIds).filter((id) => !ownedIds.has(id));
+        if (missing.length > 0) {
+          const { data: extra } = await sb
+            .from("quizzes").select("*").in("id", missing)
+            .order("created_at", { ascending: false });
+          extraAssigned = (extra as Quiz[]) || [];
+        }
+      }
+
+      // Union, deduped, newest first.
+      const seen = new Set<string>();
+      const list = [...owned, ...extraAssigned]
+        .filter((q) => (seen.has(q.id) ? false : (seen.add(q.id), true)))
+        .sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+
+      // Flatten class names per quiz for dropdown suffixes.
+      const flatLabels = new Map<string, string>();
+      for (const [qid, names] of classLabelMap) {
+        flatLabels.set(qid, Array.from(names).sort().join(", "));
+      }
+
       setQuizzes(list);
+      setQuizClassLabels(flatLabels);
+      setQuizAssignerInfo(assignerInfo);
+      setQuizzesLoaded(true);
       if (!quizId && list.length) setQuizId(list[0].id);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -369,6 +487,17 @@ function AnalyticsInner() {
     setTimeout(() => setCopied(false), 1500);
   }
 
+  // Don't flash "No quizzes yet" while the initial fetch is in-flight —
+  // teachers with quizzes will see a momentary empty state on every
+  // navigation here otherwise. Render a small spinner until the quizzes
+  // list resolves at least once.
+  if (!quizzesLoaded) {
+    return (
+      <div className="max-w-6xl mx-auto fade-in py-16 grid place-items-center">
+        <div className="spinner" />
+      </div>
+    );
+  }
   if (quizzes.length === 0) {
     return <Empty icon="📊" title="No quizzes yet" body="Create a quiz first, then come back here for analytics." />;
   }
@@ -376,13 +505,34 @@ function AnalyticsInner() {
   return (
     <div className="max-w-6xl mx-auto fade-in">
       <div className="flex items-center justify-between gap-4 flex-wrap">
-        <h1 className="h1">Class analytics</h1>
+        <div>
+          <h1 className="h1">Test analytics</h1>
+          {/* Spell out the scope so a teacher landing here doesn't confuse
+              this with the cross-class /teacher/reports surface or the
+              per-class /teacher/classes/[id]/analytics page. */}
+          <p className="muted text-sm mt-1 max-w-2xl">
+            Pick a test below to see <strong>that test&apos;s</strong> stats — submission rate, class average, top score, at-risk students, time taken, per-question performance, and AI-generated insights. For a class-wide cross-test view use <strong>Class analytics</strong> on the class page; for term-wide downloads use <strong>Reports</strong>.
+          </p>
+          <div className="mt-2 rounded-lg bg-slate-50/80 border border-slate-200 px-3 py-2 text-xs text-slate-600 max-w-2xl">
+            <strong className="text-slate-800">Which tests appear in the picker:</strong>
+            <ul className="mt-1 space-y-0.5 list-disc list-inside">
+              <li>Tests on classes where you&apos;re the <strong>primary teacher</strong> (including tests other teachers added there).</li>
+              <li>Tests <strong>you assigned yourself</strong>, even on co-teacher classes.</li>
+            </ul>
+            <p className="mt-1"><em>Excluded:</em> tests other teachers assigned to your co-teacher classes.</p>
+          </div>
+        </div>
         <select className="select max-w-md" value={quizId} onChange={(e) => setQuizId(e.target.value)}>
-          {quizzes.map((q) => (
-            <option key={q.id} value={q.id}>
-              {q.name}{q.subject ? ` — ${q.subject}` : ""}
-            </option>
-          ))}
+          {quizzes.map((q) => {
+            const cls = quizClassLabels.get(q.id);
+            const a = quizAssignerInfo.get(q.id);
+            const by = a ? ` · by ${a.isMe ? "you" : a.name}` : "";
+            return (
+              <option key={q.id} value={q.id}>
+                {q.name}{q.subject ? ` — ${q.subject}` : ""}{cls ? ` · ${cls}` : ""}{by}
+              </option>
+            );
+          })}
         </select>
       </div>
 
@@ -403,7 +553,7 @@ function AnalyticsInner() {
               <div className="text-xs muted uppercase tracking-wide font-semibold">Code</div>
               <div className="flex items-center gap-2 mt-1">
                 <code className="text-lg font-mono font-bold">{quiz.code}</code>
-                <button className="btn btn-ghost p-1" onClick={copyCode} title="Copy">
+                <button type="button" className="btn btn-ghost p-1" onClick={copyCode} title="Copy">
                   <Copy size={14} />
                 </button>
                 {copied && <span className="text-xs text-emerald-700">Copied</span>}
@@ -643,7 +793,7 @@ function AnalyticsInner() {
           <div className="card mt-6">
             <div className="flex items-center justify-between mb-3">
               <h3 className="font-bold">AI summary</h3>
-              <button className="btn btn-primary" onClick={getInsight} disabled={loadingInsight}>
+              <button type="button" className="btn btn-primary" onClick={getInsight} disabled={loadingInsight}>
                 {loadingInsight ? <><span className="spinner" /> Thinking…</> : <><Sparkles size={16} /> Generate</>}
               </button>
             </div>

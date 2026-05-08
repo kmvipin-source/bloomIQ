@@ -35,11 +35,13 @@ export default function PapersListPage() {
       </div>
 
       {papers.length === 0 ? (
+        // Empty state used to repeat the "Create paper" CTA, but the
+        // header above already has a "New paper" button always visible —
+        // duplicating it added clutter without changing reachability.
         <Empty
           icon="📄"
           title="No papers yet"
-          body="Build your first printable question paper from a custom template."
-          action={<Link href="/teacher/papers/new" className="btn btn-primary"><FilePlus2 size={16} /> Create paper</Link>}
+          body="Build your first printable question paper from a custom template — use the New paper button above."
         />
       ) : (
         <div className="grid gap-3 mt-6">

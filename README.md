@@ -146,7 +146,130 @@ platform-admin invite flow at `/admin/onboard-school` instead.
 
 ---
 
-## 🆕 Latest session — 2026-05-07 (Big polish day: test composer & detail upgrades, learner profiles, assign UX overhaul, nav rename)
+## 🆕 Latest session — 2026-05-08 / 2026-05-09 (Co-teacher visibility model, scope clarity, route progress, help system)
+
+The headline change: replaced the over-permissive "any teacher of an assigned
+class sees the test" rule that migrations 53–57 had been chasing with a
+semantically correct one — **a teacher sees a test if they own it, are
+**primary** on a class it's assigned to, or **personally assigned** it
+(even as a co-teacher)**. Subject co-teachers no longer get flooded with
+the primary's assessments. Migration 58 implements this in RLS via a
+`SECURITY DEFINER` helper `public.is_quiz_visible_to_me(qid)`; five page
+loaders mirror the same rule client-side so totals match what RLS allows.
+
+### What shipped
+
+**Visibility & RLS (the cascade fix):**
+
+- `supabase/migrations/58_visibility_primary_or_assigner.sql` — replaces
+  `is_quiz_in_my_class` (migrations 57/56/55, kept in repo for history)
+  with `is_quiz_visible_to_me(qid)`. The helper is `SECURITY DEFINER` so
+  it sidesteps the `quizzes ↔ quiz_assignments` RLS recursion that bit
+  migration 56. Four policies repointed: `quizzes class co-teacher read`,
+  `attempts class co-teacher read`, `ans class co-teacher read`,
+  `assign class co-teacher read`. Existing `*_super read` policies on
+  the same tables (migration 06) are untouched, so admin/deputy
+  visibility is unaffected.
+- Application loaders updated to the union (owned ∪ primary-class ∪
+  I-assigned): `app/teacher/page.tsx` (Home), `app/teacher/reports/page.tsx`,
+  `app/teacher/analytics/page.tsx`, `app/teacher/classes/[id]/analytics/page.tsx`,
+  `app/api/alerts/route.ts`. Server-side aggregations (`/api/school/coach`,
+  `/api/school/digest`, all `lib/schoolContext.ts` paths) keep using
+  `supabaseAdmin()` and are unaffected.
+
+**"Assigned by" everywhere:**
+
+- Home recent tests show "Assigned by Ms. Priya Sharma" / "Assigned by you" sub-line.
+- Reports test dropdown: `Test · Subject · Class · by Ms. Priya Sharma`. Excel quiz-overview workbook gets a new "Assigned by" column.
+- Test analytics dropdown: same suffix pattern.
+- Class analytics "Tests in this class" table: new "Assigned by" column. On a class where the teacher is co, the table only shows tests *they* assigned.
+
+**Scope-clarity cards (no more guessing what's in a number):**
+
+- `/teacher` Home — bullet card explaining what each of the four stat tiles counts.
+- `/teacher/reports` — bullet card explaining hero-stat scope + an explicit "Excluded:" line for tests other teachers assigned to co-teacher classes.
+- `/teacher/analytics` — bullet card explaining which tests appear in the picker.
+- `/school` Home — parallel card for the Admin Head: school-wide totals, what's NOT counted (live class engagement), Head + Deputies share the view.
+- `/school/reports` — same scope line under the Bloom Pulse subtitle.
+- `/school/coach`, `/school/digest` — subtitles expanded to spell out the school-wide audience.
+
+**Help page:**
+
+- `/help` previously linked from the sidebar but the page existed; expanded the teacher section with a new **"Visibility & what's in your numbers"** group covering the primary/co rule, the "Assigned by" labels, and how the Admin Head's view differs.
+- Added two new entries to the **"Run your class"** group answering the recurring "why does this button exist?" complaints: *Why is there an Assign button on a test that's already assigned?* and *What's the point of Host live for a test I've already assigned?* (both teach the multi-assignment and engagement-vs-grading patterns).
+- Mirror entry on the school admin help.
+
+**UX polish — flicker, double-click, dead-end clicks:**
+
+- `components/RouteProgress.tsx` — slim brand-coloured progress bar pinned to the top of the viewport, listens to `usePathname` changes, animates the moment a Link is intercepted by the router and fades out when the new page renders. Kills the dev-mode JIT-compile "did my click register?" perception that drove the double-click reflex. Mounted in both `/teacher/layout.tsx` and `/school/layout.tsx`.
+- `/teacher` Home — added `profileLoaded` gate so the "Join your school" card no longer flashes for a frame on every navigation while `/api/auth/me` resolves. Same `useState`-then-spinner pattern Defect 7 used.
+- `/teacher/reports` — added `quizzesLoaded` gate. No more "No quizzes yet" flash.
+- `/teacher` Home — Host live button is now hidden on tests the teacher doesn't own. Live picker filters by `owner_id` and the live API requires owner; the button used to be a dead-end click for non-owners.
+- `/teacher/quizzes` — Assign button label flips to **"Assign more"** on already-assigned tests, with a tooltip listing the three legitimate use cases (push to a second class, add specific students, re-assign with a new due date). New behaviour matches the help page entry.
+- Empty-state CTA cleanup across `/teacher/review`, `/teacher/papers`, `/teacher/quizzes` — header CTA stays, the duplicated empty-state CTA was removed and the body text now references the header button. One CTA per page, never two.
+
+**Test-data scripts (so future regressions can be caught quickly):**
+
+- `scripts/setup-mr-raj-mixed-roles.js` and `scripts/swap-raj-primary-to-biology.js` — land the "Mr. Raj primary on Biology B, co on Math A" state that exercises BOTH branches of the visibility rule (primary sees Priya's tests; as co, only sees own assignments).
+- `scripts/debug-mr-raj-reports.js` — extended to print `assigned_by` per row (`by-me` / `by-other`) so it's obvious why each row is or isn't visible to Raj's session.
+
+### Decisions made and explicitly NOT shipped
+
+- **Did not loosen Host-live RLS.** A primary teacher could legitimately want to host a colleague's test live in their classroom. Considered loosening but kept the existing "owner only" rule for now — option (B) — and instead just hid the button when not the owner — option (A). Cleaner UX with no security loosening; can revisit if teachers ask.
+- **Did not collapse Generate Questions + Review Pending into a single sidebar entry.** The two are different verbs (create vs approve) and each is visited at a different cadence. Kept them separate but removed the duplicated "Generate questions" CTA from the Review empty state — the sidebar already exposes it.
+- **Did not migrate the historic 53–57 migrations out of the repo.** They're idempotent on prior runs and migration 58 cleanly drops the helper they introduced. Keeping them documents the cascade we walked through.
+
+### Files touched
+
+```
+supabase/migrations/53_co_teacher_attempts_read.sql            (new, superseded by 58)
+supabase/migrations/54_co_teacher_assignments_read.sql         (new, superseded by 58)
+supabase/migrations/55_co_teacher_quizzes_read.sql             (new, superseded by 58)
+supabase/migrations/56_co_teacher_rls_consolidated.sql         (new, superseded by 58)
+supabase/migrations/57_fix_co_teacher_rls_recursion.sql        (new, superseded by 58)
+supabase/migrations/58_visibility_primary_or_assigner.sql      (new — this is the live rule)
+
+app/teacher/page.tsx                                            (visibility loader, scope card, profileLoaded, Host-live gating, Assigned-by sub-line)
+app/teacher/reports/page.tsx                                    (visibility loader, scope card, quizzesLoaded, Assigned-by dropdown + Excel column)
+app/teacher/analytics/page.tsx                                  (visibility loader, scope card, Assigned-by dropdown)
+app/teacher/classes/[id]/analytics/page.tsx                     (NEW — class-wide cross-test dashboard with primary/co split + Assigned-by column)
+app/teacher/quizzes/page.tsx                                    (Assign more label + tooltip, empty-state cleanup)
+app/teacher/papers/page.tsx                                     (empty-state cleanup)
+app/teacher/review/page.tsx                                     (empty-state cleanup)
+app/teacher/layout.tsx                                          (RouteProgress mount)
+app/help/page.tsx                                               (Visibility section + Run-your-class entries)
+app/school/page.tsx                                             (scope card)
+app/school/reports/page.tsx                                     (scope line)
+app/school/coach/page.tsx, app/school/digest/page.tsx           (subtitle clarity)
+app/school/layout.tsx                                           (RouteProgress mount)
+app/api/alerts/route.ts                                         (visibility-aligned quiz scope)
+components/RouteProgress.tsx                                    (NEW)
+components/Sidebar.tsx                                          (earlier in window — Reports first, Analytics → Test analytics)
+
+scripts/setup-mr-raj-mixed-roles.js                             (NEW)
+scripts/swap-raj-primary-to-biology.js                          (NEW)
+scripts/debug-mr-raj-reports.js                                 (assigner tagging)
+```
+
+### Pre-deploy checklist
+
+1. Run `supabase/migrations/58_visibility_primary_or_assigner.sql` in the
+   SQL Editor. The two `select`s at the bottom must return 4 policy rows
+   and the `is_quiz_visible_to_me` function (and confirm `is_quiz_in_my_class`
+   is gone).
+2. Run `node scripts/swap-raj-primary-to-biology.js` then
+   `node scripts/debug-mr-raj-reports.js` against your test DB. Expect
+   `[c]=5, [d]=4, [e]=46`.
+3. Sign in as Mr. Raj, walk Home → Reports (filter Math A vs Biology B) →
+   Test analytics → Class analytics (both classes). Verify "Assigned by"
+   labels and that Math A as co only shows the two Raj-assigned tests.
+4. Sign in as a Deputy Admin Head and confirm `/school` and
+   `/school/reports` still show school-wide totals (super_read policies
+   are intact).
+
+---
+
+## 🆕 Earlier session — 2026-05-07 (Big polish day: test composer & detail upgrades, learner profiles, assign UX overhaul, nav rename)
 
 A long session. The dominant themes: make the teacher's "compose → assign" loop
 feel obvious instead of hidden, introduce per-user learning context so corporate

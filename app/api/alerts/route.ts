@@ -18,8 +18,23 @@ export async function POST(req: Request) {
     const { data: { user } } = await sb.auth.getUser();
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-    const { data: quizzes } = await sb.from("quizzes").select("id").eq("owner_id", user.id);
-    const quizIds = (quizzes || []).map((q: { id: string }) => q.id);
+    // Visibility-aligned alert scope (matches RLS migration 58):
+    //   owned quizzes ∪ quizzes assigned to a class I'm primary on
+    //   ∪ quizzes I personally assigned. RLS already returns ONLY
+    //   the rows I should see, so a single SELECT after the visibility
+    //   helpers resolve gives the right scope.
+    const { data: ownedQ } = await sb.from("quizzes").select("id").eq("owner_id", user.id);
+    const ownedIds = new Set(((ownedQ as Array<{ id: string }>) || []).map((q) => q.id));
+
+    // Pull every visible assignment (RLS scopes it for us). Take all
+    // quiz_ids referenced — these are the visible-by-assignment quizzes.
+    const { data: visAsg } = await sb
+      .from("quiz_assignments")
+      .select("quiz_id");
+    for (const r of ((visAsg as Array<{ quiz_id: string }>) || [])) {
+      if (r.quiz_id) ownedIds.add(r.quiz_id);
+    }
+    const quizIds = Array.from(ownedIds);
     if (!quizIds.length) return NextResponse.json({ ok: true, created: 0 });
 
     const { data: atts } = await sb

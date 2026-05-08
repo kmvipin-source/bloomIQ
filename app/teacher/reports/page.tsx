@@ -47,6 +47,12 @@ type Ans = {
 
 export default function ReportsPage() {
   const [quizzes, setQuizzes] = useState<Quiz[]>([]);
+  // Guards the "No quizzes yet" empty-state from flashing during the
+  // initial fetch. Without it, every navigation to /teacher/reports
+  // briefly renders the empty state because quizzes starts at [] and
+  // the length check fires before the union loader resolves. Same
+  // pattern Defect 7 used on /teacher/analytics.
+  const [quizzesLoaded, setQuizzesLoaded] = useState(false);
   const [quizId, setQuizId] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [info, setInfo] = useState("");
@@ -60,23 +66,150 @@ export default function ReportsPage() {
   const [allAtts, setAllAtts] = useState<Att[]>([]);
   const [allAns, setAllAns] = useState<Ans[]>([]);
   const [classQuizMap, setClassQuizMap] = useState<Map<string, Set<string>>>(new Map()); // classId → Set<quizId>
+  // quizId → { name, isMe }. Drives the "Assigned by" label on the
+  // dropdown and the Excel export. isMe lets us print "you" instead
+  // of "Mr. Raj" when it's the current user.
+  const [quizAssigner, setQuizAssigner] = useState<Map<string, { name: string; isMe: boolean }>>(new Map());
 
   useEffect(() => {
     (async () => {
       const sb = supabaseBrowser();
       const { data: { user } } = await sb.auth.getUser();
-      if (!user) return;
+      if (!user) { setQuizzesLoaded(true); return; }
 
-      // 1) Teacher's quizzes
-      const { data } = await sb.from("quizzes").select("*").eq("owner_id", user.id).order("created_at", { ascending: false });
-      const list = (data as Quiz[]) || [];
+      // ─────────────────────────────────────────────────────────────
+      // Visibility rule (matches RLS migration 58):
+      //   A quiz is in my scope iff
+      //     (a) I OWN it, OR
+      //     (b) I am PRIMARY on a class it is assigned to, OR
+      //     (c) I personally ASSIGNED it (assigned_by = me),
+      //   regardless of class role for (c).
+      //
+      // Why per-role: a subject co-teacher should not see test data
+      // from tests they didn't push. Primary owns the class so they
+      // see everything pushed to it.
+      // ─────────────────────────────────────────────────────────────
+
+      // 1) Classes I teach, with my role (so we can split primary
+      //    from co for the visibility filter and for the class
+      //    dropdown labels).
+      const { data: cts } = await sb
+        .from("class_teachers")
+        .select("role, class:classes(id, name)")
+        .eq("teacher_id", user.id);
+      type CtRow = { role: "primary" | "co" | "acting"; class: { id: string; name: string } | null };
+      const ctRows = ((cts as unknown as CtRow[]) || []).filter((r) => r.class);
+      const taughtClasses = ctRows
+        .map((r) => r.class!)
+        .sort((a, b) => a.name.localeCompare(b.name));
+      setClasses(taughtClasses);
+      const primaryClassIds = new Set(
+        ctRows.filter((r) => r.role === "primary" || r.role === "acting").map((r) => r.class!.id)
+      );
+
+      // 2) Pull all assignments touching me — any class I teach (so I
+      //    can later split into primary-class vs co-class) PLUS any
+      //    assignment I personally created. We over-fetch slightly and
+      //    filter in JS, which is one round-trip cheaper than two
+      //    targeted queries.
+      const taughtClassIds = taughtClasses.map((c) => c.id);
+      type AsgRow = {
+        quiz_id: string;
+        class_id: string | null;
+        assigned_by: string | null;
+        assigner: { full_name: string | null } | null;
+      };
+      let myAsgs: AsgRow[] = [];
+
+      // Assignments where I'm the assigner (anywhere)
+      {
+        const { data } = await sb
+          .from("quiz_assignments")
+          .select("quiz_id, class_id, assigned_by, assigner:profiles!quiz_assignments_assigned_by_fkey(full_name)")
+          .eq("assigned_by", user.id);
+        myAsgs.push(...(((data as unknown) as AsgRow[]) || []));
+      }
+      // Assignments to any class I teach (we'll narrow to my-primary
+      // classes for the visibility test below). RLS already restricts
+      // these to what I can see.
+      if (taughtClassIds.length > 0) {
+        const { data } = await sb
+          .from("quiz_assignments")
+          .select("quiz_id, class_id, assigned_by, assigner:profiles!quiz_assignments_assigned_by_fkey(full_name)")
+          .in("class_id", taughtClassIds);
+        myAsgs.push(...(((data as unknown) as AsgRow[]) || []));
+      }
+      // Dedupe (quiz_id, class_id, assigned_by) — same row may come
+      // back twice if both predicates matched (I assigned it AND it's
+      // on a class I teach).
+      {
+        const seen = new Set<string>();
+        myAsgs = myAsgs.filter((r) => {
+          const k = `${r.quiz_id}|${r.class_id}|${r.assigned_by}`;
+          if (seen.has(k)) return false;
+          seen.add(k);
+          return true;
+        });
+      }
+
+      // 3) Apply the visibility rule per assignment row to decide
+      //    which (quiz_id, class_id) pairs make it through.
+      const visibleAssignedQuizIds = new Set<string>();
+      const classQuizMapBuild = new Map<string, Set<string>>();
+      // quizId → assigner display info, picked from the *first*
+      // visible assignment we encounter for that quiz. If multiple
+      // assignment rows exist for the same quiz, prefer one where
+      // assigned_by = me so the label reads "you".
+      const assignerMap = new Map<string, { name: string; isMe: boolean }>();
+      const upgradeAssigner = (qid: string, name: string, isMe: boolean) => {
+        const cur = assignerMap.get(qid);
+        if (!cur || (isMe && !cur.isMe)) assignerMap.set(qid, { name, isMe });
+      };
+
+      for (const r of myAsgs) {
+        if (!r.quiz_id) continue;
+        const meAssigned = r.assigned_by === user.id;
+        const primaryHere = !!(r.class_id && primaryClassIds.has(r.class_id));
+        if (!meAssigned && !primaryHere) continue; // visibility gate
+        visibleAssignedQuizIds.add(r.quiz_id);
+        if (r.class_id) {
+          if (!classQuizMapBuild.has(r.class_id)) classQuizMapBuild.set(r.class_id, new Set());
+          classQuizMapBuild.get(r.class_id)!.add(r.quiz_id);
+        }
+        const aname = r.assigner?.full_name || "Unknown";
+        upgradeAssigner(r.quiz_id, aname, meAssigned);
+      }
+
+      // 4) Quizzes I own (always visible — owner-all path).
+      const { data: ownedRaw } = await sb.from("quizzes").select("*").eq("owner_id", user.id).order("created_at", { ascending: false });
+      const owned = (ownedRaw as Quiz[]) || [];
+
+      // 5) Quizzes I see via assignment but don't own.
+      let extraAssigned: Quiz[] = [];
+      if (visibleAssignedQuizIds.size > 0) {
+        const ownedIdSet = new Set(owned.map((q) => q.id));
+        const missing = Array.from(visibleAssignedQuizIds).filter((id) => !ownedIdSet.has(id));
+        if (missing.length > 0) {
+          const { data: extra } = await sb.from("quizzes").select("*").in("id", missing);
+          extraAssigned = (extra as Quiz[]) || [];
+        }
+      }
+
+      setQuizAssigner(assignerMap);
+
+      const list = [...owned, ...extraAssigned].sort((a, b) => {
+        const ta = a.created_at ? Date.parse(a.created_at) : 0;
+        const tb = b.created_at ? Date.parse(b.created_at) : 0;
+        return tb - ta;
+      });
       setQuizzes(list);
+      setQuizzesLoaded(true);
       if (list.length) setQuizId(list[0].id);
       if (list.length === 0) return;
 
       const quizIds = list.map((q) => q.id);
 
-      // 2) All attempts on those quizzes (single batch — we'll filter client-side)
+      // 5) All attempts on those quizzes.
       const { data: atts } = await sb
         .from("quiz_attempts")
         .select("id, quiz_id, student_id, score, total, submitted_at, time_taken_seconds, profile:profiles!quiz_attempts_student_id_fkey(full_name, school, grade)")
@@ -85,7 +218,7 @@ export default function ReportsPage() {
       const attsList = ((atts as unknown) as Att[]) || [];
       setAllAtts(attsList);
 
-      // 3) All answers (single batch)
+      // 6) All answers.
       const attemptIds = attsList.map((a) => a.id);
       let ansList: Ans[] = [];
       if (attemptIds.length > 0) {
@@ -97,32 +230,15 @@ export default function ReportsPage() {
       }
       setAllAns(ansList);
 
-      // 4) Classes the teacher teaches (primary + co) for the class filter
-      const { data: cts } = await sb
-        .from("class_teachers")
-        .select("class:classes(id, name)")
-        .eq("teacher_id", user.id);
-      type CtRow = { class: { id: string; name: string } | null };
-      const taughtClasses = ((cts as unknown as CtRow[]) || [])
-        .map((r) => r.class)
-        .filter((c): c is { id: string; name: string } => !!c)
-        .sort((a, b) => a.name.localeCompare(b.name));
-      setClasses(taughtClasses);
-
-      // 5) Map class → quizzes assigned to it (for class-filter scoping)
-      if (taughtClasses.length > 0) {
-        const { data: asg } = await sb
-          .from("quiz_assignments")
-          .select("quiz_id, class_id")
-          .in("class_id", taughtClasses.map((c) => c.id))
-          .in("quiz_id", quizIds);
-        const map = new Map<string, Set<string>>();
-        ((asg as Array<{ quiz_id: string; class_id: string }> | null) || []).forEach((row) => {
-          if (!map.has(row.class_id)) map.set(row.class_id, new Set());
-          map.get(row.class_id)!.add(row.quiz_id);
-        });
-        setClassQuizMap(map);
+      // 7) Persist class→quiz map, intersected with the visible quiz pool.
+      const visibleSet = new Set(quizIds);
+      const finalMap = new Map<string, Set<string>>();
+      for (const [cid, qids] of classQuizMapBuild) {
+        const filtered = new Set<string>();
+        for (const qid of qids) if (visibleSet.has(qid)) filtered.add(qid);
+        if (filtered.size > 0) finalMap.set(cid, filtered);
       }
+      setClassQuizMap(finalMap);
     })();
   }, []);
 
@@ -152,6 +268,36 @@ export default function ReportsPage() {
     () => quizzes.filter((q) => filteredQuizIds.has(q.id)),
     [quizzes, filteredQuizIds]
   );
+
+  // Reverse map quizId → list of class names that this quiz is assigned
+  // to. Used to disambiguate test labels in the picker and the per-test
+  // exports — by-name alone, a "Cell Quiz" could belong to two classes.
+  const classNameById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const c of classes) m.set(c.id, c.name);
+    return m;
+  }, [classes]);
+  const quizClassNames = useMemo(() => {
+    const m = new Map<string, string[]>();
+    for (const [classId, quizIds] of classQuizMap) {
+      const cname = classNameById.get(classId);
+      if (!cname) continue;
+      for (const qid of quizIds) {
+        const arr = m.get(qid) || [];
+        if (!arr.includes(cname)) arr.push(cname);
+        m.set(qid, arr);
+      }
+    }
+    // Sort each array alphabetically for deterministic display.
+    for (const [qid, arr] of m) arr.sort();
+    return m;
+  }, [classQuizMap, classNameById]);
+  function classLabelFor(qid: string): string {
+    const arr = quizClassNames.get(qid) || [];
+    if (arr.length === 0) return "Unassigned";
+    if (arr.length === 1) return arr[0];
+    return `${arr[0]} +${arr.length - 1}`;
+  }
 
   // Hero stats now reflect filters
   const stats = useMemo(() => {
@@ -224,8 +370,17 @@ export default function ReportsPage() {
         const qAtts = atts.filter((a) => a.quiz_id === q.id);
         const ratios = qAtts.filter((a) => a.total > 0).map((a) => pct(a.score, a.total));
         const avg = ratios.length ? Math.round(ratios.reduce((s, x) => s + x, 0) / ratios.length) : 0;
+        // "Class(es)" column added so a workbook reader can tell which
+        // class each test belongs to without looking it up. Multi-class
+        // assignments join with a slash. "Assigned by" lets a primary
+        // teacher see at a glance which co-teacher pushed each test.
+        const classes = (quizClassNames.get(q.id) || []).join(" / ") || "Unassigned";
+        const a = quizAssigner.get(q.id);
+        const assignedBy = a ? a.name : "—";
         return {
           Quiz: q.name,
+          "Class(es)": classes,
+          "Assigned by": assignedBy,
           Subject: q.subject || "",
           Topic: q.topic_family || "",
           Code: q.code,
@@ -446,6 +601,13 @@ export default function ReportsPage() {
     setBusy(null);
   }
 
+  // Wait for the quiz fetch to resolve before deciding empty vs full
+  // render. Without this, every navigation here flashes "No quizzes yet"
+  // for a frame because quizzes starts at [] and the length check fires
+  // before the union loader completes.
+  if (!quizzesLoaded) {
+    return <div className="grid place-items-center py-20"><div className="spinner" /></div>;
+  }
   if (!quizzes.length) {
     return <Empty icon="📄" title="No quizzes yet" body="Create a quiz to start generating reports." />;
   }
@@ -453,7 +615,9 @@ export default function ReportsPage() {
   return (
     <div className="max-w-6xl mx-auto fade-in">
       <h1 className="h1">Reports</h1>
-      <p className="muted mt-1">Downloads for class meetings, parent communication, and term reviews.</p>
+      <p className="muted mt-1 max-w-3xl">
+        Cross-class, cross-test grand summary. Filter by period and class to see hero stats (tests assigned, submission count, class average, at-risk count) and download Excel workbooks for term reviews, parent meetings, and question-quality audits. The "By test" section below also lets you export a single test's class summary.
+      </p>
 
       {/* Filter strip — applies to hero stats and all term-wide reports below */}
       <div className="card mt-4 flex items-center gap-3 flex-wrap">
@@ -487,6 +651,25 @@ export default function ReportsPage() {
         </span>
       </div>
 
+      {/* Scope note. Visibility rule is asymmetric (primary vs co)
+          so the totals are a UNION of "tests on classes where I'm
+          primary" and "tests I assigned myself". Spell it out so
+          a teacher reading the dashboard isn't guessing. */}
+      <div className="mt-2 rounded-lg bg-slate-50/80 border border-slate-200 px-3 py-2 text-xs text-slate-600">
+        <strong className="text-slate-800">What&apos;s in these stats:</strong>
+        <ul className="mt-1 space-y-0.5 list-disc list-inside">
+          <li>
+            Tests on classes where you&apos;re the <strong>primary teacher</strong> — including tests other teachers assigned to your class.
+          </li>
+          <li>
+            Tests <strong>you personally assigned</strong> — even on classes where you&apos;re only a co-teacher.
+          </li>
+        </ul>
+        <p className="mt-1">
+          <em>Excluded:</em> tests other teachers assigned to classes where you&apos;re only a co-teacher.
+        </p>
+      </div>
+
       {/* Hero stats */}
       <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4 mt-4">
         <StatCard icon={ListChecks} label="Tests" value={stats.quizzes} color="from-emerald-500 to-emerald-600" />
@@ -500,7 +683,22 @@ export default function ReportsPage() {
       <div className="card mb-3">
         <label className="label">Pick a test</label>
         <select className="select" value={quizId} onChange={(e) => setQuizId(e.target.value)}>
-          {quizzes.map((q) => <option key={q.id} value={q.id}>{q.name}{q.subject ? ` — ${q.subject}` : ""}</option>)}
+          {quizzes.map((q) => {
+            const classLabel = classLabelFor(q.id);
+            // Show: "Photosynthesis Class Quiz · Science · Grade 6 - Math A · by Mr. Raj"
+            // — class to disambiguate same-named tests across classes;
+            // assigner so a primary teacher reading the report can tell
+            // who pushed each test.
+            const subject = q.subject ? ` · ${q.subject}` : "";
+            const cls = ` · ${classLabel}`;
+            const a = quizAssigner.get(q.id);
+            const by = a ? ` · by ${a.isMe ? "you" : a.name}` : "";
+            return (
+              <option key={q.id} value={q.id}>
+                {q.name}{subject}{cls}{by}
+              </option>
+            );
+          })}
         </select>
       </div>
       <div className="grid md:grid-cols-2 gap-4">
@@ -645,7 +843,7 @@ function ReportCard({
       </div>
       <p className="text-sm text-slate-700 mt-3 flex-1">{desc}</p>
       <div className="mt-4">
-        <button className="btn btn-primary w-full" onClick={onClick} disabled={busy}>
+        <button type="button" className="btn btn-primary w-full" onClick={onClick} disabled={busy}>
           {busy ? <><span className="spinner" /> Generating…</> : <><Download size={16} /> {buttonLabel || "Download"}</>}
         </button>
       </div>

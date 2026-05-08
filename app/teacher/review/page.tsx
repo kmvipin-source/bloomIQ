@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
 import { supabaseBrowser } from "@/lib/supabase/client";
 import { BLOOM_META } from "@/lib/bloom";
 import type { Question } from "@/lib/types";
@@ -101,12 +100,15 @@ export default function ReviewPage() {
   if (loading) return <div className="grid place-items-center py-20"><div className="spinner" /></div>;
 
   if (items.length === 0) {
+    // Empty state used to have a "Generate questions" CTA, but the
+    // sidebar already exposes Generate Questions one click away —
+    // duplicating it here added clutter without changing reachability.
+    // Keep the empty state purely informational.
     return (
       <Empty
         icon="✅"
         title="Nothing to review"
-        body="Approved questions live in your Question Bank. Generate new questions to fill this queue."
-        action={<Link href="/teacher/generate" className="btn btn-primary">Generate questions</Link>}
+        body="Your AI-drafted question queue is empty. Use Generate Questions in the sidebar when you want to draft more."
       />
     );
   }
@@ -122,21 +124,21 @@ export default function ReviewPage() {
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <button className="btn btn-secondary" onClick={toggleSelectAll}>
+          <button type="button" className="btn btn-secondary" onClick={toggleSelectAll}>
             {allSelected ? <CheckSquare size={16} /> : <Square size={16} />}
             {allSelected ? "Deselect all" : "Select all"}
           </button>
           {selected.size > 0 ? (
             <>
-              <button className="btn btn-danger" onClick={() => bulkSetStatus("rejected")}>
+              <button type="button" className="btn btn-danger" onClick={() => bulkSetStatus("rejected")}>
                 <X size={16} /> Reject {selected.size}
               </button>
-              <button className="btn btn-primary" onClick={() => bulkSetStatus("approved")}>
+              <button type="button" className="btn btn-primary" onClick={() => bulkSetStatus("approved")}>
                 <Check size={16} /> Approve {selected.size}
               </button>
             </>
           ) : (
-            <button className="btn btn-secondary" onClick={approveAll}>Approve all</button>
+            <button type="button" className="btn btn-secondary" onClick={approveAll}>Approve all</button>
           )}
         </div>
       </div>
@@ -210,18 +212,18 @@ export default function ReviewPage() {
 
               <div className="flex items-center gap-2 mt-4 justify-end">
                 {dirty && (
-                  <button className="btn btn-secondary" onClick={() => save(q)}>
+                  <button type="button" className="btn btn-secondary" onClick={() => save(q)}>
                     <Save size={16} /> Save
                   </button>
                 )}
-                <button
+                <button type="button"
                   className="btn btn-primary"
                   onClick={() => approve(q.id)}
                   title="Approve and add to your bank"
                 >
                   <Check size={16} /> Approve
                 </button>
-                <button
+                <button type="button"
                   className="btn btn-ghost text-red-600"
                   onClick={() => reject(q.id)}
                   title="Reject and remove"

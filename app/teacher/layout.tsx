@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
 import MobileNav from "@/components/MobileNav";
+import RouteProgress from "@/components/RouteProgress";
 import { supabaseBrowser } from "@/lib/supabase/client";
 
 /**
@@ -88,6 +89,10 @@ export default function TeacherLayout({ children }: { children: React.ReactNode 
   }
   return (
     <div className="md:flex min-h-screen">
+      {/* Route progress bar — gives instant visual feedback on every
+          sidebar / link click so dev-mode JIT compilation latency
+          doesn't read as "click didn't work, click again". */}
+      <RouteProgress />
       <Sidebar role="teacher" />
       <MobileNav role="teacher" />
       <main className="flex-1 p-4 md:p-8 overflow-auto">{children}</main>

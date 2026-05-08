@@ -345,7 +345,7 @@ export default function SchoolHome() {
           <label className="label">School name</label>
           <input className="input" value={schoolName} onChange={(e) => setSchoolName(e.target.value)} placeholder="e.g. Greenwood International School" />
           {setupErr && <div className="mt-3 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{setupErr}</div>}
-          <button className="btn btn-primary w-full mt-4" onClick={createSchool} disabled={creating}>
+          <button type="button" className="btn btn-primary w-full mt-4" onClick={createSchool} disabled={creating}>
             {creating ? <><span className="spinner" /> Creating…</> : "Create school"}
           </button>
           <p className="muted text-xs mt-3">
@@ -370,17 +370,17 @@ export default function SchoolHome() {
                 autoFocus
                 onKeyDown={(e) => { if (e.key === "Enter") saveSchoolName(); if (e.key === "Escape") setEditingName(false); }}
               />
-              <button className="btn btn-primary" onClick={saveSchoolName} disabled={savingName}>
+              <button type="button" className="btn btn-primary" onClick={saveSchoolName} disabled={savingName}>
                 {savingName ? <span className="spinner" /> : "Save"}
               </button>
-              <button className="btn btn-ghost" onClick={() => { setEditingName(false); setRenameErr(null); }} disabled={savingName}>
+              <button type="button" className="btn btn-ghost" onClick={() => { setEditingName(false); setRenameErr(null); }} disabled={savingName}>
                 Cancel
               </button>
             </div>
           ) : (
             <h1 className="h1 flex items-center gap-2 flex-wrap">
               <Building2 size={28} /> {school?.name}
-              <button
+              <button type="button"
                 className="btn btn-ghost p-1"
                 title="Rename school"
                 onClick={() => { setDraftName(school?.name || ""); setEditingName(true); setRenameErr(null); }}
@@ -399,7 +399,7 @@ export default function SchoolHome() {
           <Link href="/school/reports" className="btn btn-primary"><BarChart3 size={14} /> Bloom Pulse</Link>
           {/* Transfer Admin Head is reserved for the Head — Deputies don't see this. */}
           {callerIsHead && (
-            <button className="btn btn-secondary" onClick={() => setTransferOpen((v) => !v)}>
+            <button type="button" className="btn btn-secondary" onClick={() => setTransferOpen((v) => !v)}>
               <UserCog size={14} /> Transfer Admin Head
             </button>
           )}
@@ -423,10 +423,10 @@ export default function SchoolHome() {
               placeholder="new.head@example.com"
               disabled={transferring}
             />
-            <button className="btn btn-primary" onClick={transferAdmin} disabled={transferring || !transferEmail.trim()}>
+            <button type="button" className="btn btn-primary" onClick={transferAdmin} disabled={transferring || !transferEmail.trim()}>
               {transferring ? <><span className="spinner" /> Transferring…</> : "Transfer"}
             </button>
-            <button className="btn btn-ghost" onClick={() => { setTransferOpen(false); setTransferErr(null); setTransferEmail(""); }} disabled={transferring}>
+            <button type="button" className="btn btn-ghost" onClick={() => { setTransferOpen(false); setTransferErr(null); setTransferEmail(""); }} disabled={transferring}>
               Cancel
             </button>
           </div>
@@ -457,7 +457,7 @@ export default function SchoolHome() {
             <div className="text-xs muted uppercase tracking-wide font-semibold">School code</div>
             <div className="flex items-center gap-2 mt-1">
               <code className="text-2xl font-mono font-bold">{school.join_code}</code>
-              <button className="btn btn-ghost p-1" onClick={copyCode} title="Copy"><Copy size={16} /></button>
+              <button type="button" className="btn btn-ghost p-1" onClick={copyCode} title="Copy"><Copy size={16} /></button>
               {copied && <span className="text-xs text-emerald-700">Copied</span>}
             </div>
           </div>
@@ -467,7 +467,29 @@ export default function SchoolHome() {
         </div>
       )}
 
-      <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 mt-6">
+      {/* Scope note. Unlike a teacher's home, an admin sees school-wide
+          totals — no primary-vs-co split. Spell it out so the Head /
+          Deputy isn't guessing whether co-teacher tests or other
+          teachers' classes are included. */}
+      <div className="mt-5 rounded-lg bg-slate-50/80 border border-slate-200 px-3 py-2 text-xs text-slate-600">
+        <strong className="text-slate-800">What&apos;s in these totals:</strong>
+        <ul className="mt-1 space-y-0.5 list-disc list-inside">
+          <li>
+            <strong>Teachers</strong> &amp; <strong>Classes</strong>: everyone who joined this school and every class created here.
+          </li>
+          <li>
+            <strong>Tests made</strong>: every test created by any teacher in this school, regardless of who assigned it or whether it&apos;s assigned yet.
+          </li>
+          <li>
+            <strong>Attempts</strong>: every submitted class attempt across every class in your school. Live class engagement (Host live sessions) is tracked separately and does <em>not</em> count here.
+          </li>
+        </ul>
+        <p className="mt-1">
+          The Admin Head and Deputies share this view. Only the Head can transfer the Admin Head role.
+        </p>
+      </div>
+
+      <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 mt-3">
         <Stat href="/school/teachers" label="Teachers"     value={stats?.teachers}  icon={UserRound}     color="from-emerald-500 to-emerald-600" />
         <Stat href="/school/classes"  label="Classes"      value={stats?.classes}   icon={Building2}     color="from-sky-500 to-sky-600" />
         <Stat href="/school/reports"  label="Tests made"   value={stats?.quizzes}   icon={ListChecks}    color="from-amber-500 to-amber-600" />

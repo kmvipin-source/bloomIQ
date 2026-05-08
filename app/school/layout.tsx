@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
 import MobileNav from "@/components/MobileNav";
+import RouteProgress from "@/components/RouteProgress";
 import { supabaseBrowser } from "@/lib/supabase/client";
 
 export default function SchoolLayout({ children }: { children: React.ReactNode }) {
@@ -57,6 +58,8 @@ export default function SchoolLayout({ children }: { children: React.ReactNode }
   }
   return (
     <div className="md:flex min-h-screen">
+      {/* Route progress bar — see /teacher/layout.tsx for rationale. */}
+      <RouteProgress />
       <Sidebar role="super_teacher" />
       <MobileNav role="super_teacher" />
       <main className="flex-1 p-4 md:p-8 overflow-auto">{children}</main>

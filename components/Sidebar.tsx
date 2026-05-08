@@ -31,9 +31,13 @@ const TEACHER: ItemGroup[] = [
     { href: "/teacher/live",     label: "Live class quiz", icon: Radio },
     { href: "/teacher/papers",   label: "Exam Papers",     icon: FileEdit },
   ] },
+  // Order: Reports first because it's the cross-class / cross-test
+  // grand summary teachers want most often (term reviews, parent
+  // meetings). Analytics is intentionally test-scoped — pick a test,
+  // see only that test — so it sits below and is labelled accordingly.
   { label: "Insights", items: [
-    { href: "/teacher/analytics", label: "Analytics", icon: BarChart3 },
-    { href: "/teacher/reports",   label: "Reports",   icon: FileText },
+    { href: "/teacher/reports",   label: "Reports",        icon: FileText },
+    { href: "/teacher/analytics", label: "Test analytics", icon: BarChart3 },
   ] },
   { label: "Assist", items: [
     { href: "/teacher/coach",  label: "Teacher Coach", icon: MessageCircle },
@@ -41,16 +45,44 @@ const TEACHER: ItemGroup[] = [
   ] },
 ];
 
+// School students have TWO distinct mental models that need to stay
+// visually separate to keep navigation simple:
+//
+//   1) "Class" — anything teacher-driven that influences class stats:
+//      Live class quizzes hosted by the teacher, class Bloom mastery,
+//      class averages. The Home page's "Assigned to you" cards live
+//      under the same umbrella but render on the dashboard itself.
+//
+//   2) "Practice" — anything self-driven that does NOT touch class
+//      stats: the student's own practice tests, skill training, weak-
+//      spot diagnosis, and the history of those practice attempts.
+//
+// Mixing these two into a single verb-based group ("Do / Look back",
+// like the independent sidebar uses) was confusing for school
+// students — a Live class quiz and a self-initiated practice test
+// look identical in that grouping but are completely different
+// things from the kid's perspective. So we group by audience axis
+// here, mirroring the order the home dashboard itself uses
+// (Assigned → Class stats → Practice tiles).
+//
+// The independent sidebar keeps its verb grouping because independent
+// students have no class concept — there's only practice, so verbs
+// are the most useful axis for them.
+//
+// Train / Diagnose links stay in the sidebar regardless of the
+// school's plan tier; the landing pages render only the tiles the
+// plan unlocks (via lib/featureAccess). That keeps sidebar layout
+// stable when a school upgrades or downgrades.
 const STUDENT_SCHOOL: ItemGroup[] = [
+  { items: [{ href: "/student", label: "Home", icon: Home }] },
   { label: "Class", items: [
-    { href: "/student",          label: "Home",              icon: Home },
+    { href: "/student/live",     label: "Live class quiz",   icon: Radio },
     { href: "/student/progress", label: "My Class Progress", icon: TrendingUp },
-  ] },
-  { label: "Live", items: [
-    { href: "/student/live", label: "Live class quiz", icon: Radio },
   ] },
   { label: "Practice", items: [
     { href: "/student/generate", label: "Take a practice test", icon: Sparkles },
+    { href: "/student/train",    label: "Train your skills",    icon: Wrench },
+    { href: "/student/diagnose", label: "Diagnose a weakness",  icon: Search },
     { href: "/student/tests",    label: "My Practice",          icon: NotebookPen },
   ] },
 ];
@@ -249,7 +281,7 @@ export default function Sidebar({ role }: { role: SidebarRole }) {
             <ShieldCheck size={16} /> Security
           </Link>
         )}
-        <button onClick={logout} className="sidebar-link w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition">
+        <button type="button" onClick={logout} className="sidebar-link w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition">
           <LogOut size={16} /> Sign out
         </button>
       </div>

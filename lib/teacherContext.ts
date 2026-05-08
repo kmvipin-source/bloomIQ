@@ -362,8 +362,13 @@ export async function buildTeacherContext(teacherId: string): Promise<TeacherCon
     arr.push(a);
     att30ByStudent.set(a.student_id, arr);
   }
+  // Originally required >=2 attempts so a single fluke score didn't crown a
+  // student. But for a class with just one quiz so far, that threshold left
+  // top_students empty even when a student aced the only test. Fall open at
+  // >=1 attempt — the avg_pct + attempts count are still surfaced, so the
+  // teacher (and the Coach) can weight the signal appropriately.
   for (const [sid, atts] of att30ByStudent) {
-    if (atts.length < 2) continue;
+    if (atts.length < 1) continue;
     const r = atts.filter((a) => a.total > 0).map((a) => (a.score / a.total) * 100);
     if (r.length === 0) continue;
     const avg = r.reduce((s, x) => s + x, 0) / r.length;
@@ -393,7 +398,13 @@ export async function buildTeacherContext(teacherId: string): Promise<TeacherCon
     const pcts = last3
       .filter((a) => a.total > 0)
       .map((a) => (a.score / a.total) * 100);
-    const last3Avg = pcts.length >= 2
+    // Originally required pcts.length >= 2 so a single weak attempt didn't
+    // tar a student as at_risk. But that left a class with only one quiz
+    // taken with NO at_risk signal at all — exactly the case where the
+    // teacher most needs the heads-up. Fall open at >=1: a single attempt
+    // <50% is a worth-flagging signal on its own, and the detail string
+    // makes the sample size honest ("avg X% on last 1").
+    const last3Avg = pcts.length >= 1
       ? pcts.reduce((s2, x) => s2 + x, 0) / pcts.length
       : null;
     let declining = false;

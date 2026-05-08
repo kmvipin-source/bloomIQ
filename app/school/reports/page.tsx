@@ -561,20 +561,27 @@ function SchoolReportsInner() {
       <div className="mt-2 flex items-center justify-between gap-3 flex-wrap">
         <div>
           <h1 className="h1 flex items-center gap-2"><BarChart3 size={28} /> Bloom Pulse</h1>
-          <p className="muted mt-1">{schoolName || "Your school"} · How your school is teaching across Bloom’s taxonomy.</p>
+          <p className="muted mt-1">{schoolName || "Your school"} · How your school is teaching across Bloom&rsquo;s taxonomy.</p>
+          {/* Scope note. School-wide aggregations differ from a teacher's
+              filtered view — every test, every class, every attempt in
+              the school is rolled up here, regardless of which teacher
+              created or assigned it. */}
+          <p className="text-xs muted mt-1 max-w-3xl">
+            <strong className="text-slate-700">Scope:</strong> Every test made by any teacher in this school and every submitted class attempt across all classes — filtered by the date range above. Live class engagement is excluded (it&apos;s tracked separately and doesn&apos;t affect the class record). Admin Head and Deputies share this view.
+          </p>
         </div>
         {activeTab === "overview" && (
           <div className="flex items-center gap-2 flex-wrap">
             <select className="select max-w-[160px]" value={rangeId} onChange={(e) => setRangeId(e.target.value)}>
               {RANGE_PRESETS.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}
             </select>
-            <button className="btn btn-secondary" onClick={downloadPDF} disabled={busyExport !== null}>
+            <button type="button" className="btn btn-secondary" onClick={downloadPDF} disabled={busyExport !== null}>
               <Download size={14} /> {busyExport === "pdf" ? "Building…" : "PDF"}
             </button>
-            <button className="btn btn-secondary" onClick={downloadXlsx} disabled={busyExport !== null}>
+            <button type="button" className="btn btn-secondary" onClick={downloadXlsx} disabled={busyExport !== null}>
               <Download size={14} /> {busyExport === "xlsx" ? "Building…" : "Excel"}
             </button>
-            <button className="btn btn-ghost" onClick={copySummary} disabled={busyExport !== null}>
+            <button type="button" className="btn btn-ghost" onClick={copySummary} disabled={busyExport !== null}>
               <Copy size={14} /> Copy summary
             </button>
           </div>
@@ -587,7 +594,7 @@ function SchoolReportsInner() {
         {TABS.map((t) => {
           const active = t.id === activeTab;
           return (
-            <button
+            <button type="button"
               key={t.id}
               role="tab"
               aria-selected={active}

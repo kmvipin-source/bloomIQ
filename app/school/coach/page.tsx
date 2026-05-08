@@ -151,10 +151,10 @@ export default function PrincipalCoachPage() {
           <h1 className="h1 flex items-center gap-2 mt-1">
             <MessageCircle size={28} /> Principal Coach
           </h1>
-          <p className="muted mt-1">Ask anything about your school&rsquo;s test data.</p>
+          <p className="muted mt-1">Ask anything about your school&rsquo;s test data — covers every teacher, class, and student.</p>
         </div>
         <div className="flex items-center gap-2">
-          <button
+          <button type="button"
             className="btn btn-ghost"
             onClick={reset}
             disabled={busy || history.length === 0}
@@ -190,7 +190,7 @@ export default function PrincipalCoachPage() {
             <div className="text-xs mt-0.5">{err}</div>
           </div>
           {retryMessage && (
-            <button
+            <button type="button"
               className="btn btn-ghost text-xs"
               onClick={() => sendMessage(retryMessage)}
               disabled={busy}
@@ -206,7 +206,7 @@ export default function PrincipalCoachPage() {
         {empty && (
           <div className="flex flex-wrap gap-2 mb-3">
             {SUGGESTIONS.map((s) => (
-              <button
+              <button type="button"
                 key={s}
                 className="btn btn-ghost text-xs border border-slate-200 rounded-full"
                 onClick={() => sendMessage(s)}
@@ -228,7 +228,7 @@ export default function PrincipalCoachPage() {
             disabled={busy}
             rows={1}
           />
-          <button
+          <button type="button"
             className="btn btn-primary"
             onClick={() => sendMessage()}
             disabled={busy || !draft.trim()}
@@ -265,7 +265,7 @@ function EmptyState({
       </p>
       <div className="flex flex-wrap gap-2 justify-center mt-5 max-w-lg mx-auto">
         {SUGGESTIONS.map((s) => (
-          <button
+          <button type="button"
             key={s}
             className="btn btn-ghost text-xs border border-slate-200 rounded-full"
             onClick={() => onPick(s)}

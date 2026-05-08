@@ -258,7 +258,26 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       );
     }
 
-    // === Email path — always create a PENDING INVITE. ===
+    // === Email path ===
+    // Two outcomes depending on who owns this email:
+    //
+    //   (a) The email already belongs to a teacher of THIS school — do a
+    //       DIRECT TRANSFER. No invite, no waiting. We demote the previous
+    //       primary to co-teacher, install the target as primary, and
+    //       update classes.owner_id. This is the natural intent when the
+    //       admin types the email of someone already on staff.
+    //
+    //   (b) The email belongs to no one, or to someone in a different
+    //       school — fall through to the existing PENDING INVITE flow. The
+    //       new teacher must accept from their dashboard before joining.
+    //
+    // Pre-fix behaviour was always (b), which meant existing in-school
+    // teachers got a redundant invite and the flow looked broken — the
+    // class stayed Pending and the target's dashboard showed a "Join your
+    // school" card because the invite path momentarily decoupled their
+    // school binding. Defects 3 + 4 both close here.
+    let directTransferTargetId: string | null = null;
+    let directTransferTargetName: string | null = null;
     if (email) {
       const { data: usersList, error: listErr } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 });
       if (listErr) return NextResponse.json({ error: listErr.message }, { status: 500 });
@@ -266,7 +285,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       if (target) {
         const { data: tProf } = await admin
           .from("profiles")
-          .select("role, school_id")
+          .select("id, role, school_id, full_name, is_school_student")
           .eq("id", target.id)
           .maybeSingle();
         if (tProf?.role === "super_teacher" && tProf.school_id && tProf.school_id !== me?.school_id) {
@@ -275,9 +294,64 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             { status: 409 }
           );
         }
+        // Direct-transfer eligibility: same school, teacher role (or
+        // super_teacher acting as teacher), not a school student.
+        const sameSchool = tProf?.school_id && tProf.school_id === cls.school_id;
+        const isTeacherish = tProf?.role === "teacher" || tProf?.role === "super_teacher";
+        if (sameSchool && isTeacherish && !tProf?.is_school_student) {
+          directTransferTargetId = tProf.id;
+          directTransferTargetName = tProf.full_name;
+        }
       }
     }
 
+    if (directTransferTargetId) {
+      // 1) Demote the existing primary on this class to 'co' so they keep
+      //    class access but lose the title.
+      const { data: prevPrimary } = await admin
+        .from("class_teachers")
+        .select("teacher_id")
+        .eq("class_id", classId)
+        .eq("role", "primary")
+        .maybeSingle();
+      const prevId = prevPrimary?.teacher_id || null;
+      if (prevId && prevId !== directTransferTargetId) {
+        await admin
+          .from("class_teachers")
+          .update({ role: "co" })
+          .eq("class_id", classId)
+          .eq("teacher_id", prevId);
+      }
+      // 2) Upsert target as primary. If they were already on the class as
+      //    co or acting, this rewrites their role to 'primary'.
+      const { error: upErr } = await admin
+        .from("class_teachers")
+        .upsert(
+          { class_id: classId, teacher_id: directTransferTargetId, role: "primary" },
+          { onConflict: "class_id,teacher_id" }
+        );
+      if (upErr) return NextResponse.json({ error: `Could not set primary: ${upErr.message}` }, { status: 500 });
+      // 3) Mirror onto classes.owner_id so legacy queries keyed off it
+      //    stay correct.
+      await admin.from("classes").update({ owner_id: directTransferTargetId }).eq("id", classId);
+      // 4) Clear any stale pending invite for this class — the role is
+      //    now filled.
+      await admin
+        .from("class_teacher_invites")
+        .delete()
+        .eq("class_id", classId)
+        .eq("role", "primary");
+
+      return NextResponse.json({
+        ok: true,
+        status: "linked",
+        teacher_id: directTransferTargetId,
+        full_name: directTransferTargetName,
+      });
+    }
+
+    // Fall-through: invite flow for emails that DON'T match an existing
+    // in-school teacher.
     const { error: invErr } = await admin
       .from("class_teacher_invites")
       .upsert(

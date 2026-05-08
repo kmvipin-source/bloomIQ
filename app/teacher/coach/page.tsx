@@ -116,6 +116,14 @@ export default function TeacherCoachPage() {
       setDraft(message);
     } finally {
       setBusy(false);
+      // After a send completes (success OR failure), put focus back on the
+      // textarea so the teacher can type the next question without first
+      // having to click the input again. Without this, the click target is
+      // sometimes hard to land on (especially when scroll has shifted),
+      // which made the second message look like the chat was broken.
+      // queueMicrotask so React commits the disabled→enabled transition
+      // before we focus.
+      queueMicrotask(() => textareaRef.current?.focus());
     }
   }
 
@@ -152,7 +160,7 @@ export default function TeacherCoachPage() {
           <p className="muted mt-1">Ask anything about your classes.</p>
         </div>
         <div className="flex items-center gap-2">
-          <button
+          <button type="button"
             className="btn btn-ghost"
             onClick={reset}
             disabled={busy || history.length === 0}
@@ -188,7 +196,7 @@ export default function TeacherCoachPage() {
             <div className="text-xs mt-0.5">{err}</div>
           </div>
           {retryMessage && (
-            <button
+            <button type="button"
               className="btn btn-ghost text-xs"
               onClick={() => sendMessage(retryMessage)}
               disabled={busy}
@@ -204,7 +212,7 @@ export default function TeacherCoachPage() {
         {empty && (
           <div className="flex flex-wrap gap-2 mb-3">
             {SUGGESTIONS.map((s) => (
-              <button
+              <button type="button"
                 key={s}
                 className="btn btn-ghost text-xs border border-slate-200 rounded-full"
                 onClick={() => sendMessage(s)}
@@ -226,7 +234,7 @@ export default function TeacherCoachPage() {
             disabled={busy}
             rows={1}
           />
-          <button
+          <button type="button"
             className="btn btn-primary"
             onClick={() => sendMessage()}
             disabled={busy || !draft.trim()}
@@ -263,7 +271,7 @@ function EmptyState({
       </p>
       <div className="flex flex-wrap gap-2 justify-center mt-5 max-w-lg mx-auto">
         {SUGGESTIONS.map((s) => (
-          <button
+          <button type="button"
             key={s}
             className="btn btn-ghost text-xs border border-slate-200 rounded-full"
             onClick={() => onPick(s)}

@@ -296,8 +296,11 @@ export async function buildSchoolContext(schoolId: string): Promise<SchoolContex
     arr.push(a);
     att30ByStudent.set(a.student_id, arr);
   }
+  // Lowered from >=2 to >=1: see lib/teacherContext.ts for rationale —
+  // matches the teacher coach so school + teacher coaches give the same
+  // signal on a class with only one quiz so far.
   for (const [sid, atts] of att30ByStudent) {
-    if (atts.length < 2) continue;
+    if (atts.length < 1) continue;
     const r = atts.filter((a) => a.total > 0).map((a) => (a.score / a.total) * 100);
     if (r.length === 0) continue;
     const avg = r.reduce((s, x) => s + x, 0) / r.length;
@@ -328,7 +331,11 @@ export async function buildSchoolContext(schoolId: string): Promise<SchoolContex
     const pcts = last3
       .filter((a) => a.total > 0)
       .map((a) => (a.score / a.total) * 100);
-    const last3Avg = pcts.length >= 2
+    // Lowered from >=2 to >=1: see lib/teacherContext.ts for rationale.
+    // A single attempt under 50% is a real signal worth surfacing to the
+    // school admin. The detail string ("avg X% on last 1") keeps the
+    // sample size visible.
+    const last3Avg = pcts.length >= 1
       ? pcts.reduce((s2, x) => s2 + x, 0) / pcts.length
       : null;
     let declining = false;
