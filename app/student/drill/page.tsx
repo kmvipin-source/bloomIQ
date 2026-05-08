@@ -136,7 +136,7 @@ export default function DailyDrillPage() {
           </div>
           <div className="mt-4 flex items-center justify-center gap-2">
             <Link href="/student/practice" className="btn btn-primary">Try adaptive practice</Link>
-            <button onClick={load} className="btn btn-secondary"><RefreshCw size={14} /> Refresh</button>
+            <button type="button" onClick={load} className="btn btn-secondary"><RefreshCw size={14} /> Refresh</button>
           </div>
         </div>
       )}
@@ -171,7 +171,7 @@ export default function DailyDrillPage() {
             {current.options.map((o, i) => {
               const sel = picks[current.id] === i;
               return (
-                <button
+                <button type="button"
                   key={i}
                   onClick={() => pick(i)}
                   className={`text-left px-4 py-3 rounded-lg border-2 text-sm transition ${
@@ -189,7 +189,7 @@ export default function DailyDrillPage() {
           </div>
 
           <div className="mt-6 flex items-center justify-between">
-            <button
+            <button type="button"
               onClick={() => setIdx((i) => Math.max(0, i - 1))}
               disabled={idx === 0}
               className="btn btn-ghost"
@@ -197,14 +197,14 @@ export default function DailyDrillPage() {
               <ArrowLeft size={14} /> Previous
             </button>
             {idx < items.length - 1 ? (
-              <button
+              <button type="button"
                 onClick={() => setIdx((i) => Math.min(items.length - 1, i + 1))}
                 className="btn btn-primary"
               >
                 Next <ChevronRight size={14} />
               </button>
             ) : (
-              <button
+              <button type="button"
                 onClick={submit}
                 disabled={submitting || !allAnswered}
                 className="btn btn-primary"
@@ -275,7 +275,7 @@ export default function DailyDrillPage() {
           </div>
 
           <div className="mt-6 flex flex-wrap gap-2 justify-center">
-            <button onClick={load} className="btn btn-secondary"><RefreshCw size={14} /> New drill</button>
+            <button type="button" onClick={load} className="btn btn-secondary"><RefreshCw size={14} /> New drill</button>
             <Link href="/student" className="btn btn-primary">Back to home</Link>
           </div>
         </div>

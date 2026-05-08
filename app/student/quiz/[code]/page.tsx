@@ -294,7 +294,7 @@ export default function TakeQuiz() {
           <div className="text-3xl mb-2">😕</div>
           <div className="font-semibold mb-2">Couldn&apos;t open this test</div>
           <div className="text-sm text-slate-600 mb-4">{loadErr}</div>
-          <button className="btn btn-secondary" onClick={() => router.replace("/student")}>Back to home</button>
+          <button type="button" className="btn btn-secondary" onClick={() => router.replace("/student")}>Back to home</button>
         </div>
       </div>
     );
@@ -408,7 +408,7 @@ export default function TakeQuiz() {
             {q.options.map((o, i) => {
               const sel = answers[q.id] === i;
               return (
-                <button
+                <button type="button"
                   key={i}
                   onClick={() => setAnswers((a) => ({ ...a, [q.id]: i }))}
                   className={`w-full text-left p-4 rounded-lg border transition flex gap-3 items-center ${
@@ -426,12 +426,12 @@ export default function TakeQuiz() {
         </div>
 
         <div className="flex items-center justify-between mt-6">
-          <button className="btn btn-secondary" disabled={idx === 0} onClick={() => setIdx((i) => Math.max(0, i - 1))}>
+          <button type="button" className="btn btn-secondary" disabled={idx === 0} onClick={() => setIdx((i) => Math.max(0, i - 1))}>
             <ChevronLeft size={16} /> Back
           </button>
           <div className="text-sm muted hidden sm:flex gap-1">
             {questions.map((qq, i) => (
-              <button key={qq.id} onClick={() => setIdx(i)}
+              <button type="button" key={qq.id} onClick={() => setIdx(i)}
                 className={`w-7 h-7 rounded text-xs font-semibold ${
                   i === idx ? "bg-emerald-600 text-white"
                     : answers[qq.id] !== undefined ? "bg-emerald-100 text-emerald-800"
@@ -441,11 +441,11 @@ export default function TakeQuiz() {
             ))}
           </div>
           {idx < questions.length - 1 ? (
-            <button className="btn btn-primary" onClick={() => setIdx((i) => Math.min(questions.length - 1, i + 1))}>
+            <button type="button" className="btn btn-primary" onClick={() => setIdx((i) => Math.min(questions.length - 1, i + 1))}>
               Next <ChevronRight size={16} />
             </button>
           ) : (
-            <button className="btn btn-primary" disabled={submitting} onClick={() => {
+            <button type="button" className="btn btn-primary" disabled={submitting} onClick={() => {
               if (answered < questions.length && !confirm(`You haven't answered ${questions.length - answered} question(s). Submit anyway?`)) return;
               submit();
             }}>

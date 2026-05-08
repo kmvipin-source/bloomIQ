@@ -78,7 +78,7 @@ export default function TwoFactorNudge() {
         borderColor: "var(--color-border, #e2e8f0)",
       }}
     >
-      <button
+      <button type="button"
         onClick={dismiss}
         aria-label="Dismiss"
         className="absolute top-2 right-2 p-1 rounded hover:bg-slate-100"
@@ -102,7 +102,7 @@ export default function TwoFactorNudge() {
             >
               <ShieldCheck size={12} /> Enable 2FA
             </Link>
-            <button
+            <button type="button"
               onClick={dismiss}
               className="btn btn-secondary text-xs px-3 py-1.5"
             >

@@ -123,7 +123,7 @@ export default function TeacherDigestPage() {
               Last refreshed {relativeFromNow(data.asOf)}
             </span>
           )}
-          <button
+          <button type="button"
             className="btn btn-secondary"
             onClick={() => fetchDigest({ isRefresh: true })}
             disabled={loading || refreshing}
@@ -143,7 +143,7 @@ export default function TeacherDigestPage() {
             <div className="font-semibold">Couldn&rsquo;t generate the brief</div>
             <div className="text-xs mt-0.5">{err}</div>
           </div>
-          <button
+          <button type="button"
             className="btn btn-ghost text-xs"
             onClick={() => fetchDigest({ isRefresh: true })}
             disabled={refreshing}

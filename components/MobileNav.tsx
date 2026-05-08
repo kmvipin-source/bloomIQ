@@ -129,7 +129,7 @@ export default function MobileNav({ role }: { role: Role }) {
           <span className="text-2xl">🌱</span>
           <span className="font-bold tracking-tight">BloomIQ</span>
         </Link>
-        <button
+        <button type="button"
           onClick={() => setOpen((v) => !v)}
           aria-label={open ? "Close menu" : "Open menu"}
           className="p-2 rounded-lg"
@@ -171,7 +171,7 @@ export default function MobileNav({ role }: { role: Role }) {
                 })}
               </div>
             ))}
-            <button
+            <button type="button"
               onClick={logout}
               className="flex items-center gap-3 px-3 py-3 rounded-lg text-sm mt-3 border-t pt-4"
               style={{ color: "var(--color-fg-soft)", borderColor: "var(--color-border)" }}

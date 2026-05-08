@@ -198,7 +198,7 @@ export default function MyPracticePage() {
                 <Link href={`/student/quiz/${t.code}`} className="btn btn-primary">
                   <Play size={14} /> {t.lastAttemptAt ? "Retake" : "Start"}
                 </Link>
-                <button className="btn btn-ghost text-red-600" onClick={() => remove(t.id, t.name)} title="Delete practice">
+                <button type="button" className="btn btn-ghost text-red-600" onClick={() => remove(t.id, t.name)} title="Delete practice">
                   <Trash2 size={14} />
                 </button>
               </div>

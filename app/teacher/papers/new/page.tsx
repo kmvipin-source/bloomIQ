@@ -384,7 +384,7 @@ export default function NewPaperPage() {
       {err && <div className="mt-4 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{err}</div>}
 
       <div className="flex justify-end mt-4">
-        <button className="btn btn-primary" onClick={generate} disabled={busy}>
+        <button type="button" className="btn btn-primary" onClick={generate} disabled={busy}>
           {busy ? <><span className="spinner" /> Building paper… (45–90s)</> : <><Sparkles size={16} /> Generate paper</>}
         </button>
       </div>

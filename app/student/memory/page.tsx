@@ -169,7 +169,7 @@ export default function MemoryPage() {
               : "No more reviews due today. Come back tomorrow — your queue resets at midnight."}
           </p>
           <div className="mt-4 flex gap-2 justify-center">
-            <button className="btn btn-secondary" onClick={load}>Refresh</button>
+            <button type="button" className="btn btn-secondary" onClick={load}>Refresh</button>
             <Link href="/student" className="btn btn-primary">Back to dashboard</Link>
           </div>
         </div>

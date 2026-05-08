@@ -43,7 +43,7 @@ export default function Toaster() {
           >
             <Icon size={18} className="mt-0.5 shrink-0" />
             <div className="text-sm font-medium flex-1">{t.message}</div>
-            <button
+            <button type="button"
               onClick={() => dismiss(t.id)}
               aria-label="Dismiss"
               className="shrink-0 opacity-60 hover:opacity-100"

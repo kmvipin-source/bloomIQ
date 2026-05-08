@@ -186,7 +186,7 @@ export default function XrayPage() {
           <div className="mt-3 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{err}</div>
         )}
 
-        <button className="btn btn-primary mt-4" onClick={analyze} disabled={!canSubmit}>
+        <button type="button" className="btn btn-primary mt-4" onClick={analyze} disabled={!canSubmit}>
           {busy ? <><Loader2 className="animate-spin" size={16} /> Reading the paper…</> : <><Sparkles size={16} /> Run X-Ray</>}
         </button>
       </div>

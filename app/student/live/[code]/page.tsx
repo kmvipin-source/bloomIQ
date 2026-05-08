@@ -187,7 +187,7 @@ export default function StudentLivePage() {
             maxLength={40}
           />
           {err && <div className="mt-3 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{err}</div>}
-          <button onClick={join} disabled={busy} className="btn btn-primary w-full mt-3">
+          <button type="button" onClick={join} disabled={busy} className="btn btn-primary w-full mt-3">
             {busy ? <span className="spinner" /> : "Join"}
           </button>
         </div>
@@ -229,7 +229,7 @@ export default function StudentLivePage() {
               const isPick = picked?.idx === i;
               const dim = picked && !isPick ? "opacity-40" : "";
               return (
-                <button
+                <button type="button"
                   key={i}
                   onClick={() => pick(i)}
                   disabled={!!picked || busy || remainingSec <= 0}

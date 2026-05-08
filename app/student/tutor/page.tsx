@@ -250,11 +250,11 @@ function TutorInner() {
           <p className="text-xs muted">Enter to send · Shift+Enter for new line · {input.length}/2000</p>
           <div className="flex gap-2">
             {history.length > 0 && (
-              <button className="btn btn-secondary" onClick={reset} disabled={busy}>
+              <button type="button" className="btn btn-secondary" onClick={reset} disabled={busy}>
                 <Trash2 size={14} /> Clear
               </button>
             )}
-            <button className="btn btn-primary" onClick={send} disabled={busy || !input.trim()}>
+            <button type="button" className="btn btn-primary" onClick={send} disabled={busy || !input.trim()}>
               {busy ? <><Loader2 className="animate-spin" size={14} /> Sending…</> : <><Send size={14} /> Send</>}
             </button>
           </div>

@@ -129,13 +129,13 @@ export default function TeacherRetakeRequests() {
                 />
               </div>
               <div className="flex gap-2">
-                <button
+                <button type="button"
                   className="btn btn-primary text-xs inline-flex items-center gap-1.5"
                   disabled={busy === it.id}
                   onClick={() => decide(it.id, "approve")}
                 >
                   <CheckCircle2 size={12} /> Approve</button>
-                <button
+                <button type="button"
                   className="btn btn-secondary text-xs inline-flex items-center gap-1.5"
                   disabled={busy === it.id}
                   onClick={() => decide(it.id, "deny")}

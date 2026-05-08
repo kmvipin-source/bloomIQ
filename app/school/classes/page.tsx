@@ -437,7 +437,7 @@ export default function SchoolClassesPage() {
         </div>
 
         <div className="flex justify-end mt-4">
-          <button
+          <button type="button"
             className="btn btn-primary"
             disabled={!canSubmit}
             onClick={createClass}
@@ -545,7 +545,7 @@ export default function SchoolClassesPage() {
                   </td>
                   <td className="px-4 py-3 text-right whitespace-nowrap">
                     {c.pendingPrimaryEmail && (
-                      <button
+                      <button type="button"
                         className="btn btn-ghost text-xs mr-1"
                         onClick={() => copyInvite(c, c.pendingPrimaryEmail!)}
                         title="Copy invite message"
@@ -553,7 +553,7 @@ export default function SchoolClassesPage() {
                         {copied === c.id ? "Copied" : "Copy invite"}
                       </button>
                     )}
-                    <button
+                    <button type="button"
                       className="btn btn-ghost text-xs"
                       onClick={() => {
                         setAssignFor(assignFor === c.id ? null : c.id);
@@ -571,7 +571,7 @@ export default function SchoolClassesPage() {
                             : "Assign primary"}
                     </button>
                     {c.actingName && (
-                      <button
+                      <button type="button"
                         className="btn btn-ghost text-xs ml-1"
                         onClick={() => endActingCover(c.id, c.primaryName, c.actingName)}
                         disabled={assignBusy}
@@ -650,14 +650,14 @@ export default function SchoolClassesPage() {
                           disabled={assignBusy}
                           autoFocus
                         />
-                        <button
+                        <button type="button"
                           className="btn btn-primary"
                           disabled={assignBusy || !assignEmail.trim()}
                           onClick={() => assignPrimary(c.id, assignEmail.trim() || null)}
                         >
                           {assignBusy ? <span className="spinner" /> : "Save"}
                         </button>
-                        <button
+                        <button type="button"
                           className="btn btn-ghost"
                           onClick={() => {
                             const warn =
@@ -673,7 +673,7 @@ export default function SchoolClassesPage() {
                         >
                           Unassign
                         </button>
-                        <button className="btn btn-ghost" onClick={() => { setAssignFor(null); setAssignErr(null); setAssignStatus(null); }} disabled={assignBusy}>
+                        <button type="button" className="btn btn-ghost" onClick={() => { setAssignFor(null); setAssignErr(null); setAssignStatus(null); }} disabled={assignBusy}>
                           Cancel
                         </button>
                       </div>

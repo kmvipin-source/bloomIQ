@@ -438,7 +438,7 @@ export default function ResultsPage() {
       <div className="card mt-4">
         <div className="flex items-center justify-between mb-3">
           <h3 className="h2">Personalised study plan</h3>
-          <button className="btn btn-primary" onClick={getRecs} disabled={loadingRecs}>
+          <button type="button" className="btn btn-primary" onClick={getRecs} disabled={loadingRecs}>
             {loadingRecs ? <><span className="spinner" /> Generating…</> : <><Sparkles size={16} /> Generate</>}
           </button>
         </div>
@@ -468,7 +468,7 @@ export default function ResultsPage() {
               </div>
             </div>
             {!diagnosed && (
-              <button className="btn btn-primary" onClick={diagnose} disabled={diagBusy}>
+              <button type="button" className="btn btn-primary" onClick={diagnose} disabled={diagBusy}>
                 {diagBusy ? <><span className="spinner" /> Diagnosing…</> : <><Search size={16} /> Diagnose my mistakes</>}
               </button>
             )}
@@ -527,7 +527,7 @@ export default function ResultsPage() {
               </div>
             </div>
             {!srsResult && (
-              <button className="btn btn-primary" onClick={enqueueMistakes} disabled={srsBusy}>
+              <button type="button" className="btn btn-primary" onClick={enqueueMistakes} disabled={srsBusy}>
                 {srsBusy ? <><span className="spinner" /> Adding…</> : <><Brain size={16} /> Add my mistakes to memory</>}
               </button>
             )}
@@ -566,7 +566,7 @@ export default function ResultsPage() {
               </div>
             </div>
             {!traps && (
-              <button className="btn btn-primary" onClick={diagnoseTraps} disabled={trapBusy}>
+              <button type="button" className="btn btn-primary" onClick={diagnoseTraps} disabled={trapBusy}>
                 {trapBusy ? <><span className="spinner" /> Hunting traps…</> : <><Crosshair size={16} /> Find my traps</>}
               </button>
             )}
@@ -630,7 +630,7 @@ export default function ResultsPage() {
                 <option value="CAT">CAT</option>
                 <option value="CUSTOM">Custom</option>
               </select>
-              <button className="btn btn-primary" onClick={predictRank} disabled={rankBusy}>
+              <button type="button" className="btn btn-primary" onClick={predictRank} disabled={rankBusy}>
                 {rankBusy ? <><span className="spinner" /> Calculating…</> : <><Trophy size={16} /> Predict rank</>}
               </button>
             </div>

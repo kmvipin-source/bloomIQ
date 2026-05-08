@@ -167,7 +167,7 @@ export default function GraphPage() {
                 </>
               )}
             </div>
-            <button className="btn btn-secondary" onClick={() => load(true)} disabled={busy}>
+            <button type="button" className="btn btn-secondary" onClick={() => load(true)} disabled={busy}>
               {busy ? <><Loader2 className="animate-spin" size={14} /> Rebuilding…</> : <><RefreshCw size={14} /> Rebuild graph</>}
             </button>
           </div>

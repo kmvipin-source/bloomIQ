@@ -230,15 +230,15 @@ export default function SprintPage() {
           )}
 
           <div className="flex gap-2 flex-wrap">
-            <button className="btn btn-primary" onClick={save} disabled={busy}>
+            <button type="button" className="btn btn-primary" onClick={save} disabled={busy}>
               {busy ? <><Loader2 className="animate-spin" size={16} /> Saving…</> : <><Sparkles size={16} /> {resp?.configured ? "Update" : "Start sprint"}</>}
             </button>
             {resp?.configured && (
               <>
-                <button className="btn btn-secondary" onClick={() => { setEditMode(false); setErr(null); }}>
+                <button type="button" className="btn btn-secondary" onClick={() => { setEditMode(false); setErr(null); }}>
                   Cancel
                 </button>
-                <button className="btn btn-ghost text-red-700 ml-auto" onClick={clearSprint} disabled={busy}>
+                <button type="button" className="btn btn-ghost text-red-700 ml-auto" onClick={clearSprint} disabled={busy}>
                   <Trash2 size={14} /> Stop tracking
                 </button>
               </>
@@ -294,7 +294,7 @@ export default function SprintPage() {
               )}
             </div>
           </div>
-          <button
+          <button type="button"
             onClick={() => setEditMode(true)}
             className="bg-white/20 hover:bg-white/30 text-white text-sm font-semibold rounded-lg px-3 py-2 inline-flex items-center gap-2"
           >

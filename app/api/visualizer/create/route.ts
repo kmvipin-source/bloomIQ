@@ -3,6 +3,7 @@ import { groqJSON } from "@/lib/groq";
 import { geminiJSON, geminiText, isGeminiConfigured } from "@/lib/gemini";
 import { fixFrameLayout, type LayoutElement } from "@/lib/visualizerLayout";
 import { getBearer, supabaseServer } from "@/lib/supabase/server";
+import { requireFeature } from "@/lib/featureAccess.server";
 
 export const runtime = "nodejs";
 export const maxDuration = 90;
@@ -21,39 +22,69 @@ export const maxDuration = 90;
 // since these are rendered with dangerouslySetInnerHTML on the client.
 // =============================================================================
 
-const SYSTEM = `You are a competitive-exam concept visualizer. Output a sequence of 5 frames; the React renderer will use Motion to interpolate element positions between frames so shapes that share an id move smoothly. Your job is to give the renderer clean keyframes.
+const SYSTEM = `You are a concept visualizer for any technical or scientific subject — academic OR professional. Output a sequence of 5 frames; the React renderer will use Motion to interpolate element positions between frames so shapes that share an id move smoothly. Your job is to give the renderer clean keyframes.
 
 ================================================================================
 STAGE 1 — INTERNAL PLANNING (think this through, do NOT emit it)
 ================================================================================
 Before writing any JSON, mentally answer:
-  Q1: What domain is the topic? (mechanics / electromagnetism / optics /
-      thermodynamics / cell biology / organic chemistry / electronics /
-      data-structures / economics / etc.)
-  Q2: What are the 5 actual phases the student needs to see? They MUST be the
+  Q1: What domain is the topic? Examples (non-exhaustive):
+        Academic / scientific  — mechanics, electromagnetism, optics,
+                                 thermodynamics, cell biology, organic chemistry,
+                                 electronics, data structures, economics.
+        Software / programming — language internals (HashMap collisions, GC,
+                                 closures), algorithms, design patterns,
+                                 concurrency, database transactions, OS
+                                 scheduling, networking, security protocols.
+        Enterprise / mainframe — CICS transaction flow, JCL job lifecycle,
+                                 DB2 query plan, MQ message flow, COBOL program
+                                 structure, IMS hierarchical access.
+        Systems / architecture — distributed systems, microservices, message
+                                 queues, caching layers, load balancing, OAuth,
+                                 TLS handshake, DNS resolution.
+        Business / process     — supply chain, ITIL incident lifecycle, SDLC,
+                                 ERP modules, accounting cycle, KYC flow.
+  Q2: What are the 5 actual phases the learner needs to see? They MUST be the
       real, named stages of the concept — not generic "intro / middle / end".
-        - For "Projectile motion" → Launch / Ascent / Peak / Descent / Impact
-        - For "Krebs cycle"      → Acetyl-CoA enters / Citrate forms /
-                                   α-Ketoglutarate / Succinyl-CoA / Oxaloacetate regen
-        - For "Carnot cycle"     → Isothermal expansion (T_h) / Adiabatic
-                                   expansion / Isothermal compression (T_c) /
-                                   Adiabatic compression / Net work label
-        - For "Op-amp inverting amplifier" → Input applied / Virtual short /
-                                             Current through R_in / Same current
-                                             through R_f / V_out = -(R_f/R_in)·V_in
+        - "Projectile motion"     → Launch / Ascent / Peak / Descent / Impact
+        - "Krebs cycle"           → Acetyl-CoA enters / Citrate forms /
+                                    α-Ketoglutarate / Succinyl-CoA / Oxaloacetate regen
+        - "Carnot cycle"          → Isothermal expansion (T_h) / Adiabatic
+                                    expansion / Isothermal compression (T_c) /
+                                    Adiabatic compression / Net work label
+        - "Op-amp inverting amp"  → Input applied / Virtual short /
+                                    Current through R_in / Same current
+                                    through R_f / V_out = -(R_f/R_in)·V_in
+        - "Java HashMap put"      → Hash compute / Bucket index / Empty bucket
+                                    insert / Collision (chain to linked list) /
+                                    Tree-ify when chain ≥ 8
+        - "CICS transaction flow" → Terminal input / TCT lookup / Task created
+                                    in TCB / BMS map send / SYNCPOINT commit
+        - "OAuth 2.0 auth code"   → User clicks login / Redirect to auth
+                                    server with client_id / User consents,
+                                    code returned / Code exchanged for token /
+                                    Token used on resource server
   Q3: What entities live in each phase? Name them with semantic ids:
       "piston", "gas_molecule_1", "hot_reservoir", "cold_reservoir",
       "v_in_label", "tension_arrow_left", "rope", "pulley_wheel",
-      "mitochondrion", "atp_molecule", etc.
+      "mitochondrion", "atp_molecule", "hash_bucket_3", "linked_list_node",
+      "cics_tct_entry", "tcb_block", "auth_server", "access_token",
+      "kafka_partition", "tls_client_hello", etc.
       DO NOT use generic ids like "circle1", "rect2", "ball" when the actual
-      thing is "electron" or "succinate" or "load_resistor".
-  Q4: What's the takeaway formula or rule that should appear in frame 5? It
-      must be the canonical equation/principle for this exact topic
-      (F = ma, η = 1 - T_c/T_h, V_out = -A·V_in, ΔG = ΔH - TΔS, etc).
+      thing is "electron" or "succinate" or "load_resistor" or "hash_bucket".
+  Q4: What's the takeaway formula, rule, or canonical signature that should
+      appear in frame 5? It must be the canonical fact for this exact topic.
+      Examples by domain:
+        - Physics:  F = ma, η = 1 - T_c/T_h, V_out = -A·V_in
+        - Chem:     ΔG = ΔH - TΔS
+        - Software: HashMap.put: O(1) avg, O(log n) tree-ified worst case
+        - Mainframe: CICS task = TCB + EIB + working storage; commit boundary at SYNCPOINT
+        - Protocols: OAuth code flow: code (one-time) → token (bearer)
+        - Algorithms: QuickSort avg O(n log n), worst O(n²) on sorted input
 
-If the topic isn't a real scientific/mathematical concept (e.g. "draw a cat"),
-gracefully treat it as the closest learning concept (anatomy of a cat) — never
-output abstract decorative shapes.
+If the topic isn't a real concept (e.g. "draw a cat"), gracefully treat it as
+the closest learning concept (anatomy of a cat) — never output abstract
+decorative shapes.
 
 ================================================================================
 STAGE 2 — JSON OUTPUT (this is what you emit)
@@ -138,7 +169,12 @@ Rules:
     - **Cell biology / metabolism** → labelled organelles or substrate molecules with arrows showing enzymatic conversion. Each step shows the actual molecule name (Acetyl-CoA, Pyruvate, etc).
     - **Organic chemistry** → Kekulé-style structures: rings, bond lines, atomic labels (C, H, O, N), reaction arrows with conditions over them.
     - **Optics** → light rays as straight paths with arrowheads, lens/mirror cross-section, normal lines, angles labelled (i, r, c).
-    - **Data structures / algorithms** → boxes for nodes/cells, arrows for pointers, the active node emphasised, index labels.
+    - **Data structures / algorithms** → boxes for nodes/cells, arrows for pointers, the active node emphasised, index labels. For HashMap: array of buckets (rect grid) with index labels 0..n-1; each bucket either empty or holds a chain of node-rects with (key, value, next) text labels. For trees: parent/child rects connected by lines, the visited node emphasised. For sorting: an array of bars whose heights represent values; swapped pair gets emphasize+wiggle.
+    - **Software systems / architecture** → labelled service/component rects (e.g. "API Gateway", "Auth Service", "Postgres", "Redis", "Kafka topic 'orders'"), connected by directional arrows (paths with arrowheads). Each arrow gets a label like "POST /login", "publish OrderCreated", "SELECT … FOR UPDATE". Use animate=flow on the active call path. Stack layers vertically (client at top, services in middle, datastores at bottom) when the topology is layered.
+    - **Mainframe / CICS / JCL** → terminal/3270 rect at the left labelled with the transid (e.g. "TRAN: ORDR"), then the CICS region rect containing TCT entry, TCB block, EIB block, working storage, all stacked. Arrows show the journey: terminal → TCT lookup → TCB dispatch → COBOL program → DB2/VSAM call → BMS map send → SYNCPOINT. Use animate=flash on the active block per frame. For JCL: vertically stacked job/step rects with DD-statement sub-rects, arrows showing dataset I/O.
+    - **Networking / protocols** → client rect on left, server(s) on right, arrows between them as path elements with labelled message text above each arrow ("ClientHello", "ServerHello + cert", "Finished"). Number the arrows 1, 2, 3 to convey ordering. Time flows top-to-bottom. animate=flow on the in-flight message of the current frame.
+    - **Concurrency / threads** → vertical lanes per thread, time flows top-to-bottom, locks shown as small key icons (rect + circle), critical sections shaded; deadlock visualised as two threads each holding what the other wants.
+    - **Business / lifecycle processes** → swim-lanes per actor (User / System / Approver / etc.) running left-to-right, rounded-rect activity nodes connected by arrows, decision diamonds (polygon) where branching happens, the active node emphasised per frame.
 - **WHAT TWEEN BETWEEN FRAMES MEANS:** if the same physical entity exists in frame N and frame N+1, give it the SAME id and the renderer will smoothly interpolate its position/size/rotation. Use this to make motion read continuously: a piston compressing the gas → same "piston" id with different x; the ball flying through air → same "ball" id with different (cx, cy); the electron orbiting → same "electron" id with the orbit preset PLUS slightly different cx/cy keyframes per frame so the orbit precesses.
 - Palette: #10b981 (green), #f59e0b (amber), #ef4444 (red), #6366f1 (indigo), #ec4899 (pink), #06b6d4 (cyan), #8b5cf6 (purple), #0f172a (slate-900 for text). Mix at least 3 hues per frame.
 - For text, use Unicode glyphs freely: subscripts (v₀, t₁), superscripts (m²), symbols (θ, π, Δ, →, ↑, ↓), and inline equations ("F = ma", "v² = u² + 2as"). At least 3 text labels per frame, plus units where applicable ("m/s", "N", "kg").
@@ -170,6 +206,23 @@ WORKED EXAMPLES — note the SEMANTIC ids and the domain-specific elements:
    - Persistent ids: "opamp_triangle" (polygon), "v_minus_pin", "v_plus_pin", "ground", "r_in" (zigzag path), "r_f" (zigzag path), "v_in_label", "v_out_label", "current_arrow"
    - animate=flash on v_in_label, animate=flow on the wire path showing current direction.
    - Frame 5 takeaway: "V_out = -(R_f / R_in) · V_in"
+
+5) "How a Java HashMap handles collisions":
+   - Phases: Hash compute (h = key.hashCode()) / Bucket index (h & (n-1)) / Empty bucket — direct insert / Collision — append to linked-list chain / Tree-ify when chain length ≥ 8
+   - Persistent ids: "key_node", "value_node", "hash_label", "bucket_array" (group of 8 rects in a row), "bucket_3" (the indexed bucket, emphasised), "chain_node_1", "chain_node_2", "tree_root"
+   - Frame 1: key/value rects on left with arrow labelled "hashCode()" pointing to "hash_label" text. Frame 2: "h & (n-1)" formula text + an arrow from hash_label down into bucket_3. Frame 3: bucket_3 receives the entry rect; its 'next' pointer is null. Frame 4: a second entry collides — animate=flow arrow shows the new node being chained off bucket_3. Frame 5: chain length hits 8, the chain morphs into a tree node layout (rects connected in tree shape) with takeaway "put: O(1) avg, O(log n) tree-ified worst case".
+   - animate=flash on hash_label in frame 1; animate=flow on the chain arrow in frame 4.
+
+6) "CICS transaction lifecycle":
+   - Phases: Terminal sends transid / TCT lookup finds program / Task dispatched on TCB with EIB / Program runs (DB2 / VSAM I/O) / SYNCPOINT commits + BMS map back to terminal
+   - Persistent ids: "terminal_3270" (rect, left), "transid_label", "cics_region" (large rect, right), "tct_entry" (rect inside region), "tcb_block" (rect), "eib_block" (rect), "working_storage" (rect), "program_node" (rect), "db2_cylinder" (ellipse below), "syncpoint_marker", "request_arrow", "response_arrow"
+   - Frame 1: terminal_3270 emphasised with text "TRAN: ORDR" + an animate=flow arrow leaving toward cics_region. Frame 2: tct_entry emphasised with text "ORDR → ORDPGM01". Frame 3: tcb_block + eib_block + working_storage appear inside the region, all newly created. Frame 4: program_node emphasised, animate=flow arrow to db2_cylinder labelled "EXEC SQL SELECT". Frame 5: syncpoint_marker pulses, response_arrow with animate=flow returns to terminal carrying a BMS map; takeaway rect: "CICS task = TCT entry + TCB + EIB + working storage; commit at SYNCPOINT".
+
+7) "OAuth 2.0 authorization-code flow":
+   - Phases: User clicks "Login with X" / Browser redirected to auth server with client_id + redirect_uri / User consents, code returned to redirect_uri / App exchanges code + secret for access_token / App calls resource server with Bearer token
+   - Persistent ids: "user_browser" (rect, left), "client_app" (rect, mid-left), "auth_server" (rect, mid-right), "resource_server" (rect, right), "code_label", "token_label", "msg_arrow_1..5"
+   - Each frame highlights ONE arrow with animate=flow + emphasize, and labels it with the actual HTTP message ("GET /authorize?client_id=…&redirect_uri=…", "302 redirect to /callback?code=abc", "POST /token  code=abc&secret=…", "200 { access_token: 'eyJ…' }", "GET /api/me  Authorization: Bearer eyJ…").
+   - Frame 5 takeaway: "code (one-time, front-channel) → access_token (bearer, back-channel)".
 
 Output the JSON. No explanation outside the JSON.`;
 
@@ -357,6 +410,19 @@ export async function POST(req: Request) {
     const { data: { user } } = await sb.auth.getUser();
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
+    // Server-side feature gate. Concept Visualizer is gated to top-tier
+    // plans (Premium Plus / School Plus). The client-side dashboard tile
+    // already locks-and-paywalls non-eligible users, but a determined user
+    // could POST to this endpoint directly — so we enforce on the server
+    // too. Returns a structured 403 the UI can show as an upgrade CTA.
+    const gate = await requireFeature(user.id, "concept_visualizer");
+    if (!gate.allowed) {
+      return NextResponse.json(
+        { error: gate.reason, code: "feature_locked", required_tier: gate.requiredTier },
+        { status: 403 },
+      );
+    }
+
     const body = await req.json().catch(() => ({}));
     const topic: string = String(body.topic || "").trim();
     if (topic.length < 3) {
@@ -366,7 +432,42 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Topic too long (max 200 chars)." }, { status: 400 });
     }
 
-    const userPrompt = `Topic: ${topic}\n\nProduce the JSON now. 5 frames, typed elements, ids reused across frames for elements that should tween.`;
+    // Soft profile bias — sent to the model as a one-line context hint
+    // so ambiguous topics ("stack", "tree", "queue") are interpreted in
+    // the right register: a Class-9 student gets a CS-curriculum stack
+    // diagram, a Java trainee gets a JVM call-stack frame, a CAT
+    // aspirant gets a logical-reasoning interpretation. Defaults to k12
+    // when the client doesn't send a value.
+    const rawProfile = typeof body.learner_profile === "string" ? body.learner_profile : "k12";
+    const learnerProfile: "k12" | "competitive_exam" | "corporate" =
+      rawProfile === "competitive_exam" || rawProfile === "corporate" ? rawProfile : "k12";
+
+    const PROFILE_HINTS: Record<typeof learnerProfile, string> = {
+      k12:
+        "The learner is a school student (K-12). When the topic is ambiguous, " +
+        "prefer the school-curriculum interpretation (biology, physics, chemistry, " +
+        "basic math, simple electronics). Avoid jargon from professional software " +
+        "engineering, enterprise mainframe, or business operations unless the topic " +
+        "explicitly names them.",
+      competitive_exam:
+        "The learner is a competitive-exam aspirant (JEE / NEET / CAT / GATE / GRE / " +
+        "UPSC etc.). Prefer rigorous, exam-style depth: numerical setups, full " +
+        "derivations, named theorems, and the canonical takeaway formula. Avoid " +
+        "professional software / mainframe / business interpretations unless the " +
+        "topic explicitly names them.",
+      corporate:
+        "The learner is a working professional or trainee (Java / cloud / mainframe / " +
+        "networking / certifications). When the topic is ambiguous, prefer the " +
+        "professional interpretation: programming-language internals, system " +
+        "architecture, mainframe (CICS / JCL / DB2), networking protocols, security " +
+        "flows, or business processes — over a school-curriculum reading.",
+    };
+    const profileHint = PROFILE_HINTS[learnerProfile];
+
+    const userPrompt =
+      `Learner context: ${profileHint}\n\n` +
+      `Topic: ${topic}\n\n` +
+      `Produce the JSON now. 5 frames, typed elements, ids reused across frames for elements that should tween.`;
     // Prefer Gemini 2.5 Flash for keyframe layout. When configured, do a
     // two-pass pipeline:
     //   Stage A — plan the diagram in plain text. The model has to commit
@@ -380,11 +481,11 @@ export async function POST(req: Request) {
     let raw: Record<string, unknown>;
     if (isGeminiConfigured()) {
       try {
-        const planSystem = `You are a competitive-exam concept visualizer planning a 5-frame animation. Produce a CONCISE plan in plain text (no JSON). For the given topic, output:
+        const planSystem = `You are a concept visualizer planning a 5-frame animation. The topic may be academic (physics, chemistry, biology, math) OR professional (programming, software architecture, mainframe / CICS / JCL, networking protocols, business processes). Produce a CONCISE plan in plain text (no JSON). For the given topic, output:
 
-Domain: <mechanics | thermodynamics | electronics | optics | cell biology | organic chemistry | data structures | algebra | calculus | other>
+Domain: <mechanics | thermodynamics | electronics | optics | cell biology | organic chemistry | data structures | algebra | calculus | software-language-internals | software-architecture | mainframe-cics | mainframe-jcl | networking-protocol | concurrency | business-process | other>
 
-Key formula or rule: <the canonical equation/principle>
+Key formula, rule, or canonical signature: <the canonical equation, signature, or invariant — e.g. F=ma, η=1-T_c/T_h, HashMap.put O(1) avg, CICS task = TCT+TCB+EIB+WS commit at SYNCPOINT, OAuth: code → token>.
 
 Frames (5 total — name each phase with the real domain term, not generic 'intro/middle/end'):
   Frame 1 [Phase name] — what's on screen, which entities (with semantic ids like piston, electron, succinate, op-amp_triangle), which element gets emphasised, which gets motion (spin/bob/drift/flash/wiggle/flow/orbit).
@@ -400,8 +501,12 @@ LaTeX equations: list each equation that should render with KaTeX, in raw LaTeX 
 Domain-specific elements to include: <axes / circuit symbols / molecule structures / FBD vectors / etc., named explicitly>.
 
 Stay under 350 words. No JSON. No backticks.`;
-        const plan = await geminiText(planSystem, `Topic: ${topic}`);
+        const plan = await geminiText(
+          planSystem,
+          `Learner context: ${profileHint}\n\nTopic: ${topic}`,
+        );
         const stage2User =
+          `Learner context: ${profileHint}\n\n` +
           `Topic: ${topic}\n\n` +
           `Diagram plan (use this as the spec — produce JSON that matches it):\n${plan}\n\n` +
           `Produce the JSON now. 5 frames, typed elements, ids reused across frames for elements that should tween. Honour the plan's persistent ids and emit the LaTeX equations on text elements via the latex field.`;

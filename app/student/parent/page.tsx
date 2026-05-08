@@ -153,7 +153,7 @@ export default function ParentLinksPage() {
         {err && (
           <div className="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{err}</div>
         )}
-        <button className="btn btn-primary" onClick={create} disabled={busy}>
+        <button type="button" className="btn btn-primary" onClick={create} disabled={busy}>
           {busy ? <><Loader2 className="animate-spin" size={16} /> Creating…</> : <><Sparkles size={16} /> Create link</>}
         </button>
         <p className="text-xs muted">
@@ -198,13 +198,13 @@ export default function ParentLinksPage() {
                       {link}
                     </div>
                     <div className="mt-3 flex gap-2 flex-wrap">
-                      <button className="btn btn-secondary" onClick={() => copy(inv)}>
+                      <button type="button" className="btn btn-secondary" onClick={() => copy(inv)}>
                         {copiedId === inv.id ? <><Check size={14} /> Copied</> : <><Copy size={14} /> Copy link</>}
                       </button>
                       <a className="btn btn-secondary" href={whatsAppShare(inv)} target="_blank" rel="noreferrer">
                         <MessageCircle size={14} /> Share on WhatsApp
                       </a>
-                      <button className="btn btn-ghost text-red-700 ml-auto" onClick={() => revoke(inv.id)} disabled={busy}>
+                      <button type="button" className="btn btn-ghost text-red-700 ml-auto" onClick={() => revoke(inv.id)} disabled={busy}>
                         <Trash2 size={14} /> Revoke
                       </button>
                     </div>

@@ -87,14 +87,14 @@ export default function TeacherInvites({ onChanged }: { onChanged?: () => void }
               </div>
             </div>
             <div className="flex gap-2 shrink-0">
-              <button
+              <button type="button"
                 className="btn btn-primary text-xs inline-flex items-center gap-1.5"
                 disabled={busy === i.class_id + "accept"}
                 onClick={() => respond(i.class_id, "accept")}
               >
                 <CheckCircle2 size={12} /> Accept
               </button>
-              <button
+              <button type="button"
                 className="btn btn-secondary text-xs inline-flex items-center gap-1.5"
                 disabled={busy === i.class_id + "decline"}
                 onClick={() => respond(i.class_id, "decline")}

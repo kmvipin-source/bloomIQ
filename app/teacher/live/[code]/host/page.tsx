@@ -229,7 +229,7 @@ export default function LiveHostPage() {
           <div className="card text-center py-10">
             <div className="text-xs uppercase tracking-wide muted font-semibold">Join code</div>
             <div className="text-7xl font-extrabold tracking-[0.2em] text-emerald-700 my-3 select-all">{code}</div>
-            <button onClick={copyJoinLink} className="btn btn-secondary inline-flex">
+            <button type="button" onClick={copyJoinLink} className="btn btn-secondary inline-flex">
               {copied ? <><Check size={14} /> Copied</> : <><Copy size={14} /> Copy join link</>}
             </button>
             <div className="text-xs muted mt-3">Students go to <code>/student/live/{code}</code> on their device.</div>
@@ -252,7 +252,7 @@ export default function LiveHostPage() {
               </div>
             )}
             <div className="mt-4 flex justify-end">
-              <button onClick={startRunning} disabled={busy || state.players_count === 0} className="btn btn-primary">
+              <button type="button" onClick={startRunning} disabled={busy || state.players_count === 0} className="btn btn-primary">
                 {busy ? <span className="spinner" /> : <><Play size={14} /> Start quiz</>}
               </button>
             </div>
@@ -285,7 +285,7 @@ export default function LiveHostPage() {
           )}
 
           <div className="mt-4 flex justify-end">
-            <button onClick={advance} disabled={busy} className="btn btn-primary">
+            <button type="button" onClick={advance} disabled={busy} className="btn btn-primary">
               {busy ? <span className="spinner" /> : "Next question"}
             </button>
           </div>
@@ -337,7 +337,7 @@ export default function LiveHostPage() {
           )}
 
           <div className="mt-4 flex justify-center">
-            <button onClick={hostAgain} disabled={busy} className="btn btn-primary">
+            <button type="button" onClick={hostAgain} disabled={busy} className="btn btn-primary">
               {busy ? <span className="spinner" /> : "Host again"}
             </button>
           </div>

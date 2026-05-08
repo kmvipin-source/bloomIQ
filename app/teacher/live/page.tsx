@@ -147,7 +147,7 @@ export default function TeacherLivePicker() {
                   <span className="ml-2"><code className="text-[11px] px-1.5 py-0.5 bg-slate-100 rounded">{q.code}</code></span>
                 </div>
               </div>
-              <button
+              <button type="button"
                 onClick={() => host(q.id)}
                 disabled={busyId !== null || q.question_count === 0}
                 className="btn btn-primary"

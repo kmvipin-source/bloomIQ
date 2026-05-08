@@ -822,43 +822,50 @@ export default function StudentHome() {
           Practice / drill / memory. Keeps the dashboard focused on
           "what's pending now" instead of repeating sidebar destinations. */}
 
-      {/* ============ Verb-categorised feature tiles (Phase 3 #2) ============
-          School students get only the Share section. Train/Diagnose are
-          self-study verbs aimed at independent students who pay for
-          premium features — for school students they'd render mostly as
-          locked tiles with "ask your school admin" CTAs, which adds
-          noise without helping the kid get to their assigned work. The
-          school dashboard's primary path is "Assigned to you" below. */}
-      {(() => {
-        const buckets = tilesByCategoryForGoal(null);
-        const renderTile = (key: typeof buckets["share"][number]) => {
-          const meta = TILE_META[key];
-          const fk = meta.featureKey;
-          const locked = !access.isLoading && !!fk && !access.allowed.has(fk);
-          return (
-            <StudentFeatureTile
-              key={key}
-              meta={meta}
-              locked={locked}
-              lockedTierLabel={fk ? unlockMap[fk]?.label : undefined}
-              onLockedClick={openPaywall}
-            />
-          );
-        };
-        return (
-          <>
-            {buckets.share.length > 0 && (
-              <section className="mt-8">
-                <h2 className="h2">{CATEGORY_META.share.label}</h2>
-                <p className="text-xs muted mb-3 max-w-2xl">{CATEGORY_META.share.intro}</p>
-                <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                  {buckets.share.map(renderTile)}
-                </div>
-              </section>
-            )}
-          </>
-        );
-      })()}
+      {/* ============ Quick actions ============
+          Focused do-this-now strip. The full feature catalogue lives in
+          the sidebar's "Practice" group; BloomHero above already surfaces
+          which feature to drill based on the weakest Bloom level. So
+          home doesn't re-tile every feature anymore — that was the
+          "casino dashboard" pattern (every feature shown twice, once on
+          home and once in nav, which crowds the page and pushes the
+          student to make a decision instead of starting work).
+
+          Two items here, picked because they are the only ones whose
+          one-click access materially helps from the dashboard:
+
+            1. Take a practice test — the most common self-initiated
+               action a school student takes. Big CTA so it reads as
+               the primary do-this-now path that doesn't belong to a
+               teacher-assigned cycle.
+            2. Share with a parent — kept as a tile because it's the
+               only feature that has no sidebar entry (it's lightweight
+               and occasional, not navigation-bar material). Always-on,
+               no plan gating, no paywall path. */}
+      <section className="mt-8">
+        <h2 className="h2">Quick actions</h2>
+        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3 mt-3">
+          <Link
+            href="/student/generate"
+            className="card flex items-start gap-3 hover:bg-emerald-50/60 transition border-emerald-200 bg-emerald-50/30"
+          >
+            <div className="rounded-xl bg-emerald-100 text-emerald-700 p-3 shrink-0">
+              <Sparkles size={22} />
+            </div>
+            <div className="flex-1">
+              <div className="font-bold">Take a practice test</div>
+              <div className="text-xs muted mt-0.5">
+                Self-paced. Doesn&apos;t affect your class stats. Generate one on any topic.
+              </div>
+            </div>
+          </Link>
+          <StudentFeatureTile
+            meta={TILE_META.parent_share}
+            locked={false}
+            onLockedClick={openPaywall}
+          />
+        </div>
+      </section>
 
       {/* "Your attempts" table used to render here. Moved to its own
           page at /student/tests, reachable from the sidebar's "My

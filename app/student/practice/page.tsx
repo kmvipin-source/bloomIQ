@@ -192,7 +192,7 @@ export default function StudentPracticePage() {
           )}
 
           <div className="flex justify-end">
-            <button
+            <button type="button"
               className="btn btn-primary"
               onClick={start}
               disabled={busy || authed === false}

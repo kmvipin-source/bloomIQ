@@ -115,7 +115,7 @@ export default function FlashcardsPage() {
               <option value={12}>12</option>
             </select>
           </div>
-          <button className="btn btn-primary" onClick={generate} disabled={busy}>
+          <button type="button" className="btn btn-primary" onClick={generate} disabled={busy}>
             {busy ? <><span className="spinner" /> Building…</> : <><Sparkles size={14} /> Generate</>}
           </button>
         </div>
@@ -171,13 +171,13 @@ export default function FlashcardsPage() {
           {/* Action bar */}
           <div className="mt-4 flex items-center justify-between gap-2 flex-wrap">
             <div className="flex items-center gap-2">
-              <button className="btn btn-ghost" onClick={() => nav(-1)} title="Previous"><ChevronLeft size={16} /> Prev</button>
-              <button className="btn btn-ghost" onClick={() => nav(1)} title="Next">Next <ChevronRight size={16} /></button>
-              <button className="btn btn-ghost" onClick={() => setFlipped((v) => !v)}><RotateCcw size={14} /> Flip</button>
+              <button type="button" className="btn btn-ghost" onClick={() => nav(-1)} title="Previous"><ChevronLeft size={16} /> Prev</button>
+              <button type="button" className="btn btn-ghost" onClick={() => nav(1)} title="Next">Next <ChevronRight size={16} /></button>
+              <button type="button" className="btn btn-ghost" onClick={() => setFlipped((v) => !v)}><RotateCcw size={14} /> Flip</button>
             </div>
             <div className="flex items-center gap-2">
-              <button className="btn btn-secondary text-amber-800" onClick={() => mark("again")}><ThumbsDown size={14} /> Need more practice</button>
-              <button className="btn btn-primary" onClick={() => mark("got")}><ThumbsUp size={14} /> Got it</button>
+              <button type="button" className="btn btn-secondary text-amber-800" onClick={() => mark("again")}><ThumbsDown size={14} /> Need more practice</button>
+              <button type="button" className="btn btn-primary" onClick={() => mark("got")}><ThumbsUp size={14} /> Got it</button>
             </div>
           </div>
 
@@ -192,7 +192,7 @@ export default function FlashcardsPage() {
                   : "All marked. Try a harder Bloom level next!"}
               </p>
               <div className="mt-3 flex items-center justify-center gap-2">
-                <button className="btn btn-primary" onClick={generate} disabled={busy}><Sparkles size={14} /> New deck</button>
+                <button type="button" className="btn btn-primary" onClick={generate} disabled={busy}><Sparkles size={14} /> New deck</button>
                 <Link href="/student/progress" className="btn btn-secondary">Back to Progress</Link>
               </div>
             </div>

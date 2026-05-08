@@ -10,6 +10,7 @@ import {
   Film, Sparkles, ArrowLeft, Loader2, Play, Pause,
   ChevronLeft, ChevronRight, History, RotateCcw,
 } from "lucide-react";
+import { type LearnerProfile } from "@/components/LearnerProfilePrompt";
 
 // =============================================================================
 // Concept Visualizer — data-driven, motion-powered renderer.
@@ -463,6 +464,61 @@ export default function VisualizerPage() {
   const tickTimer = useRef<number | null>(null);
   const frameStartedAt = useRef<number>(Date.now());
 
+  // ---- Learner-profile-aware copy (silent — no UI on this page) ---
+  // The same Concept Visualizer is used by school students (k12),
+  // competitive-exam aspirants, and corporate trainees. We do NOT
+  // show a picker here — that already lives on /student/generate
+  // ("Take a test") and /settings/profile. We just READ the value
+  // silently and tune the SUGGESTED examples in the heading +
+  // placeholder, and the soft hint sent to the AI prompt.
+  // A class-9 student sees "biology cycles, electric circuits";
+  // a Java trainee sees "HashMap collisions, OAuth flow".
+  // Default (and fallback) is "k12" — same content the page has
+  // always shown to school students.
+  const [learnerProfile, setLearnerProfile] = useState<LearnerProfile | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const sb = supabaseBrowser();
+        const { data: { user } } = await sb.auth.getUser();
+        if (!user) return;
+        const { data } = await sb
+          .from("profiles")
+          .select("learner_profile")
+          .eq("id", user.id)
+          .single();
+        const v = (data as { learner_profile?: string } | null)?.learner_profile;
+        if (v === "k12" || v === "competitive_exam" || v === "corporate") {
+          setLearnerProfile(v);
+        } else {
+          setLearnerProfile("k12");
+        }
+      } catch {
+        setLearnerProfile("k12");
+      }
+    })();
+  }, []);
+
+  function headingExamples(): string {
+    if (learnerProfile === "corporate") {
+      return "how a Java HashMap handles collisions, a CICS transaction flow, an OAuth handshake, a sorting algorithm, a system architecture diagram";
+    }
+    if (learnerProfile === "competitive_exam") {
+      return "JEE mechanics problems, NEET biology cycles, organic chemistry mechanisms, op-amp circuits";
+    }
+    return "biology cycles, mechanics diagrams, electric circuits, chemistry mechanisms";
+  }
+  function topicPlaceholder(): string {
+    if (learnerProfile === "corporate") {
+      return "e.g. Java HashMap collision handling, CICS transaction lifecycle, OAuth 2.0 flow, TCP three-way handshake";
+    }
+    if (learnerProfile === "competitive_exam") {
+      return "e.g. Projectile motion at 45°, Krebs cycle, Op-amp inverting amplifier, Carnot cycle";
+    }
+    return "e.g. Krebs cycle, Newton's third law in pulleys, how a transistor amplifies";
+  }
+
   useEffect(() => { void loadHistory(); }, []);
 
   useEffect(() => {
@@ -546,7 +602,12 @@ export default function VisualizerPage() {
       const r = await fetch("/api/visualizer/create", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
-        body: JSON.stringify({ topic: topic.trim() }),
+        // Pass the learner profile through. The server uses it as a soft
+        // hint when interpreting ambiguous topics — e.g. "stack" should
+        // mean the data structure for a corporate trainee, but a
+        // hardware/CS-curriculum stack diagram for a school student
+        // taking a programming basics module.
+        body: JSON.stringify({ topic: topic.trim(), learner_profile: learnerProfile || undefined }),
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j?.error || "Visualizer failed");
@@ -604,7 +665,7 @@ export default function VisualizerPage() {
         <div className="flex-1">
           <h1 className="h1">Concept Visualizer</h1>
           <p className="muted mt-1">
-            Type any concept and watch it animated step by step. Best for the things that don&apos;t click from words alone — biology cycles, mechanics diagrams, electric circuits, chemistry mechanisms.
+            Type any concept and watch it animated step by step. Best for the things that don&apos;t click from words alone — {headingExamples()}.
           </p>
         </div>
       </div>
@@ -613,7 +674,7 @@ export default function VisualizerPage() {
         <label className="label">What do you want explained?</label>
         <input
           className="input"
-          placeholder="e.g. Krebs cycle, Newton's third law in pulleys, how a transistor amplifies"
+          placeholder={topicPlaceholder()}
           value={topic}
           onChange={(e) => setTopic(e.target.value)}
           maxLength={200}
@@ -621,7 +682,7 @@ export default function VisualizerPage() {
         {err && (
           <div className="mt-3 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{err}</div>
         )}
-        <button className="btn btn-primary mt-3" onClick={generate} disabled={busy}>
+        <button type="button" className="btn btn-primary mt-3" onClick={generate} disabled={busy}>
           {busy ? <><Loader2 className="animate-spin" size={16} /> Animating...</> : <><Sparkles size={16} /> Animate it</>}
         </button>
       </div>
@@ -661,16 +722,16 @@ export default function VisualizerPage() {
           </div>
 
           <div className="mt-3 flex items-center gap-2 flex-wrap">
-            <button className="btn btn-secondary" onClick={prev} disabled={frameIdx === 0}>
+            <button type="button" className="btn btn-secondary" onClick={prev} disabled={frameIdx === 0}>
               <ChevronLeft size={14} /> Previous
             </button>
-            <button className="btn btn-primary" onClick={togglePlay}>
+            <button type="button" className="btn btn-primary" onClick={togglePlay}>
               {playing ? <><Pause size={14} /> Pause</> : <><Play size={14} /> Play</>}
             </button>
-            <button className="btn btn-secondary" onClick={next} disabled={frameIdx >= animation.frames.length - 1}>
+            <button type="button" className="btn btn-secondary" onClick={next} disabled={frameIdx >= animation.frames.length - 1}>
               Next <ChevronRight size={14} />
             </button>
-            <button className="btn btn-ghost" onClick={restart}>
+            <button type="button" className="btn btn-ghost" onClick={restart}>
               <RotateCcw size={14} /> Restart
             </button>
           </div>

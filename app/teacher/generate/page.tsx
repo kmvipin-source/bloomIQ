@@ -679,7 +679,7 @@ export default function GeneratePage() {
         {err && <div className="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{err}</div>}
 
         <div className="flex justify-end">
-          <button className="btn btn-primary" onClick={generate} disabled={busy}>
+          <button type="button" className="btn btn-primary" onClick={generate} disabled={busy}>
             {busy ? <><span className="spinner" /> Generating…</> : <><Sparkles size={16} /> Generate</>}
           </button>
         </div>

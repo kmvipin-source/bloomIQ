@@ -49,7 +49,7 @@ export default function JoinPage() {
           onKeyDown={(e) => e.key === "Enter" && go()}
         />
         {err && <div className="mt-3 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{err}</div>}
-        <button className="btn btn-primary w-full mt-4" onClick={go} disabled={busy}>
+        <button type="button" className="btn btn-primary w-full mt-4" onClick={go} disabled={busy}>
           {busy ? <><span className="spinner" /> Loading…</> : "Start quiz"}
         </button>
       </div>

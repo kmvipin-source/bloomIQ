@@ -202,7 +202,7 @@ export default function MisconceptionsPage() {
 
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                   {!m.resolved && (
-                    <button
+                    <button type="button"
                       className="btn btn-primary"
                       onClick={() => drill(m)}
                       disabled={busy === m.id}
@@ -210,7 +210,7 @@ export default function MisconceptionsPage() {
                       {busy === m.id ? <><Loader2 className="animate-spin" size={14} /> Building drill…</> : <><Sparkles size={14} /> Drill this</>}
                     </button>
                   )}
-                  <button
+                  <button type="button"
                     className="btn btn-secondary"
                     onClick={() => toggleResolved(m)}
                     disabled={busy === m.id}

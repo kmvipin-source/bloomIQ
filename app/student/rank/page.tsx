@@ -170,7 +170,7 @@ export default function RankPage() {
           <input className="input" inputMode="decimal" value={maxScore} onChange={(e) => setMaxScore(e.target.value)} placeholder="e.g. 300" />
         </div>
         <div className="sm:col-span-3 flex items-center gap-2">
-          <button className="btn btn-primary" onClick={predict} disabled={busy}>
+          <button type="button" className="btn btn-primary" onClick={predict} disabled={busy}>
             {busy ? <><Loader2 className="animate-spin" size={16} /> Calculating…</> : <><Sparkles size={16} /> Predict rank</>}
           </button>
           {err && <span className="text-sm text-red-700">{err}</span>}

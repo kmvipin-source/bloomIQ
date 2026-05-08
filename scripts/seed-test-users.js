@@ -15,6 +15,14 @@
 // Usage (from project root):
 //   node scripts/seed-test-users.js
 //   node scripts/seed-test-users.js --reset
+//   node scripts/seed-test-users.js --plan school_standard
+//   node scripts/seed-test-users.js --plan school_plus --reset
+//
+// --plan binds the seeded school ("Test Academy" by default) to the named
+// plan with an active 365-day subscription. Without --plan the school is
+// created but stays "Not subscribed", which means the seeded teacher /
+// students see locked features. Allowed slugs:
+//   school_pilot | school_standard | school_plus
 //
 // Defaults can be overridden with env vars at invocation time:
 //   SEED_PASSWORD=MyPass123 node scripts/seed-test-users.js
@@ -191,8 +199,28 @@ async function main() {
     process.exit(1);
   }
 
-  const flags = new Set(process.argv.slice(2).filter((a) => a.startsWith("--")));
+  // Parse argv. Boolean flags (e.g. --reset) live in `flags`; --plan is a
+  // value flag and gets pulled out separately so it doesn't get bucketed
+  // as a boolean.
+  const rawArgv = process.argv.slice(2);
+  const flags = new Set();
+  let planFlag = null;
+  for (let i = 0; i < rawArgv.length; i++) {
+    const tok = rawArgv[i];
+    if (tok === "--plan") planFlag = (rawArgv[++i] || "").toLowerCase();
+    else if (tok.startsWith("--plan=")) planFlag = tok.slice("--plan=".length).toLowerCase();
+    else if (tok.startsWith("--")) flags.add(tok);
+  }
   const reset = flags.has("--reset");
+
+  // Validate optional --plan slug. School plan slugs only — we don't
+  // bind the seeded school to an individual plan because individuals
+  // pay personally, not through a school.
+  const ALLOWED_SCHOOL_PLANS = ["school_pilot", "school_standard", "school_plus"];
+  if (planFlag && !ALLOWED_SCHOOL_PLANS.includes(planFlag)) {
+    console.error(`❌ Invalid --plan "${planFlag}". Allowed: ${ALLOWED_SCHOOL_PLANS.join(", ")}.`);
+    process.exit(1);
+  }
 
   const sb = createClient(url, key, {
     auth: { persistSession: false, autoRefreshToken: false },
@@ -216,10 +244,18 @@ async function main() {
       const removed = await deleteUserIfExists(sb, email);
       if (removed) console.log(`   - removed ${email}`);
     }
-    // Then wipe schools created with our test name (just in case).
+    // Then wipe the school's subscription row + the school itself.
+    // Subscriptions FK on school_id doesn't cascade in the current
+    // schema, so clear it explicitly before deleting the school.
+    {
+      const { data: prior } = await sb.from("schools").select("id").eq("name", SCHOOL_NAME);
+      for (const s of prior || []) {
+        await sb.from("subscriptions").delete().eq("school_id", s.id);
+      }
+    }
     const { error: schoolDelErr } = await sb.from("schools").delete().eq("name", SCHOOL_NAME);
     if (schoolDelErr) console.warn(`   ⚠ school delete warning: ${schoolDelErr.message}`);
-    else console.log(`   - removed school "${SCHOOL_NAME}"`);
+    else console.log(`   - removed school "${SCHOOL_NAME}" (and any subscription row)`);
     // And classes by name (school FK cascades, but in case schools were already gone).
     await sb.from("classes").delete().eq("name", CLASS_DEF.name);
     console.log(`   - removed class "${CLASS_DEF.name}"`);
@@ -278,6 +314,53 @@ async function main() {
   console.log(`   ✓ ${school.name} (id=${school.id}, join_code=${school.join_code})`);
   // Link admin's profile to the school.
   await sb.from("profiles").update({ school_id: school.id }).eq("id", saUser.id);
+
+  // 2.1) Optional school subscription. When --plan is passed, bind the
+  //      seeded school to the named plan with an active 365-day sub.
+  //      Without --plan, the school stays "Not subscribed" (which means
+  //      the seeded teacher / students see locked features). Mirrors the
+  //      mapping used by /api/admin/schools/[id]/set-plan: school_plus →
+  //      premium_plus, school_pilot/standard → premium. plan_id is the
+  //      authoritative source for feature gating; tier is just kept in
+  //      sync for legacy code paths that haven't migrated to plan_id.
+  if (planFlag) {
+    console.log(`[2.1/8] Binding "${school.name}" to plan ${planFlag}...`);
+    const { data: plan, error: planErr } = await sb
+      .from("plans")
+      .select("id, slug, tier, label, period_days, per_student_price_paise")
+      .eq("slug", planFlag)
+      .eq("status", "active")
+      .maybeSingle();
+    if (planErr) throw new Error(`fetch plan ${planFlag}: ${planErr.message}`);
+    if (!plan) {
+      throw new Error(
+        `No active plan with slug="${planFlag}". Apply supabase/migrations/28_seed_school_plans.sql first.`
+      );
+    }
+    const legacyTier =
+      plan.tier === "school_plus" ? "premium_plus"
+      : plan.tier.startsWith("school_") ? "premium"
+      : plan.tier;
+    const subDays = Number(process.env.SEED_PAID_DAYS) || 365;
+    const subExpiresAt = new Date(Date.now() + subDays * 86400000).toISOString();
+    const { error: subErr } = await sb.from("subscriptions").insert({
+      school_id: school.id,
+      user_id: null,
+      tier: legacyTier,
+      plan_id: plan.id,
+      status: "active",
+      started_at: new Date().toISOString(),
+      expires_at: subExpiresAt,
+      // Realistic stand-in: 200 students × per_student_price_paise. Lets
+      // the dashboard's "tests / students" stats look meaningful even
+      // before any real payment flowed through.
+      price_paid_paise: (plan.per_student_price_paise || 0) * 200,
+    });
+    if (subErr) throw new Error(`insert school subscription: ${subErr.message}`);
+    console.log(`   ✓ subscription active (plan_id=${plan.id}, expires ${subExpiresAt.slice(0, 10)})`);
+  } else {
+    console.log(`[2.1/8] Plan: (none — pass --plan school_pilot/standard/plus to bind one)`);
+  }
 
   // 2.5) Deputy Admin Head — pre-promoted to super_teacher on the same
   //      school. They appear as "Deputy" on /school/teachers because

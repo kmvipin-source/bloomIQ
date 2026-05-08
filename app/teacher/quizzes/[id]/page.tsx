@@ -45,6 +45,10 @@ export default function QuizDetailPage() {
 
   // Assignment state
   const [classes, setClasses] = useState<ClassWithMembers[]>([]);
+  // Guards "Create a class to assign" from briefly showing when the page
+  // first mounts (classes is [] until loadClassesAndAssignments resolves).
+  // A teacher who DOES have classes shouldn't see the no-classes CTA.
+  const [classesLoaded, setClassesLoaded] = useState(false);
   const [assignments, setAssignments] = useState<AssignmentRow[]>([]);
   const [showAssign, setShowAssign] = useState(false);
 
@@ -115,6 +119,7 @@ export default function QuizDetailPage() {
       })
     );
     setClasses(enriched);
+    setClassesLoaded(true);
 
     // Load existing assignments for this quiz
     const { data: asg } = await sb
@@ -167,7 +172,19 @@ export default function QuizDetailPage() {
       <Link href="/teacher/quizzes" className="text-sm text-emerald-700 font-semibold">← All tests</Link>
       <div className="flex items-start justify-between gap-3 mt-2 flex-wrap">
         <h1 className="h1">{quiz.name}</h1>
-        {classes.length > 0 ? (
+        {!classesLoaded ? (
+          // Hold the slot until the classes fetch resolves so we don't
+          // flash "Create a class to assign" at teachers who do have
+          // classes. Tiny ghost button keeps layout stable.
+          <button
+            type="button"
+            className="btn btn-secondary opacity-50"
+            disabled
+            aria-busy="true"
+          >
+            <Send size={16} /> Loading…
+          </button>
+        ) : classes.length > 0 ? (
           <button
             type="button"
             className="btn btn-primary"
@@ -188,7 +205,7 @@ export default function QuizDetailPage() {
           <div className="text-xs muted uppercase font-semibold">Test code</div>
           <div className="flex items-center gap-2 mt-2">
             <code className="text-2xl font-mono font-bold">{quiz.code}</code>
-            <button className="btn btn-ghost" onClick={() => navigator.clipboard.writeText(quiz.code)}>
+            <button type="button" className="btn btn-ghost" onClick={() => navigator.clipboard.writeText(quiz.code)}>
               <Copy size={16} />
             </button>
           </div>
@@ -327,7 +344,7 @@ export default function QuizDetailPage() {
       <div className="flex items-center justify-between mt-8 mb-3">
         <h2 className="h2">Assignments</h2>
         {classes.length > 0 ? (
-          <button className="btn btn-primary" onClick={() => setShowAssign(true)}>
+          <button type="button" className="btn btn-primary" onClick={() => setShowAssign(true)}>
             <Send size={16} /> Assign to class / students
           </button>
         ) : (
@@ -359,7 +376,7 @@ export default function QuizDetailPage() {
                   {a.due_at && <> · Due {new Date(a.due_at).toLocaleString()}</>}
                 </div>
               </div>
-              <button className="btn btn-ghost text-red-600" onClick={() => deleteAssignment(a.id)} title="Remove">
+              <button type="button" className="btn btn-ghost text-red-600" onClick={() => deleteAssignment(a.id)} title="Remove">
                 <X size={14} />
               </button>
             </div>
@@ -406,7 +423,7 @@ export default function QuizDetailPage() {
                   <td className="px-4 py-3 muted">{a.submitted_at ? new Date(a.submitted_at).toLocaleString() : "—"}</td>
                   <td className="px-4 py-3 text-right">
                     {a.submitted_at && (
-                      <button className="btn btn-secondary" onClick={() => downloadReport(a.id)}>
+                      <button type="button" className="btn btn-secondary" onClick={() => downloadReport(a.id)}>
                         <Download size={14} /> PDF
                       </button>
                     )}

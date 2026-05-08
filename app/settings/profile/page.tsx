@@ -403,7 +403,7 @@ export default function ProfilePage() {
 
         {(nameEditable || isIndependentStudent) && (
           <div className="mt-4 flex items-center gap-3">
-            <button
+            <button type="button"
               className="btn btn-primary inline-flex items-center gap-1.5"
               onClick={saveProfile}
               disabled={saving}
@@ -459,7 +459,7 @@ export default function ProfilePage() {
                   {school.join_code || "—"}
                 </code>
                 {school.join_code && (
-                  <button
+                  <button type="button"
                     className="btn btn-ghost text-xs inline-flex items-center gap-1"
                     onClick={copyJoinCode}
                     title="Copy school join code"

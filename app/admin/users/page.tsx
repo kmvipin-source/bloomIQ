@@ -315,13 +315,13 @@ export default function AdminUsersPage() {
                     {u.created_at ? new Date(u.created_at).toLocaleDateString("en-IN") : "—"}
                   </td>
                   <td className="px-4 py-3 text-right whitespace-nowrap">
-                    <button
+                    <button type="button"
                       className="btn btn-ghost text-xs inline-flex items-center gap-1"
                       onClick={() => openEdit(u)}
                     >
                       <Pencil size={12} /> Edit
                     </button>
-                    <button
+                    <button type="button"
                       className="btn btn-ghost text-xs text-red-600 inline-flex items-center gap-1 ml-1"
                       onClick={() => deleteUser(u)}
                       disabled={deletingId === u.id}
@@ -344,7 +344,7 @@ export default function AdminUsersPage() {
               <h2 className="text-lg font-bold inline-flex items-center gap-2">
                 <UserRound size={18} /> Edit user
               </h2>
-              <button className="btn btn-ghost p-1" onClick={closeEdit}><X size={16} /></button>
+              <button type="button" className="btn btn-ghost p-1" onClick={closeEdit}><X size={16} /></button>
             </div>
             <p className="text-xs muted mb-4">{editing.email || editing.id}</p>
 
@@ -391,10 +391,10 @@ export default function AdminUsersPage() {
             )}
 
             <div className="flex gap-2 mt-5">
-              <button className="btn btn-secondary flex-1" onClick={closeEdit} disabled={saving}>
+              <button type="button" className="btn btn-secondary flex-1" onClick={closeEdit} disabled={saving}>
                 Cancel
               </button>
-              <button
+              <button type="button"
                 className="btn btn-primary flex-1 inline-flex items-center justify-center gap-1.5"
                 onClick={saveEdit}
                 disabled={saving}

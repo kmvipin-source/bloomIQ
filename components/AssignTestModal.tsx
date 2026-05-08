@@ -128,7 +128,7 @@ export default function AssignTestModal({
       >
         <div className="flex items-center justify-between mb-3">
           <h3 className="h2">Assign test</h3>
-          <button onClick={onClose} className="btn btn-ghost" aria-label="Close">
+          <button type="button" onClick={onClose} className="btn btn-ghost" aria-label="Close">
             <X size={16} />
           </button>
         </div>
@@ -214,8 +214,8 @@ export default function AssignTestModal({
         )}
 
         <div className="flex justify-end gap-2 mt-5">
-          <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
-          <button className="btn btn-primary" onClick={save} disabled={busy}>
+          <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
+          <button type="button" className="btn btn-primary" onClick={save} disabled={busy}>
             {busy ? <><span className="spinner" /> Assigning…</> : "Assign"}
           </button>
         </div>

@@ -56,13 +56,13 @@ export default function PrintPaperPage() {
           Print preview — use your browser&apos;s <strong>Print</strong> dialog (or save as PDF).
         </span>
         <div className="flex gap-2">
-          <button
+          <button type="button"
             className="btn btn-secondary text-sm"
             onClick={() => setShowAnswers((v) => !v)}
           >
             {showAnswers ? <><EyeOff size={14} /> Hide answer key</> : <><Eye size={14} /> Show answer key</>}
           </button>
-          <button className="btn btn-primary text-sm" onClick={() => window.print()}>
+          <button type="button" className="btn btn-primary text-sm" onClick={() => window.print()}>
             <Printer size={14} /> Print
           </button>
         </div>

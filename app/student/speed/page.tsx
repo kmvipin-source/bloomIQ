@@ -342,7 +342,7 @@ export default function SpeedTrainerPage() {
           {err && (
             <div className="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{err}</div>
           )}
-          <button className="btn btn-primary" onClick={start} disabled={busy}>
+          <button type="button" className="btn btn-primary" onClick={start} disabled={busy}>
             {busy ? <><Loader2 className="animate-spin" size={16} /> Loading questions…</> : <><Zap size={16} /> Start trainer</>}
           </button>
         </div>
@@ -437,10 +437,10 @@ export default function SpeedTrainerPage() {
 
             <div className="flex gap-2 flex-wrap">
               {!onLast && (
-                <button className="btn btn-secondary" onClick={skip}>Skip</button>
+                <button type="button" className="btn btn-secondary" onClick={skip}>Skip</button>
               )}
               {onLast && (
-                <button className="btn btn-primary ml-auto" onClick={submit} disabled={busy || !allAnswered}>
+                <button type="button" className="btn btn-primary ml-auto" onClick={submit} disabled={busy || !allAnswered}>
                   {busy ? <><Loader2 className="animate-spin" size={14} /> Scoring…</> : <>Finish &amp; see results</>}
                 </button>
               )}
@@ -613,7 +613,7 @@ export default function SpeedTrainerPage() {
           )}
 
           <div className="flex gap-2">
-            <button className="btn btn-primary" onClick={reset}>
+            <button type="button" className="btn btn-primary" onClick={reset}>
               <Sparkles size={14} /> Train again
             </button>
             <Link href="/student" className="btn btn-secondary">

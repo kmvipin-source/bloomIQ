@@ -126,6 +126,11 @@ type ExamMeta = {
   description: string;
   sections: string[];
   sampleQuestions: string[];
+  // Which Bloom levels the actual paper genuinely tests. The request
+  // handler filters requested levels through this list — prevents the
+  // LLM from being asked for fake "Remember CAT" trivia. Keep in sync
+  // with the same field in app/api/generate/route.ts.
+  bloomLevels: BloomLevel[];
 };
 
 const EXAM_DETECTORS: Record<string, ExamMeta> = {
@@ -138,6 +143,7 @@ const EXAM_DETECTORS: Record<string, ExamMeta> = {
       "A train travelling at 72 km/hr crosses a 250 m platform in 25 seconds. Find the length of the train.",
       "Identify the option that best replaces the underlined phrase to make the sentence grammatically correct.",
     ],
+    bloomLevels: ["apply", "analyze", "evaluate"],
   },
   JEE: {
     name: "JEE Main / JEE Advanced",
@@ -148,6 +154,7 @@ const EXAM_DETECTORS: Record<string, ExamMeta> = {
       "Calculate the pH of a 0.01 M HCl solution.",
       "Evaluate the integral ∫ (x² + 1)/(x² - 1) dx.",
     ],
+    bloomLevels: ["understand", "apply", "analyze", "evaluate"],
   },
   NEET: {
     name: "NEET",
@@ -158,18 +165,19 @@ const EXAM_DETECTORS: Record<string, ExamMeta> = {
       "The site of Krebs cycle in eukaryotic cells is the:",
       "An object is placed 30 cm in front of a concave mirror of focal length 15 cm. Find the position of the image.",
     ],
+    bloomLevels: ["remember", "understand", "apply", "analyze"],
   },
-  GMAT: { name: "GMAT", description: "Graduate Management Admission Test", sections: ["Quantitative Reasoning", "Verbal Reasoning", "Data Insights"], sampleQuestions: ["If 0 < x < 1, which is largest among x, x², √x, 1/x, 1/x²?"] },
-  GRE:  { name: "GRE",  description: "Graduate Record Examinations",          sections: ["Quantitative Reasoning", "Verbal Reasoning"], sampleQuestions: ["Choose the word that is most nearly synonymous with PROPITIATE."] },
-  UPSC: { name: "UPSC CSE Prelims", description: "UPSC Civil Services Exam preliminary stage (India)", sections: ["General Studies", "CSAT (aptitude, reasoning)"], sampleQuestions: ["Which Article of the Indian Constitution deals with the abolition of untouchability?"] },
-  IELTS:{ name: "IELTS", description: "International English Language Testing System", sections: ["Listening", "Reading", "Writing", "Speaking"], sampleQuestions: ["According to the passage, the main reason coral reefs are declining is:"] },
-  TOEFL:{ name: "TOEFL", description: "Test of English as a Foreign Language", sections: ["Reading", "Listening", "Speaking", "Writing"], sampleQuestions: ["The word 'ubiquitous' in the passage is closest in meaning to:"] },
-  CLAT: { name: "CLAT",  description: "Common Law Admission Test (India)", sections: ["English", "Current Affairs", "Legal Reasoning", "Logical Reasoning", "Quantitative Techniques"], sampleQuestions: ["Principle: A person who voluntarily causes hurt commits an offence. Has A committed an offence in this scenario?"] },
-  BITSAT:{ name: "BITSAT", description: "BITS Pilani Admission Test for engineering admissions", sections: ["Physics", "Chemistry", "Mathematics or Biology", "English Proficiency", "Logical Reasoning"], sampleQuestions: ["A capacitor of capacitance 2 μF is charged to 100 V. The energy stored is:"] },
-  SAT:  { name: "SAT",   description: "Scholastic Assessment Test for US college admissions", sections: ["Reading and Writing", "Math"], sampleQuestions: ["If 2(x – 3) = 4x + 6, what is the value of x?"] },
-  GATE: { name: "GATE",  description: "Graduate Aptitude Test in Engineering (India)", sections: ["General Aptitude", "Engineering Mathematics", "Subject section"], sampleQuestions: ["The eigenvalues of the matrix [[2,1],[1,2]] are:"] },
-  NDA:  { name: "NDA",   description: "National Defence Academy entrance exam (India)", sections: ["Mathematics", "General Ability Test"], sampleQuestions: ["If sin A = 3/5 and cos B = 12/13 (both first quadrant), find sin(A + B)."] },
-  CUET: { name: "CUET (UG)", description: "Common University Entrance Test (India)", sections: ["Language", "Domain subjects", "General Test"], sampleQuestions: ["If 3x – 4 = 11, what is the value of 2x + 1?"] },
+  GMAT: { name: "GMAT", description: "Graduate Management Admission Test", sections: ["Quantitative Reasoning", "Verbal Reasoning", "Data Insights"], sampleQuestions: ["If 0 < x < 1, which is largest among x, x², √x, 1/x, 1/x²?"], bloomLevels: ["apply", "analyze", "evaluate"] },
+  GRE:  { name: "GRE",  description: "Graduate Record Examinations",          sections: ["Quantitative Reasoning", "Verbal Reasoning"], sampleQuestions: ["Choose the word that is most nearly synonymous with PROPITIATE."], bloomLevels: ["understand", "apply", "analyze", "evaluate"] },
+  UPSC: { name: "UPSC CSE Prelims", description: "UPSC Civil Services Exam preliminary stage (India)", sections: ["General Studies", "CSAT (aptitude, reasoning)"], sampleQuestions: ["Which Article of the Indian Constitution deals with the abolition of untouchability?"], bloomLevels: ["remember", "understand", "apply", "analyze"] },
+  IELTS:{ name: "IELTS", description: "International English Language Testing System", sections: ["Listening", "Reading", "Writing", "Speaking"], sampleQuestions: ["According to the passage, the main reason coral reefs are declining is:"], bloomLevels: ["understand", "apply", "analyze"] },
+  TOEFL:{ name: "TOEFL", description: "Test of English as a Foreign Language", sections: ["Reading", "Listening", "Speaking", "Writing"], sampleQuestions: ["The word 'ubiquitous' in the passage is closest in meaning to:"], bloomLevels: ["understand", "apply", "analyze"] },
+  CLAT: { name: "CLAT",  description: "Common Law Admission Test (India)", sections: ["English", "Current Affairs", "Legal Reasoning", "Logical Reasoning", "Quantitative Techniques"], sampleQuestions: ["Principle: A person who voluntarily causes hurt commits an offence. Has A committed an offence in this scenario?"], bloomLevels: ["remember", "understand", "apply", "analyze"] },
+  BITSAT:{ name: "BITSAT", description: "BITS Pilani Admission Test for engineering admissions", sections: ["Physics", "Chemistry", "Mathematics or Biology", "English Proficiency", "Logical Reasoning"], sampleQuestions: ["A capacitor of capacitance 2 μF is charged to 100 V. The energy stored is:"], bloomLevels: ["understand", "apply", "analyze"] },
+  SAT:  { name: "SAT",   description: "Scholastic Assessment Test for US college admissions", sections: ["Reading and Writing", "Math"], sampleQuestions: ["If 2(x – 3) = 4x + 6, what is the value of x?"], bloomLevels: ["apply", "analyze"] },
+  GATE: { name: "GATE",  description: "Graduate Aptitude Test in Engineering (India)", sections: ["General Aptitude", "Engineering Mathematics", "Subject section"], sampleQuestions: ["The eigenvalues of the matrix [[2,1],[1,2]] are:"], bloomLevels: ["apply", "analyze", "evaluate"] },
+  NDA:  { name: "NDA",   description: "National Defence Academy entrance exam (India)", sections: ["Mathematics", "General Ability Test"], sampleQuestions: ["If sin A = 3/5 and cos B = 12/13 (both first quadrant), find sin(A + B)."], bloomLevels: ["remember", "understand", "apply"] },
+  CUET: { name: "CUET (UG)", description: "Common University Entrance Test (India)", sections: ["Language", "Domain subjects", "General Test"], sampleQuestions: ["If 3x – 4 = 11, what is the value of 2x + 1?"], bloomLevels: ["remember", "understand", "apply"] },
 };
 
 function detectExamFromTopic(topic: string): ExamMeta | null {
@@ -309,8 +317,30 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Pick at least one Bloom level." }, { status: 400 });
     }
 
+    // Per-exam Bloom level allowlist (mirrors app/api/generate/route.ts).
+    // When the topic is a known competitive exam, filter the user's
+    // requested levels through what the actual paper tests. Stops the
+    // LLM from inventing fake Remember-level "trivia" for CAT etc.
+    // The response surfaces `examFilter` so the UI can tell the user
+    // why some of their ticked levels weren't generated. Variable names
+    // examForFilter / omittedLevels match generate/route.ts so a future
+    // refactor can hoist this into a shared helper.
+    const examForFilter = detectExamFromTopic(topic);
+    let omittedLevels: BloomLevel[] = [];
+    let effectiveLevels: BloomLevel[] = levels;
+    if (examForFilter) {
+      const allowed = new Set(examForFilter.bloomLevels);
+      effectiveLevels = levels.filter((l) => allowed.has(l));
+      omittedLevels = levels.filter((l) => !allowed.has(l));
+      if (effectiveLevels.length === 0) {
+        return NextResponse.json({
+          error: `${examForFilter.name} only tests ${examForFilter.bloomLevels.join(", ")} levels. Pick at least one of those — questions for the levels you selected don't appear on the actual ${examForFilter.name} paper.`,
+        }, { status: 400 });
+      }
+    }
+
     // eslint-disable-next-line no-console
-    console.log(`[quick-test] start source=${source} levels=${levels.join(",")} perLevel=${perLevel} topic="${topic}"`);
+    console.log(`[quick-test] start source=${source} levels=${levels.join(",")} effectiveLevels=${effectiveLevels.join(",")} perLevel=${perLevel} topic="${topic}"`);
 
     // Generate per-level
     const genFor = async (lvl: BloomLevel) => {
@@ -453,7 +483,7 @@ export async function POST(req: Request) {
     const isVisionSource = source === "image" || source === "past_paper";
     if (isVisionSource) {
       results = [];
-      for (const lvl of levels) {
+      for (const lvl of effectiveLevels) {
         try {
           results.push({ status: "fulfilled", value: await genFor(lvl) });
         } catch (e) {
@@ -461,12 +491,12 @@ export async function POST(req: Request) {
         }
       }
     } else {
-      results = await Promise.allSettled(levels.map(genFor));
+      results = await Promise.allSettled(effectiveLevels.map(genFor));
     }
 
     results.forEach((r, i) => {
       if (r.status === "fulfilled") {
-        const lvl = levels[i];
+        const lvl = effectiveLevels[i];
         summary[lvl] = r.value.length;
         allRows.push(...r.value);
       }
@@ -475,7 +505,7 @@ export async function POST(req: Request) {
     if (!allRows.length) {
       // Surface per-level reasons so the dev console + client know why
       const reasons = results
-        .map((r, i) => r.status === "rejected" ? `${levels[i]}: ${r.reason instanceof Error ? r.reason.message : String(r.reason).slice(0, 120)}` : `${levels[i]}: 0 valid questions`)
+        .map((r, i) => r.status === "rejected" ? `${effectiveLevels[i]}: ${r.reason instanceof Error ? r.reason.message : String(r.reason).slice(0, 120)}` : `${effectiveLevels[i]}: 0 valid questions`)
         .join(" | ");
       // eslint-disable-next-line no-console
       console.error(`[quick-test] no usable questions. Per-level: ${reasons}`);
@@ -488,8 +518,16 @@ export async function POST(req: Request) {
     console.log(`[quick-test] valid questions: ${allRows.length} across ${levels.length} levels`);
 
     // 1) Insert questions, get back the new IDs in order. Strip the in-memory
-    //    `quality` field — question_bank has no such column. We surface
-    //    aggregate verification stats on the response only.
+    //    `quality` field — question_bank has no such column — and the
+    //    in-memory `section` field, which we capture into a parallel array
+    //    BEFORE stripping so we can map RETURNING ids back to their section
+    //    later when ordering the quiz_questions rows for competitive-exam
+    //    sequencing (NEET: Physics → Chemistry → Botany → Zoology, etc.).
+    //    insertedQs returns ids in the same order as insertRows, so a
+    //    parallel index works.
+    const sectionByIndex: (string | null)[] = allRows.map(
+      (r) => (r as { section?: string | null }).section ?? null,
+    );
     const insertRows = allRows.map((r) => {
       const { quality, section, ...rest } = r;
       void quality;

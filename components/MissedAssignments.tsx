@@ -101,14 +101,14 @@ export default function MissedAssignments() {
                         maxLength={500}
                       />
                       <div className="flex gap-2">
-                        <button
+                        <button type="button"
                           className="btn btn-primary text-xs inline-flex items-center gap-1.5 flex-1"
                           disabled={busy || note.trim().length < 5}
                           onClick={() => submitRequest(it.assignment_id)}
                         >
                           <Send size={12} /> Send request
                         </button>
-                        <button
+                        <button type="button"
                           className="btn btn-secondary text-xs"
                           disabled={busy}
                           onClick={() => { setOpenId(null); setNote(""); }}
@@ -118,7 +118,7 @@ export default function MissedAssignments() {
                       </div>
                     </div>
                   ) : (
-                    <button
+                    <button type="button"
                       className="btn btn-secondary text-xs inline-flex items-center gap-1.5"
                       onClick={() => { setOpenId(it.assignment_id); setNote(""); }}
                     >

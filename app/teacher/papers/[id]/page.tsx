@@ -140,7 +140,7 @@ export default function PaperDetailPage() {
         <div className="flex gap-2 flex-wrap">
           <Link href={`/teacher/papers/${paper.id}/print`} target="_blank" className="btn btn-secondary"><Printer size={14} /> Print</Link>
           {paper.status !== "finalized" && (
-            <button className="btn btn-primary" onClick={finalize} disabled={busy}><CheckCircle2 size={14} /> Finalize</button>
+            <button type="button" className="btn btn-primary" onClick={finalize} disabled={busy}><CheckCircle2 size={14} /> Finalize</button>
           )}
         </div>
       </div>
@@ -206,19 +206,19 @@ export default function PaperDetailPage() {
                           )}
                         </div>
                         <div className="flex flex-col gap-0.5 shrink-0">
-                          <button onClick={() => move(q.id, -1)} disabled={idxInSection === 0} className="p-1 disabled:opacity-30 hover:bg-slate-100 rounded text-slate-500" title="Move up"><ChevronUp size={14} /></button>
-                          <button onClick={() => move(q.id, 1)} disabled={idxInSection === qs.length - 1} className="p-1 disabled:opacity-30 hover:bg-slate-100 rounded text-slate-500" title="Move down"><ChevronDown size={14} /></button>
+                          <button type="button" onClick={() => move(q.id, -1)} disabled={idxInSection === 0} className="p-1 disabled:opacity-30 hover:bg-slate-100 rounded text-slate-500" title="Move up"><ChevronUp size={14} /></button>
+                          <button type="button" onClick={() => move(q.id, 1)} disabled={idxInSection === qs.length - 1} className="p-1 disabled:opacity-30 hover:bg-slate-100 rounded text-slate-500" title="Move down"><ChevronDown size={14} /></button>
                         </div>
                         {isEditing ? (
-                          <button className="btn btn-primary text-xs" onClick={() => saveQuestion(q)} disabled={busy}>
+                          <button type="button" className="btn btn-primary text-xs" onClick={() => saveQuestion(q)} disabled={busy}>
                             <Save size={12} /> Save
                           </button>
                         ) : (
-                          <button className="btn btn-ghost text-xs" onClick={() => setEditingId(q.id)}>
+                          <button type="button" className="btn btn-ghost text-xs" onClick={() => setEditingId(q.id)}>
                             <Pencil size={12} /> Edit
                           </button>
                         )}
-                        <button className="btn btn-ghost text-red-600 p-2" onClick={() => deleteQuestion(q.id)} title="Delete"><Trash2 size={14} /></button>
+                        <button type="button" className="btn btn-ghost text-red-600 p-2" onClick={() => deleteQuestion(q.id)} title="Delete"><Trash2 size={14} /></button>
                       </div>
                     </div>
                   );
@@ -233,7 +233,7 @@ export default function PaperDetailPage() {
         <h3 className="font-semibold text-red-800 mb-1">Danger zone</h3>
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div className="text-sm text-red-900/80">Delete this test permanently.</div>
-          <button className="btn btn-danger" onClick={deletePaper}><Trash2 size={14} /> Delete test</button>
+          <button type="button" className="btn btn-danger" onClick={deletePaper}><Trash2 size={14} /> Delete test</button>
         </div>
       </div>
     </div>

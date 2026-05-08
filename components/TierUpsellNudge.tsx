@@ -203,7 +203,7 @@ export default function TierUpsellNudge() {
             View plan <ArrowRight size={12} />
           </Link>
         </div>
-        <button
+        <button type="button"
           onClick={dismiss}
           aria-label="Dismiss"
           className="shrink-0 p-1 rounded hover:bg-emerald-100 text-emerald-700"

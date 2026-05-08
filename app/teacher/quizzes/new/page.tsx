@@ -500,7 +500,7 @@ function ComposerInner() {
               <option value="all">All Bloom levels</option>
               {BLOOM_LEVELS.map((l) => <option key={l} value={l}>{BLOOM_META[l].label}</option>)}
             </select>
-            <button className="btn btn-secondary" onClick={addAllVisible} disabled={filtered.length === 0}>
+            <button type="button" className="btn btn-secondary" onClick={addAllVisible} disabled={filtered.length === 0}>
               Add all visible
             </button>
             <span className="ml-auto text-xs muted whitespace-nowrap">{filtered.length} shown</span>
@@ -654,7 +654,7 @@ function ComposerInner() {
                 <span className="text-sm muted font-normal">({selectedIds.length})</span>
               </h3>
               {selectedIds.length > 0 && (
-                <button onClick={clearAll} className="text-xs text-slate-500 hover:text-red-600">Clear</button>
+                <button type="button" onClick={clearAll} className="text-xs text-slate-500 hover:text-red-600">Clear</button>
               )}
             </div>
 
@@ -692,7 +692,7 @@ function ComposerInner() {
                         <div className="text-sm line-clamp-2">{q.stem}</div>
                       </div>
                       <div className="flex flex-col gap-0.5 shrink-0">
-                        <button
+                        <button type="button"
                           onClick={() => move(i, -1)}
                           disabled={i === 0}
                           className="p-1 disabled:opacity-30 hover:bg-slate-100 rounded text-slate-500"
@@ -700,7 +700,7 @@ function ComposerInner() {
                         >
                           <ChevronUp size={14} />
                         </button>
-                        <button
+                        <button type="button"
                           onClick={() => move(i, 1)}
                           disabled={i === selectedQuestions.length - 1}
                           className="p-1 disabled:opacity-30 hover:bg-slate-100 rounded text-slate-500"
@@ -709,7 +709,7 @@ function ComposerInner() {
                           <ChevronDown size={14} />
                         </button>
                       </div>
-                      <button
+                      <button type="button"
                         onClick={() => remove(q.id)}
                         className="p-1 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded shrink-0"
                         title="Remove from test"
@@ -737,7 +737,7 @@ function ComposerInner() {
 
           {err && <div className="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{err}</div>}
 
-          <button
+          <button type="button"
             className="btn btn-primary w-full"
             disabled={busy || selectedIds.length === 0 || !name.trim()}
             onClick={create}
@@ -759,7 +759,7 @@ function ComposerInner() {
                   <div className="text-xs muted truncate">{variantsFor.stem}</div>
                 </div>
               </div>
-              <button
+              <button type="button"
                 onClick={() => setVariantsFor(null)}
                 className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded shrink-0"
                 aria-label="Close"
@@ -817,7 +817,7 @@ function ComposerInner() {
                             <Check size={14} /> Saved to bank
                           </span>
                         ) : (
-                          <button
+                          <button type="button"
                             onClick={() => saveOneVariant(i)}
                             disabled={!!variantSaving[i]}
                             className="btn btn-secondary text-xs"

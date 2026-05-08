@@ -271,7 +271,7 @@ export default function BulkAddStudents({
             <Users size={18} /> Bulk add students
             <span className="text-xs font-normal muted">- {className}</span>
           </div>
-          <button className="btn btn-ghost p-1" onClick={() => { if (stage === "results") onCreated(); onClose(); }} aria-label="Close"><X size={16} /></button>
+          <button type="button" className="btn btn-ghost p-1" onClick={() => { if (stage === "results") onCreated(); onClose(); }} aria-label="Close"><X size={16} /></button>
         </div>
 
         <div className="p-5">
@@ -296,8 +296,8 @@ export default function BulkAddStudents({
               />
               <div className="mt-2 text-xs muted">{namesToSubmit.length} name{namesToSubmit.length === 1 ? "" : "s"} pasted</div>
               <div className="mt-4 flex justify-end gap-2">
-                <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
-                <button className="btn btn-primary" onClick={preview} disabled={busy || namesToSubmit.length === 0}>
+                <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
+                <button type="button" className="btn btn-primary" onClick={preview} disabled={busy || namesToSubmit.length === 0}>
                   {busy ? <><Loader2 size={14} className="animate-spin" /> Checking...</> : <>Preview {namesToSubmit.length || ""}</>}
                 </button>
               </div>
@@ -361,7 +361,7 @@ export default function BulkAddStudents({
                               <code className="font-mono text-[12px] bg-slate-100 rounded px-2 py-1 select-all whitespace-nowrap">
                                 {r.username}
                               </code>
-                              <button
+                              <button type="button"
                                 className="btn btn-ghost p-1"
                                 title="Generate a new username"
                                 onClick={() => setRow(r.index, { username: newUsername() })}
@@ -379,7 +379,7 @@ export default function BulkAddStudents({
                               <code className="font-mono text-[12px] bg-slate-100 rounded px-2 py-1 select-all whitespace-nowrap">
                                 {r.password}
                               </code>
-                              <button
+                              <button type="button"
                                 className="btn btn-ghost p-1"
                                 title="Generate a new password"
                                 onClick={() => setRow(r.index, { password: newPassword() })}
@@ -414,10 +414,10 @@ export default function BulkAddStudents({
                 Tip: click any username or password to select-all and copy. Use the <RefreshCw size={10} className="inline" /> button to regenerate one.
               </div>
               <div className="mt-4 flex justify-between items-center gap-2 flex-wrap">
-                <button className="btn btn-ghost" onClick={() => setStage("paste")} disabled={busy}>← Edit names</button>
+                <button type="button" className="btn btn-ghost" onClick={() => setStage("paste")} disabled={busy}>← Edit names</button>
                 <div className="flex gap-2">
-                  <button className="btn btn-ghost" onClick={onClose} disabled={busy}>Cancel</button>
-                  <button className="btn btn-primary" onClick={commit} disabled={busy || (counts.create + counts.useExisting === 0)}>
+                  <button type="button" className="btn btn-ghost" onClick={onClose} disabled={busy}>Cancel</button>
+                  <button type="button" className="btn btn-primary" onClick={commit} disabled={busy || (counts.create + counts.useExisting === 0)}>
                     {busy ? <><Loader2 size={14} className="animate-spin" /> Creating...</> : <>Create {counts.create + counts.useExisting} student{counts.create + counts.useExisting === 1 ? "" : "s"}</>}
                   </button>
                 </div>
@@ -447,13 +447,13 @@ export default function BulkAddStudents({
                       The auto-generated passwords are shown only this once. Download them, print cards, or copy them somewhere safe before closing this dialog. (You can always reset a password later from the class roster, but the original won&rsquo;t come back.)
                     </div>
                     <div className="flex flex-wrap gap-2">
-                      <button className="btn btn-primary" onClick={downloadCsv}>
+                      <button type="button" className="btn btn-primary" onClick={downloadCsv}>
                         <Download size={14} /> Download CSV
                       </button>
-                      <button className="btn btn-secondary" onClick={printCards}>
+                      <button type="button" className="btn btn-secondary" onClick={printCards}>
                         <Printer size={14} /> Print cards
                       </button>
-                      <button className="btn btn-secondary" onClick={copyAllCredentials}>
+                      <button type="button" className="btn btn-secondary" onClick={copyAllCredentials}>
                         <Copy size={14} /> Copy all
                       </button>
                     </div>
@@ -511,7 +511,7 @@ export default function BulkAddStudents({
               )}
 
               <div className="mt-4 flex justify-end">
-                <button className="btn btn-primary" onClick={finishResults}>Done</button>
+                <button type="button" className="btn btn-primary" onClick={finishResults}>Done</button>
               </div>
             </>
           )}

@@ -219,10 +219,10 @@ export default function XrayDetailPage() {
           </p>
         </div>
         <div className="flex gap-2 flex-wrap">
-          <button className="btn btn-secondary" onClick={printPaper} title="Open a printable version">
+          <button type="button" className="btn btn-secondary" onClick={printPaper} title="Open a printable version">
             <Printer size={14} /> Print
           </button>
-          <button className="btn btn-secondary" onClick={saveAsPaper} disabled={savingPaper} title="Save as a reusable question paper">
+          <button type="button" className="btn btn-secondary" onClick={saveAsPaper} disabled={savingPaper} title="Save as a reusable question paper">
             {savingPaper ? <><Loader2 size={14} className="animate-spin" /> Saving…</> : <><FileDown size={14} /> Save as paper</>}
           </button>
         </div>
@@ -320,7 +320,7 @@ export default function XrayDetailPage() {
       <div className="flex items-center justify-between mt-8 mb-3 gap-3 flex-wrap">
         <h2 className="h2">Every question, tagged</h2>
         {hasAnyAnswer && (
-          <button
+          <button type="button"
             className="btn btn-ghost text-sm"
             onClick={() => setRevealAll((v) => !v)}
             title="Toggle all answers"
@@ -363,7 +363,7 @@ export default function XrayDetailPage() {
                     </td>
                     <td className="px-4 py-3 text-right">
                       {hasAnswer ? (
-                        <button className="btn btn-ghost text-xs" onClick={() => toggleOne(q.id)}>
+                        <button type="button" className="btn btn-ghost text-xs" onClick={() => toggleOne(q.id)}>
                           {open ? "Hide" : "Show"}
                         </button>
                       ) : (

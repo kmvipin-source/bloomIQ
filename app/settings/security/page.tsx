@@ -302,8 +302,8 @@ export default function SecuritySettingsPage() {
               autoFocus
             />
             <div className="mt-3 flex gap-2 justify-end">
-              <button className="btn btn-ghost" onClick={cancelPending} disabled={verifyBusy}>Cancel</button>
-              <button className="btn btn-primary" onClick={confirmEnroll} disabled={verifyBusy || verifyCode.length !== 6}>
+              <button type="button" className="btn btn-ghost" onClick={cancelPending} disabled={verifyBusy}>Cancel</button>
+              <button type="button" className="btn btn-primary" onClick={confirmEnroll} disabled={verifyBusy || verifyCode.length !== 6}>
                 {verifyBusy && <Loader2 size={14} className="animate-spin" />} Confirm and enable
               </button>
             </div>
@@ -320,7 +320,7 @@ export default function SecuritySettingsPage() {
                     <div className="font-medium">{f.friendly_name || "TOTP authenticator"}</div>
                     <div className="text-xs muted">factor id: <code>{f.id.slice(0, 8)}…</code></div>
                   </div>
-                  <button className="btn btn-ghost text-xs text-red-700" onClick={() => unenroll(f.id)}>
+                  <button type="button" className="btn btn-ghost text-xs text-red-700" onClick={() => unenroll(f.id)}>
                     Disable
                   </button>
                 </li>
@@ -332,7 +332,7 @@ export default function SecuritySettingsPage() {
             <p className="text-sm muted mb-3">
               No second factor on this account yet. Adding one means anyone trying to sign in needs both your password and a code from your phone.
             </p>
-            <button className="btn btn-primary" onClick={startEnroll} disabled={enrolling}>
+            <button type="button" className="btn btn-primary" onClick={startEnroll} disabled={enrolling}>
               {enrolling && <Loader2 size={14} className="animate-spin" />} Enable 2FA
             </button>
           </>

@@ -209,7 +209,7 @@ export default function SchoolTeachersPage() {
         {school.join_code ? (
           <div className="flex items-center gap-2">
             <code className="text-2xl font-mono font-bold">{school.join_code}</code>
-            <button className="btn btn-ghost p-1" onClick={copyCode} title="Copy"><Copy size={16} /></button>
+            <button type="button" className="btn btn-ghost p-1" onClick={copyCode} title="Copy"><Copy size={16} /></button>
             {copied && <span className="text-xs text-emerald-700">Copied</span>}
           </div>
         ) : (
@@ -280,7 +280,7 @@ export default function SchoolTeachersPage() {
                   <td className="px-4 py-3 text-right">{t.quizCount}</td>
                   <td className="px-4 py-3 text-right whitespace-nowrap">
                     {callerIsHead && t.schoolRole === "teacher" && (
-                      <button
+                      <button type="button"
                         className="btn btn-ghost text-xs mr-1"
                         onClick={() => setConfirmAction({ type: "promote", teacher_id: t.id, full_name: t.full_name || "this teacher" })}
                         disabled={busyId !== null || !canPromoteMore}
@@ -290,7 +290,7 @@ export default function SchoolTeachersPage() {
                       </button>
                     )}
                     {callerIsHead && t.schoolRole === "deputy" && (
-                      <button
+                      <button type="button"
                         className="btn btn-ghost text-xs mr-1"
                         onClick={() => setConfirmAction({ type: "demote", teacher_id: t.id, full_name: t.full_name || "this deputy" })}
                         disabled={busyId !== null}
@@ -300,7 +300,7 @@ export default function SchoolTeachersPage() {
                       </button>
                     )}
                     {t.schoolRole !== "head" && (
-                      <button className="btn btn-ghost text-red-600 text-xs" onClick={() => remove(t.id, t.full_name || "this teacher", t.schoolRole)}>
+                      <button type="button" className="btn btn-ghost text-red-600 text-xs" onClick={() => remove(t.id, t.full_name || "this teacher", t.schoolRole)}>
                         <UserMinus size={14} /> Remove
                       </button>
                     )}
@@ -345,8 +345,8 @@ export default function SchoolTeachersPage() {
               </>
             )}
             <div className="flex justify-end gap-2 mt-4">
-              <button className="btn btn-ghost" onClick={() => setConfirmAction(null)} disabled={busyId !== null}>Cancel</button>
-              <button
+              <button type="button" className="btn btn-ghost" onClick={() => setConfirmAction(null)} disabled={busyId !== null}>Cancel</button>
+              <button type="button"
                 className="btn btn-primary"
                 onClick={() => runRoleAction(confirmAction)}
                 disabled={busyId !== null}

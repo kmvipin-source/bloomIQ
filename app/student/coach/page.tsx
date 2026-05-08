@@ -151,7 +151,7 @@ export default function StudentCoachPage() {
           <p className="muted mt-1">Reflect on your progress and habits.</p>
         </div>
         <div className="flex items-center gap-2">
-          <button
+          <button type="button"
             className="btn btn-ghost"
             onClick={reset}
             disabled={busy || history.length === 0}
@@ -187,7 +187,7 @@ export default function StudentCoachPage() {
             <div className="text-xs mt-0.5">{err}</div>
           </div>
           {retryMessage && (
-            <button
+            <button type="button"
               className="btn btn-ghost text-xs"
               onClick={() => sendMessage(retryMessage)}
               disabled={busy}
@@ -203,7 +203,7 @@ export default function StudentCoachPage() {
         {empty && (
           <div className="flex flex-wrap gap-2 mb-3">
             {SUGGESTIONS.map((s) => (
-              <button
+              <button type="button"
                 key={s}
                 className="btn btn-ghost text-xs border border-slate-200 rounded-full"
                 onClick={() => sendMessage(s)}
@@ -225,7 +225,7 @@ export default function StudentCoachPage() {
             disabled={busy}
             rows={1}
           />
-          <button
+          <button type="button"
             className="btn btn-primary"
             onClick={() => sendMessage()}
             disabled={busy || !draft.trim()}
@@ -262,7 +262,7 @@ function EmptyState({
       </p>
       <div className="flex flex-wrap gap-2 justify-center mt-5 max-w-lg mx-auto">
         {SUGGESTIONS.map((s) => (
-          <button
+          <button type="button"
             key={s}
             className="btn btn-ghost text-xs border border-slate-200 rounded-full"
             onClick={() => onPick(s)}
