@@ -12,11 +12,11 @@
 // preview, then redirect into the existing quiz-taking flow at
 // /student/quiz/{code}.
 // =============================================================================
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { supabaseBrowser } from "@/lib/supabase/client";
 import { BLOOM_META, type BloomLevel, isBloomLevel } from "@/lib/bloom";
-import { Target, Sparkles, Play } from "lucide-react";
+import { Target, Sparkles, Play, Zap } from "lucide-react";
 
 type StartResponse = {
   ok: true;
@@ -35,7 +35,16 @@ type StartResponse = {
 export default function StudentPracticePage() {
   const router = useRouter();
 
-  const [topic, setTopic] = useState("");
+  const search = useSearchParams();
+  // Deep-link from BloomIQ Score active-path Start buttons:
+  // /student/practice?bloom=evaluate&topic=core+syllabus
+  const deepLinkBloom: BloomLevel | null = (() => {
+    const raw = search.get("bloom");
+    return raw && isBloomLevel(raw) ? (raw as BloomLevel) : null;
+  })();
+  const deepLinkTopic = search.get("topic") || "";
+
+  const [topic, setTopic] = useState(deepLinkTopic || "");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [result, setResult] = useState<StartResponse | null>(null);
@@ -51,9 +60,31 @@ export default function StudentPracticePage() {
     })();
   }, []);
 
+  // Auto-fire when arriving via the BloomIQ Score active-path Start buttons.
+  // Triggered when the URL carries a bloom param AND either a topic param or
+  // the explicit auto=1 flag. We fire ONCE per page-load; the autoFiredRef
+  // guard prevents StrictMode double-effect or any re-render loop. The form
+  // never appears for these users — straight from "Building your X drill..."
+  // to /student/quiz/[code].
+  const autoFiredRef = useRef(false);
+  useEffect(() => {
+    if (authed === null) return; // wait for auth check
+    if (!authed) return;
+    if (autoFiredRef.current) return;
+    if (!deepLinkBloom) return;
+    const wantsAuto = search.get("auto") === "1" || (deepLinkTopic && deepLinkTopic.length >= 2);
+    if (!wantsAuto) return;
+    autoFiredRef.current = true;
+    void start();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authed]);
+
   async function start() {
     setErr(null);
-    const t = topic.trim();
+    // When deep-linked, fall back to a sensible default topic so the student
+    // doesn't have to type. They can still edit the field and re-Start.
+    const fallbackTopic = deepLinkBloom ? "core syllabus" : "";
+    const t = (topic.trim() || fallbackTopic).trim();
     if (t.length < 2) {
       setErr("Tell us what you want to practise (e.g. Photosynthesis).");
       return;
@@ -70,7 +101,10 @@ export default function StudentPracticePage() {
           "Content-Type": "application/json",
           Authorization: `Bearer ${session.access_token}`,
         },
-        body: JSON.stringify({ topic: t }),
+        body: JSON.stringify({
+          topic: t,
+          ...(deepLinkBloom ? { target_bloom: deepLinkBloom } : {}),
+        }),
       });
       const data = (await res.json()) as Partial<StartResponse> & { error?: string };
       if (!res.ok || !data.ok) {
@@ -103,13 +137,32 @@ export default function StudentPracticePage() {
 
   return (
     <div className="max-w-3xl mx-auto fade-in">
+      {deepLinkBloom ? (
+        <div className="card mb-4 p-3 border-2"
+             style={{ borderColor: "#10b981", background: "rgba(16,185,129,0.08)" }}>
+          <div className="flex items-start gap-2 text-sm">
+            <Zap size={16} style={{ color: "#10b981" }} className="flex-shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <div className="font-semibold" style={{ color: "#10b981" }}>
+                Drilling your <strong>{BLOOM_META[deepLinkBloom].label}</strong> weak spot from your BloomIQ active path
+              </div>
+              <p className="text-xs opacity-80 mt-0.5">
+                {deepLinkTopic
+                  ? <>Drilling: <strong>{deepLinkTopic}</strong>. Edit the topic below if you want a different focus, or tap Start.</>
+                  : "Type a topic to drill, or tap Start for the default at this Bloom level."}
+              </p>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       <div className="flex items-center gap-3">
         <div className="rounded-xl bg-emerald-100 text-emerald-700 p-2.5">
           <Target size={22} />
         </div>
         <div>
           <h1 className="h1">Adaptive Practice</h1>
-          <p className="muted mt-0.5">Questions targeted to your level.</p>
+          <p className="muted mt-0.5">{deepLinkBloom ? `Targeting ${BLOOM_META[deepLinkBloom].label} level.` : "Questions targeted to your level."}</p>
         </div>
       </div>
 
@@ -121,8 +174,10 @@ export default function StudentPracticePage() {
           </div>
           <p className="mt-1 text-slate-700">
             Tell us what you want to practise. We&apos;ll pick the right
-            difficulty for you based on your last 30 days of attempts —
-            5 questions, calibrated to where you&apos;ll grow most.
+            difficulty for you &mdash; 5 questions, calibrated to your
+            current level. We use your BloomIQ Score and any recent quiz
+            attempts to find your sweet spot; new students get a balanced
+            mid-difficulty set.
           </p>
         </div>
       )}

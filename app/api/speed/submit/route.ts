@@ -25,11 +25,11 @@ type SubmitQ = {
   stem: string;
   options: string[];
   correct_index: number;
-  bloom_level: string;
+  bloom_level: "remember" | "understand" | "apply" | "analyze" | "evaluate" | "create";
   target_ms: number;
   time_ms: number;
   picked: number;
-  explanation?: string;
+  explanation: string;
 };
 
 type Quadrant = {
@@ -80,7 +80,7 @@ export async function POST(req: Request) {
           // Skipped/timeout: still record but mark wrong with a sentinel pick.
           return {
             stem, options, correct_index: ci, bloom_level: bl, target_ms, time_ms,
-            picked: -1, explanation: typeof o.explanation === "string" ? o.explanation : undefined,
+            picked: -1, explanation: typeof o.explanation === "string" ? o.explanation : "",
           } satisfies SubmitQ;
         }
         return {

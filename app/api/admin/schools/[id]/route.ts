@@ -34,7 +34,25 @@ export async function GET(req: Request, ctx: Ctx) {
       .maybeSingle();
     if (!school) return NextResponse.json({ error: "School not found" }, { status: 404 });
 
-    const { data: subscription } = await admin
+    type SubRow = {
+      id: string;
+      plan_id: string | null;
+      tier: string | null;
+      status: string | null;
+      started_at: string | null;
+      expires_at: string | null;
+      override_price_paise: number | null;
+      override_reason: string | null;
+      override_set_by: string | null;
+      override_set_at: string | null;
+      invoice_number: string | null;
+      payment_method: string | null;
+      payment_received_at: string | null;
+      contracted_students: number | null;
+      activation_pending: boolean | null;
+      grace_period_days: number | null;
+    };
+    const { data: subRaw } = await admin
       .from("subscriptions")
       .select(
         "id, plan_id, tier, status, started_at, expires_at, " +
@@ -44,6 +62,7 @@ export async function GET(req: Request, ctx: Ctx) {
       )
       .eq("school_id", id)
       .maybeSingle();
+    const subscription = (subRaw as unknown as SubRow | null) ?? null;
 
     let plan: { id: string; slug: string | null; label: string | null; per_student_price_paise: number | null } | null = null;
     if (subscription?.plan_id) {
@@ -145,7 +164,6 @@ export async function DELETE(req: Request, ctx: Ctx) {
       try {
         await admin.auth.admin.deleteUser(h.id);
       } catch (e) {
-        // eslint-disable-next-line no-console
         console.error("[delete school] failed to remove super_teacher auth user", h.id, e);
       }
     }

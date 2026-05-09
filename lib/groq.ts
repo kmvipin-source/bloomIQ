@@ -6,12 +6,17 @@ import Groq from "groq-sdk";
 // The fallback to NEXT_PUBLIC_GROQ_API_KEY exists only to ease migration
 // for older deployments; remove the fallback once every .env has the
 // non-public name in place.
-const groqClient = new Groq({
-  apiKey:
-    process.env.GROQ_API_KEY ||
-    process.env.NEXT_PUBLIC_GROQ_API_KEY ||
-    "",
-});
+let _groqClient: Groq | null = null;
+function groqClient(): Groq {
+  if (_groqClient) return _groqClient;
+  _groqClient = new Groq({
+    apiKey:
+      process.env.GROQ_API_KEY ||
+      process.env.NEXT_PUBLIC_GROQ_API_KEY ||
+      "",
+  });
+  return _groqClient;
+}
 
 export const GROQ_MODEL = "llama-3.3-70b-versatile";
 // Vision-capable model on Groq for multimodal (image) prompts
@@ -35,7 +40,7 @@ function parseJsonLoose(text: string): Record<string, unknown> {
 }
 
 export async function groqJSON(systemPrompt: string, userPrompt: string) {
-  const res = await groqClient.chat.completions.create({
+  const res = await groqClient().chat.completions.create({
     model: GROQ_MODEL,
     temperature: 0.4,
     response_format: { type: "json_object" },
@@ -53,7 +58,7 @@ export async function groqJSONVision(
   userPrompt: string,
   imageDataUrl: string
 ) {
-  const res = await groqClient.chat.completions.create({
+  const res = await groqClient().chat.completions.create({
     model: GROQ_VISION_MODEL,
     temperature: 0.4,
     messages: [
@@ -72,7 +77,7 @@ export async function groqJSONVision(
 }
 
 export async function groqText(systemPrompt: string, userPrompt: string) {
-  const res = await groqClient.chat.completions.create({
+  const res = await groqClient().chat.completions.create({
     model: GROQ_MODEL,
     temperature: 0.6,
     messages: [

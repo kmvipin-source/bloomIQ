@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
 import MobileNav from "@/components/MobileNav";
+import BloomIQScoreBadge from "@/components/BloomIQScoreBadge";
 import { supabaseBrowser } from "@/lib/supabase/client";
 
 export default function StudentLayout({ children }: { children: React.ReactNode }) {
@@ -39,6 +40,12 @@ export default function StudentLayout({ children }: { children: React.ReactNode 
             const j = await r.json();
             role = String(j.role || "");
             platformAdmin = !!j.platform_admin;
+            // Hard gate: if this student's auto-granted Free plan has expired,
+            // every /student/* route except /student/expired itself is blocked.
+            if (j.is_free_expired === true && !pathname.startsWith("/student/expired")) {
+              router.replace("/student/expired");
+              return;
+            }
           }
         } catch { /* fall through */ }
         if (!role) {
@@ -67,11 +74,27 @@ export default function StudentLayout({ children }: { children: React.ReactNode 
     return <div className="min-h-screen grid place-items-center"><div className="spinner" /></div>;
   }
   if (taking) return <main className="min-h-screen">{children}</main>;
+
+  // Hide the score badge in surfaces where the score is already the
+  // dominant element on the page or where the user is mid-calibration.
+  const hideBadge =
+    pathname === "/student/bloom-score" ||
+    pathname.startsWith("/student/bloom-score/") ||
+    pathname === "/student/future" ||
+    pathname.startsWith("/student/future/");
+
   return (
     <div className="md:flex min-h-screen">
       <Sidebar role="student" />
       <MobileNav role="student" />
-      <main className="flex-1 p-4 md:p-8 overflow-auto">{children}</main>
+      <main className="flex-1 p-4 md:p-8 overflow-auto">
+        {!hideBadge ? (
+          <div className="flex justify-end mb-3">
+            <BloomIQScoreBadge />
+          </div>
+        ) : null}
+        {children}
+      </main>
     </div>
   );
 }

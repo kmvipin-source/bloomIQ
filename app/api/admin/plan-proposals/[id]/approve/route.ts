@@ -91,7 +91,7 @@ export async function POST(req: Request, ctx: RouteContext) {
       body.proposed !== null
     ) {
       const v = validatePayload(body.proposed as Record<string, unknown>, proposal.kind);
-      if (!v.ok) return NextResponse.json({ error: v.error }, { status: 400 });
+      if (!v.ok) return NextResponse.json({ error: (v as unknown as { error: string }).error }, { status: 400 });
       // Detect actual change vs. current proposed (deep-equal via JSON).
       if (JSON.stringify(v.payload) !== JSON.stringify(proposal.proposed)) {
         approvedPayload = v.payload;

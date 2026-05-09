@@ -47,7 +47,7 @@ export async function POST(req: Request) {
 
     // Reject if email already in use — push to /login flow instead of paying.
     const { data: existingList } = await admin.auth.admin.listUsers({ page: 1, perPage: 200 });
-    const exists = existingList?.users.find((u) => (u.email || "").toLowerCase() === email);
+    const exists = (existingList?.users as Array<{ id: string; email?: string | null }>)?.find((u) => (u.email || "").toLowerCase() === email);
     if (exists) {
       return NextResponse.json(
         { error: "An account with this email already exists. Please sign in first.", code: "email_exists" },

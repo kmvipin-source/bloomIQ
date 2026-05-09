@@ -116,8 +116,9 @@ export default function CalibrationPage() {
         <div className="flex-1">
           <h1 className="h1">Confidence Calibration</h1>
           <p className="muted mt-1">
-            How well does your gut match reality? When you say &quot;Sure&quot;, are you actually right? This is the
-            metacognitive skill that separates AIR 500 from AIR 5000 on negative-marking exams.
+            Are your hunches actually right? When you mark a question as &quot;Sure&quot;, are you really getting it right?
+            Knowing the difference between confident-and-correct vs confident-and-wrong is what separates
+            AIR 500 from AIR 5000 on negative-marking exams.
           </p>
         </div>
       </div>

@@ -146,7 +146,7 @@ export async function PATCH(req: Request, ctx: RouteContext) {
         ? (body.proposed as Record<string, unknown>)
         : {};
     const v = validatePayload(proposedRaw, proposal.kind as "edit" | "create");
-    if (!v.ok) return NextResponse.json({ error: v.error }, { status: 400 });
+    if (!v.ok) return NextResponse.json({ error: (v as unknown as { error: string }).error }, { status: 400 });
 
     const { data: updated, error: updErr } = await admin
       .from("plan_change_proposals")

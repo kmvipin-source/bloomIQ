@@ -31,7 +31,7 @@ type Event = {
   source: string;
   confidence: number;
   was_correct: boolean;
-  bloom_level: string | null;
+  bloom_level: "remember" | "understand" | "apply" | "analyze" | "evaluate" | "create" | null;
   topic: string | null;
 };
 

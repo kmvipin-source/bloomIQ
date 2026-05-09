@@ -146,7 +146,256 @@ platform-admin invite flow at `/admin/onboard-school` instead.
 
 ---
 
-## 🆕 Latest session — 2026-05-09 / 2026-05-10 (B2B billing: negotiated price, GST invoices, renewal workflow, modern expiry)
+## 🆕 Latest session — 2026-05-10 evening (Test harness for B2B billing + UX polish: /admin/plans edit fix, /student/expired dual-tier upgrade)
+
+Three small but meaningful fixes on top of the day's bigger work:
+
+### What shipped — automated test harness for B2B billing
+
+Built two test scripts so the B2B billing pipeline shipped earlier today
+has both unit-level and end-to-end coverage going into launch:
+
+- **`scripts/test-billing-logic.js`** — sandbox-runnable, no DB needed.
+  41 assertions covering every algorithmic decision in the billing code:
+  the four-case `started_at`/`expires_at` decision tree (start_renewal,
+  brand-new bind, mid-cycle plan change, plan removed), all three
+  mark-paid extend-anchor strategies (smart, previous_expiry, received_at),
+  every grace-window boundary in `useFeatureAccess`, GST math with rounding
+  edge cases, BLM/YYYY/NNNN sequence padding, and first-sign-in activation
+  flip semantics. Verified **41/41 PASS** in sandbox. Run with
+  `node scripts/test-billing-logic.js` — exits 0 on green.
+
+- **`scripts/test-billing-e2e.js`** — needs the live Supabase but no UI.
+  Walks through 7 scenarios end-to-end: creates a fresh test school,
+  binds a Pilot plan with `activation_pending=true` + override price +
+  contracted seats, simulates first-sign-in flip, performs mid-cycle
+  plan change to verify expires_at is preserved, generates an invoice,
+  marks payment received, triggers `start_renewal` to verify cycle
+  archiving + invoice number clearing, asserts every step against
+  expected DB state, then cleans up. Single command: `node scripts/test-billing-e2e.js`.
+  Aborts cleanly with a clear message if migrations 64+65 aren't applied.
+
+### What shipped — `/admin/schools/[id]` defects D1 + D2 fixed
+
+After driving the per-school admin page through Chrome end-to-end, two
+small UX defects surfaced. Both fixed:
+
+- **D1** — Activation date input field hydrated as UTC YYYY-MM-DD.
+  An operator who entered "1 Jun" (IST) and reloaded saw "31 May" back —
+  the value the field was bound to was the UTC slice of the same instant.
+  Fix: hydrate via `new Date(iso).toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" })`
+  in `load()` so the input always shows IST-local YYYY-MM-DD.
+
+- **D2** — EXPIRES tile didn't refresh immediately after Save (showed the
+  old value until a hard reload). Fix: pass `cache: "no-store"` to the
+  load() fetch so post-save reloads bypass any browser/Next.js cache and
+  pick up the freshly-written subscription row immediately. Verified in
+  Chrome: changing date `2026-06-01` → `2026-07-15`, clicking Save, the
+  EXPIRES tile updates to "15 Jul 2027 (431d)" with no manual reload.
+
+Test trail in `docs/CHROME_E2E_2026-05-10_expiry_edit.md` and `docs/TEST_REPORT_2026-05-10.md`.
+
+### What shipped — `/admin/plans` Edit button + stretched-link bug fix
+
+The catalogue of plan SKUs (Premium / Premium Plus / School Pilot /
+Standard / Plus / etc.) at `/admin/plans` had two related issues:
+
+1. The whole card was supposed to be clickable — a "stretched link"
+   pattern that opened `/admin/plans/[id]/edit`. But the link was
+   `z-0` while the card content was `z-10`, so clicks always landed
+   on the higher-z content (text/divs that aren't links themselves)
+   and the link was unreachable. The card looked clickable but did
+   nothing.
+2. The only visual edit affordance was a muted Pencil icon at the
+   top-right — decorative, not a button. New admins never realized
+   the card was meant to be clickable.
+
+Fix: dropped the broken stretched-link entirely; replaced the muted
+Pencil with an explicit **Edit** button (brand-coloured, primary
+styling) right next to the existing Clone button. Both go through
+the proposal queue as before. Verified in Chrome: each plan card now
+has visible Edit + Clone buttons, click navigates correctly to
+`/admin/plans/[id]/edit`, edit form loads with Pricing/Display copy/Features.
+
+### What shipped — `/student/expired` shows BOTH Premium and Premium Plus
+
+The day-8 lockout page (rendered when a student's 7-day Free trial elapses)
+previously had a single "Upgrade to Premium" CTA — Premium Plus was
+hidden behind it on `/pricing`. Most students never got to compare.
+
+Replaced with a **two-column upgrade panel**:
+
+- **Premium** (indigo) — labelled "Most learners pick this". Bullets:
+  unlimited daily drills, full BloomIQ Score + weekly active path,
+  AI tutor + Coach, adaptive practice from weakest topics. CTA:
+  "Choose Premium" → `/pricing?tier=premium`.
+- **Premium Plus** (violet) — with a "BEST FOR EXAM PREP" ribbon.
+  Bullets: everything in Premium, past-paper X-ray + trap detector,
+  mock-rank predictor (NEET/JEE/CAT), voice teacher + concept animations.
+  CTA: "Choose Premium Plus" → `/pricing?tier=premium_plus`.
+
+Sign-out demoted to a small secondary button. Quiet "Compare all plans
+side-by-side →" link below for users who want the full comparison
+before deciding. Each CTA passes a `?tier=` hint so `/pricing` can
+highlight the right card.
+
+### Files touched
+
+**New:**
+- `scripts/test-billing-logic.js` (449 lines)
+- `scripts/test-billing-e2e.js` (323 lines)
+- `docs/TEST_REPORT_2026-05-10.md` (test summary)
+- `docs/CHROME_E2E_2026-05-10_expiry_edit.md` (Chrome run report)
+
+**Modified:**
+- `app/admin/schools/[id]/page.tsx` — D1 + D2 fixes (toLocaleDateString IST + cache no-store)
+- `app/admin/plans/page.tsx` — Edit button replaces broken stretched-link
+- `app/student/expired/page.tsx` — two-tier upgrade panel
+- Plus the type-narrowing fixes (as-unknown-as) in
+  `app/api/admin/schools/[id]/route.ts`,
+  `app/api/admin/schools/[id]/set-plan/route.ts`,
+  `app/api/admin/subscriptions/[id]/invoice/route.ts`
+  (Supabase types narrow to GenericStringError when selects reference
+  columns the type cache doesn't know about; the codebase already had
+  the as-unknown-as pattern, applied it consistently here).
+
+### Verified
+
+- TypeScript: 0 errors in any file shipped today (the 23 errors that
+  appear in `npx tsc --noEmit` are all pre-existing latent issues in
+  files I didn't touch — calibration/log, school/digest enums, etc.)
+- ESLint: 0 errors on the 14 files in scope; only minor `react-hooks/purity`
+  warnings on existing `Date.now()` patterns the codebase uses widely.
+- 41/41 logic tests pass.
+- Chrome E2E pass on `/admin/schools/[id]` activation/grace/save flow,
+  `/admin/plans` Edit button click, `/student/expired` two-tier render.
+
+---
+
+## 🆕 Earlier session — 2026-05-10 morning (BloomIQ Score + Future You: the killer first-run feature; 7-day Free-plan validity)
+
+The headline shift: BloomIQ now has a **single 3-digit "BloomIQ Score" (300–900)** that every independent student sees from the moment they sign in. It powers a dramatic "Future You" reveal page predicting their exam-day rank and named target colleges, with a "Best You" delta showing how much they'd lift if they fix their weakest Bloom levels. The score sits permanently in the layout's top-right and updates after every quiz or drill. Plus a hard-gated 7-day Free-plan validity window — admin-editable from `/admin/plans` — that converts free-plan tyre-kickers into upgrade prompts on day 8.
+
+### What shipped — the killer-feature flow
+
+**The 7-minute first-run calibration:**
+- New page `/student/bloom-score` — 12 Bloom-tagged questions generated by Groq tailored to the student's exam goal (one of NEET / JEE / CAT / UPSC / Class 5–8 / Class 9 / Class 10 boards / Class 12 boards / Bank exams / "exploring").
+- New `lib/calibrationGenerator.ts` builds the prompt and validates the JSON shape. Per-exam profile in `EXAM_PROFILES` brief Groq with audience, difficulty bar, subjects, and anchored sample questions per Bloom level — so a CAT student gets graduate-level QA/VARC/DI/LR, a Class 5–8 student gets NCERT primary-school content, and a NEET student gets Phys/Chem/Bio NCERT difficulty. No more "What is the full form of NEET?" meta-questions; the prompt explicitly bans those.
+- Bloom labels are HIDDEN from the student during the quiz on purpose — clean cognitive measurement, not test-taking strategy.
+- API: `POST /api/student/calibration/start` (returns 12 generated questions) + `POST /api/student/calibration/submit` (scores, persists, returns Future You payload).
+
+**The dramatic reveal at `/student/future`:**
+- Animated count-up from 300 to the student's score (only on first reveal — `?fresh=1`).
+- Predicted exam-day rank label (NEET/JEE = "AIR ~26,990", CAT = "Predicted CAT %ile ~98.2", Boards = "Predicted ~85% in board exams", Class 5–8 = "Ahead of 73% of grade-level peers").
+- 3 named target colleges per exam (real cutoffs: AIIMS Delhi, IIT Bombay CSE, IIM Ahmedabad, etc.).
+- Side-by-side "Best You" card showing the lifted rank if they fix their top-3 weakest Bloom levels — with a `+257` delta.
+- "What this score means" insights card with: Bloom signature label ("Fast Recogniser, Slow Applier" / "Building Your Foundation" / etc.), top-strength callout, top-concern callout, and a time-to-Best-You estimate ("8–15 weeks at 30 min/day").
+- A `Bloom-breakdown` row of 6 progress bars showing per-level mastery percentages.
+
+**Tier-aware bottom section** (driven by `useFeatureAccess`):
+- Free / anon → personalised Premium pitch tied to THE STUDENT'S exact gaps with three weekly habits (e.g. "Tackle 15 Evaluate-level critical-reasoning questions · expected ~+86 pts · 75 min/week"). Clear "₹99/month" + "Cancel anytime" guarantee. Free-cap pre-flight on the "Try a free drill" button (`X/3 left today` inline; switches to "Free cap hit — unlock more" → /pricing when 0).
+- Premium / Premium Plus / school plans → "active path" tracker with real per-Bloom-level weekly drill counters (3-dot strip + "X/3 this week" pulled from `/api/student/weekly-drill-progress` aggregating attempt_answers). Each row links to a one-tap drill. No price tag, no upsell (except a soft Premium Plus nudge for Premium-tier users).
+
+**One-tap deep-linked drills:**
+- Every "Start" button on Future You routes to `/student/practice?bloom=<level>&topic=<topic>&auto=1`. The practice page detects the deep-link, shows a green "Drilling: <topic>" banner, auto-fires `/api/student/adaptive-practice` with `target_bloom` override, and redirects to the quiz in ~5 seconds.
+- The drill topic is the student's ACTUAL weakest topic from `calibration_responses` (rows where `is_correct=false`, ranked by frequency, filtered to the target Bloom level when possible) — not a generic "mix of subjects". Falls back to a single-subject string per exam goal (e.g. "NEET Biology — Class 11/12 NCERT") when no calibration signal is available.
+- Server-side belt-and-suspenders: `/api/student/adaptive-practice` re-checks the topic and upgrades it from `calibration_responses` if it still looks generic.
+
+**Persistent BloomIQ Score badge in the layout:**
+- Top-right of every `/student/*` page (except the calibration quiz and the reveal itself).
+- Shows the 3-digit score + day-over-day trend arrow + delta. Tap to open `/student/future`. Uncalibrated users see a "Get your BloomIQ →" CTA instead.
+- 1-minute in-memory cache so it doesn't re-fetch on every navigation; refetches on window focus.
+
+**Discovery hero on `/student` home:**
+- First-run only (when `has_calibration=false`). Big gradient card titled "Discover your BloomIQ Score" with a 7-minute setup pitch.
+- Auto-disappears once the student calibrates.
+
+**"Change goal" affordance + stale-calibration banner:**
+- New "Change goal" link in the Future You score header strip, routing to `/student/bloom-score`.
+- When `profiles.exam_goal` differs from `calibrations.exam_goal`, an amber banner appears above the score: "Your goal changed — your score is now stale". The score-hero card dims to 70% opacity to visually flag that the predictions are tied to the old goal.
+
+### What shipped — the 7-day Free-plan validity window
+
+**Migration 67 (`67_free_trial_days.sql`):**
+- Adds `subscription_limits.free_trial_days` (int, default 7, capped 0–90) — the platform-wide validity window.
+- Adds `subscriptions.is_trial` (boolean, default false) — distinguishes auto-granted Free rows from any future manually-created Free rows.
+- Backfills existing `subscription_limits` row to 7 days if it's currently null/0.
+
+**Auto-grant on first sign-in:**
+- `/api/auth/me` checks: if the user is `role='student' + is_school_student=false + school_id=null` AND has no subscription row AND `free_trial_days > 0`, it inserts a `tier='free' + is_trial=true + expires_at=now+N` subscription row.
+- Idempotent: only fires when no subscription exists. Re-runs are no-ops.
+
+**Hard upgrade gate at expiry:**
+- `/api/auth/me` also computes `is_free_expired` — true when the existing subscription is `tier='free' + is_trial=true + expires_at<now`.
+- The student layout intercepts this and redirects every `/student/*` route (except `/student/expired` itself) to a hard lockout page: "Your free access has ended. Upgrade to Premium to continue." with a /pricing CTA and a list of what Premium unlocks. NO silent degradation to permanent Free.
+- Paid Premium users (`tier='premium'`) are NEVER affected by this — they still get the existing graceful expiry behaviour from the renewal banner / grace period.
+
+**Admin control on `/admin/plans`:**
+- New `FreeTrialSettings` card at the top of the page. Number input 0–90, default 7. Save button calls `PATCH /api/admin/free-trial-settings`.
+- Setting to 0 → Free is permanent (no expiry, no gate) — the legacy behaviour.
+- Setting to 7 → every new student gets 7 days of Free, then locked out until upgrade. Editable any time; affects new sign-ups thereafter.
+
+### Schema, files, and routes touched
+
+**New SQL migration:**
+- `supabase/migrations/66_bloomiq_score_calibration.sql` (calibrations + calibration_responses + bloomiq_scores tables + RLS).
+- `supabase/migrations/67_free_trial_days.sql` (free_trial_days + is_trial columns).
+
+**New libs:**
+- `lib/calibrationGenerator.ts` (Groq prompt, EXAM_PROFILES per exam goal, Bloom-mix validator).
+- `lib/bloomiqScore.ts` (`computeScore`, `computeBestYou`, `predictRankAndColleges` with NEET/JEE/CAT/Boards/primary_middle branches, `BLOOM_LABEL` map).
+- `lib/bloomiqInsights.ts` (`computeSignature` with 8 archetypes, `computeStrength` / `computeConcern` / `computeTimeToBestYou` / `computeUpgradeNarrative` / `topicForGoal`).
+
+**New API routes:**
+- `POST /api/student/calibration/start` — generates 12 questions for the user's exam goal.
+- `POST /api/student/calibration/submit` — scores, persists, returns Future You payload.
+- `GET /api/student/score` — returns latest score + trend + calibration snapshot + `is_stale`.
+- `POST /api/student/score/recompute` — recomputes after quiz, blends calibration anchor + recency-weighted attempt_answers.
+- `GET /api/student/weekly-drill-progress` — per-Bloom-level drill counts for current ISO week.
+- `GET/PATCH /api/admin/free-trial-settings` — platform-admin Free-plan-validity setting.
+- Modified `POST /api/student/adaptive-practice` to accept optional `target_bloom` override + auto-upgrade generic topics from calibration_responses.
+
+**New pages:**
+- `app/student/bloom-score/page.tsx` — the 12-question calibration quiz (intro → quiz → submitting states).
+- `app/student/future/page.tsx` — the Future You reveal (score hero, Best You, insights, tier-aware pitch/active-path, stale banner, Best-You-reached prompt).
+- `app/student/expired/page.tsx` — the hard lockout when Free-plan validity has elapsed.
+
+**New components:**
+- `components/BloomIQScoreBadge.tsx` — persistent top-right score chip.
+
+**Modified:**
+- `components/StudentGoalPicker.tsx` — added `class_5_8` and `class_9` options.
+- `app/student/layout.tsx` — mounts the BloomIQ badge + intercepts is_free_expired.
+- `app/student/page.tsx` — shows the BloomIQ Score discovery hero on first-run.
+- `app/admin/plans/page.tsx` — mounts the FreeTrialSettings card.
+- `app/student/practice/page.tsx` — reads `?bloom=`, `?topic=`, `?auto=1` query params, auto-fires drill on deep link.
+- `app/api/auth/me/route.ts` — auto-grants Free trial + computes is_free_expired.
+- `app/student/calibration/page.tsx` — de-jargoned the Confidence Calibration intro copy ("Are your hunches actually right?" instead of "metacognitive skill").
+
+**Test-account scripts:**
+- `scripts/create-3-free-students.js` — spins up 3 Free-plan independent students (Class 12 boards / NEET prep / Class 5–8) with email already confirmed for E2E. Pass `--reset` to wipe and recreate.
+
+### How to test (after applying migrations 66 + 67)
+
+1. `node scripts/create-3-free-students.js` from project root — creates the test students.
+2. Sign in as `free.student.1@bloomiq-test.local` / `TestPass123!` (Class 12 student).
+3. Goal-picker is skipped (already set). The "Discover your BloomIQ Score" hero card is visible.
+4. Tap it → take 12 calibration questions — ~7 minutes.
+5. Land on `/student/future` with a 300–900 score, predicted "Top X% in board exams" + named DU/CUET colleges, Bloom signature, weekly time-to-Best-You estimate, and the personalised Premium pitch tied to your gaps.
+6. Tap "Try a free drill" — lands on `/student/practice?bloom=<level>&topic=<weakest topic>&auto=1`, auto-fires, redirects to the quiz in ~5 seconds. Questions are drawn from your weakest specific topic (e.g. "Photosynthesis"), at your weakest Bloom level.
+7. Wait 7 days (or set `subscription_limits.free_trial_days = 1` and wait a day, or set the row's `expires_at` to a past date for an instant test). Sign in again. Every `/student/*` route redirects to `/student/expired` until upgrade.
+
+### Known follow-ups (not blockers)
+
+- **Best You retargeting:** when current score climbs to or past the original Best You target, a "Re-calibrate" prompt surfaces — but the underlying Best You stays frozen at the calibration-time projection. v2 could re-derive Best You on each recompute.
+- **Trial expiry warning banner:** before day 7, a "Your free access expires in N days" banner on `/student` would soften the lockout. Not built yet.
+- **Score history line chart:** the `bloomiq_scores` time-series captures every score update, but there's no visualisation yet (the active-path "See score history" CTA links to `/student/progress`, which exists but isn't yet wired to render the BloomIQ time-series).
+- **Per-action drill-count target:** the active-path 3-dot strip uses a hardcoded weekly target of 3. Could be derived from each action's `weeklyTime` for accuracy.
+- **Topic Layer-2 server upgrade:** when a generic topic is detected, the API queries calibration_responses for a real weakest topic. This already works but doesn't yet know about `attempt_answers` patterns post-calibration — so over time, when a student's calibration is months old but their recent quiz attempts paint a different picture, the topic upgrade could pull from attempt_answers too.
+
+---
+
+## 🆕 Earlier session — 2026-05-09 / 2026-05-10 morning (B2B billing: negotiated price, GST invoices, renewal workflow, modern expiry)
 
 The headline shift: BloomIQ now has a **complete operator-driven B2B
 billing pipeline** for school deals — from negotiated-price onboarding

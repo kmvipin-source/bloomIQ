@@ -57,7 +57,7 @@ export async function POST(req: Request) {
 
     const { data: usersList, error: listErr } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 });
     if (listErr) return NextResponse.json({ error: listErr.message }, { status: 500 });
-    const existing = usersList.users.find((u) => u.email?.toLowerCase() === adminEmail);
+    const existing = (usersList.users as Array<{ id: string; email?: string | null }>).find((u) => u.email?.toLowerCase() === adminEmail);
     if (existing) {
       return NextResponse.json(
         {

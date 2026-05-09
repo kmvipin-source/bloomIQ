@@ -116,7 +116,14 @@ export default function SchoolAdminPage(props: PageProps) {
     setErr(null);
     const t = await getToken();
     if (!t) { setErr("Sign in required."); return; }
-    const r = await fetch(`/api/admin/schools/${schoolId}`, { headers: { Authorization: `Bearer ${t}` } });
+    // cache: "no-store" so post-save reloads get the freshly-written
+    // subscription row instead of a stale cached body. Defect D2 from
+    // the 2026-05-10 Chrome E2E run — without this the EXPIRES tile
+    // could lag one render cycle after Save.
+    const r = await fetch(`/api/admin/schools/${schoolId}`, {
+      headers: { Authorization: `Bearer ${t}` },
+      cache: "no-store",
+    });
     const j = await r.json();
     if (!r.ok) { setErr(j.error || "Failed to load school"); return; }
     setData(j);
@@ -126,10 +133,13 @@ export default function SchoolAdminPage(props: PageProps) {
     setOverrideReason(j.subscription?.override_reason ?? "");
     setPaymentMethod(j.subscription?.payment_method ?? "neft");
     // Hydrate modern-expiry fields. started_at comes back as full ISO; the
-    // <input type="date"> wants YYYY-MM-DD, so trim.
+    // <input type="date"> wants YYYY-MM-DD. Use IST-local (en-CA returns
+    // YYYY-MM-DD) so an operator who entered "1 Jun" in IST sees "1 Jun"
+    // back, not "31 May" (the UTC date for the same instant). Defect D1
+    // from the 2026-05-10 Chrome E2E run.
     setActivationDate(
       j.subscription?.started_at
-        ? new Date(j.subscription.started_at).toISOString().slice(0, 10)
+        ? new Date(j.subscription.started_at).toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" })
         : "",
     );
     setActivationPending(j.subscription?.activation_pending === true);
@@ -139,7 +149,8 @@ export default function SchoolAdminPage(props: PageProps) {
         : "",
     );
   }
-  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [schoolId]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps, react-hooks/set-state-in-effect
+  useEffect(() => { void load(); }, [schoolId]);
 
   async function savePlan(opts: { clearOverride?: boolean; clearContracted?: boolean } = {}) {
     setSavingPlan(true); setErr(null); setInfo(null);
@@ -513,7 +524,7 @@ export default function SchoolAdminPage(props: PageProps) {
                 Defer until first sign-in
               </label>
               <p className="text-[10px] muted mt-1">
-                Term clock starts the moment the school's Admin Head first signs in. Use when onboarding ahead of when they're actually ready to use the app.
+                Term clock starts the moment the school&apos;s Admin Head first signs in. Use when onboarding ahead of when they&apos;re actually ready to use the app.
               </p>
             </div>
             <div>

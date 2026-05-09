@@ -199,7 +199,7 @@ export async function GET(req: Request) {
       // The UI uses this to render an upgrade chip on the cohort column.
       ...(benchmarkAllowed ? {} : {
         required_feature: "cohort_benchmarks",
-        required_tier: gate.allowed ? null : gate.requiredTier,
+        required_tier: gate.allowed ? null : (gate as unknown as { requiredTier: string | null }).requiredTier,
       }),
       thresholds: {
         min_samples: MIN_SAMPLES_FOR_BENCHMARK,

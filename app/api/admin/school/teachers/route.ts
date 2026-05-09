@@ -31,7 +31,7 @@ export async function POST(req: Request) {
     const admin = supabaseAdmin();
     const { data: usersList, error: listErr } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 });
     if (listErr) return NextResponse.json({ error: listErr.message }, { status: 500 });
-    const u = usersList.users.find((x) => x.email?.toLowerCase() === email);
+    const u = (usersList.users as Array<{ id: string; email?: string | null }>).find((x) => x.email?.toLowerCase() === email);
     if (!u) {
       return NextResponse.json({ error: "No account with that email. Ask them to sign up first." }, { status: 404 });
     }

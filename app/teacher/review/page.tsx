@@ -218,14 +218,14 @@ export default function ReviewPage() {
                 )}
                 <button type="button"
                   className="btn btn-primary"
-                  onClick={() => approve(q.id)}
+                  onClick={() => setStatus(q, "approved")}
                   title="Approve and add to your bank"
                 >
                   <Check size={16} /> Approve
                 </button>
                 <button type="button"
                   className="btn btn-ghost text-red-600"
-                  onClick={() => reject(q.id)}
+                  onClick={() => setStatus(q, "rejected")}
                   title="Reject and remove"
                 >
                   <X size={16} /> Reject

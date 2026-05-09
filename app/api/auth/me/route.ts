@@ -95,6 +95,79 @@ export async function GET(req: Request) {
       }
     }
 
+    // ─── Free-plan validity grant on first sign-in ───
+    // If the platform admin has set subscription_limits.free_trial_days > 0,
+    // every new independent student gets a TIME-BOXED FREE PLAN of N days on
+    // first sign-in. This is NOT a Premium trial — they get the Free 3-tests/
+    // day cap and Free feature set, but their access is gated to N days. When
+    // expires_at passes, the layout interceptor renders a hard upgrade gate.
+    //
+    // Setting N=0 disables this — students stay on permanent Free (the
+    // pre-pivot behaviour, useful for non-monetised testing or schools).
+    //
+    // Idempotent: only inserts when no subscription row exists. Re-runs are
+    // no-ops; expiry is detected separately and surfaced via is_free_expired.
+    let isFreeExpired = false;
+    if (
+      prof &&
+      prof.role === "student" &&
+      !prof.is_school_student &&
+      prof.school_id == null
+    ) {
+      try {
+        const { data: existingSub } = await admin
+          .from("subscriptions")
+          .select("tier, is_trial, status, expires_at")
+          .eq("user_id", user.id)
+          .maybeSingle();
+        if (!existingSub) {
+          // No subscription row yet — auto-grant a time-boxed Free plan if
+          // the platform admin has configured a non-zero validity window.
+          const { data: limits } = await admin
+            .from("subscription_limits")
+            .select("free_trial_days")
+            .eq("id", 1)
+            .maybeSingle();
+          const validityDays = (limits as { free_trial_days?: number } | null)?.free_trial_days ?? 0;
+          if (validityDays > 0) {
+            const startedAt = new Date();
+            const expiresAt = new Date(startedAt.getTime() + validityDays * 24 * 60 * 60 * 1000);
+            await admin.from("subscriptions").insert({
+              user_id: user.id,
+              plan_id: null,
+              tier: "free",
+              status: "active",
+              is_trial: true,
+              started_at: startedAt.toISOString(),
+              expires_at: expiresAt.toISOString(),
+            });
+          }
+        } else {
+          // Subscription row exists. Detect the expired-Free-trial state so
+          // the layout can render a hard upgrade gate. We ONLY block when:
+          //   - tier == "free" (so paid users keep working past expiry)
+          //   - is_trial == true (this was an auto-granted Free trial)
+          //   - expires_at is in the past
+          const sub = existingSub as {
+            tier?: string;
+            is_trial?: boolean;
+            status?: string;
+            expires_at?: string | null;
+          };
+          if (
+            sub.tier === "free" &&
+            sub.is_trial === true &&
+            sub.expires_at &&
+            new Date(sub.expires_at).getTime() < Date.now()
+          ) {
+            isFreeExpired = true;
+          }
+        }
+      } catch {
+        // Auto-grant + expiry-detect are both best-effort — never block sign-in.
+      }
+    }
+
     const metaRole = String((user.user_metadata as { role?: string } | undefined)?.role || "");
     return NextResponse.json({
       ok: true,
@@ -107,6 +180,7 @@ export async function GET(req: Request) {
       full_name: prof?.full_name || null,
       exam_goal: (prof as { exam_goal?: string | null } | null)?.exam_goal ?? null,
       learner_profile: (prof as { learner_profile?: string | null } | null)?.learner_profile ?? "k12",
+      is_free_expired: isFreeExpired,
     });
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : "Failed" }, { status: 500 });

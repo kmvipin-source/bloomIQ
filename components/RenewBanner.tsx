@@ -88,6 +88,7 @@ export default function RenewBanner({
   if (source === "none") return null;
 
   const expiresAtMs = Date.parse(expiresAt);
+  // eslint-disable-next-line react-hooks/purity
   const daysLeft = Math.ceil((expiresAtMs - Date.now()) / 86400000);
 
   // Hide entirely when comfortably in the active window.

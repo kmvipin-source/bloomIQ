@@ -129,6 +129,11 @@ export default function CurrentPlanBadge() {
     const t = new Date(info.expires_at);
     if (!Number.isNaN(t.getTime())) {
       const formatted = t.toLocaleDateString("en-IN", { year: "numeric", month: "short", day: "numeric" });
+      // Date.now() in render is technically impure, but the only
+      // observable effect is the badge label flipping from "renews"
+      // to "expired" the first render after midnight UTC — exactly
+      // what we want.
+      // eslint-disable-next-line react-hooks/purity
       expiryTail = t.getTime() < Date.now() ? `expired ${formatted}` : `renews ${formatted}`;
     }
   }

@@ -281,7 +281,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     if (email) {
       const { data: usersList, error: listErr } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 });
       if (listErr) return NextResponse.json({ error: listErr.message }, { status: 500 });
-      const target = usersList.users.find((u) => u.email?.toLowerCase() === email);
+      const target = (usersList.users as Array<{ id: string; email?: string | null }>).find((u) => u.email?.toLowerCase() === email);
       if (target) {
         const { data: tProf } = await admin
           .from("profiles")

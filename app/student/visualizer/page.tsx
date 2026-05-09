@@ -290,7 +290,6 @@ function ElementNode({
               transition={el.emphasize ? PULSE_TRANSITION : SPRING}
             >
               <div
-                xmlns="http://www.w3.org/1999/xhtml"
                 style={{
                   fontSize: `${fontSize}px`,
                   fontWeight: el.fontWeight ?? "600",

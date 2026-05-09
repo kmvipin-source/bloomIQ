@@ -74,6 +74,27 @@ export default function StudentHome() {
   // visit we show the goal-picker onboarding card instead of the
   // tile buffet. Drives downstream tile prioritisation. See migration 24.
   const [examGoal, setExamGoal] = useState<string | null>(null);
+  // BloomIQ Score calibration status. null = unknown (still loading),
+  // false = user has not calibrated yet (we surface the discovery hero),
+  // true = user has calibrated (the BloomIQScoreBadge in the layout
+  // already shows their score, so the discovery hero hides).
+  const [hasBloomIQ, setHasBloomIQ] = useState<boolean | null>(null);
+  useEffect(() => {
+    (async () => {
+      try {
+        const sb = supabaseBrowser();
+        const { data: { session } } = await sb.auth.getSession();
+        if (!session) return;
+        const r = await fetch("/api/student/score", {
+          headers: { Authorization: `Bearer ${session.access_token}` },
+          cache: "no-store",
+        });
+        if (!r.ok) return;
+        const j = await r.json() as { ok?: boolean; has_calibration?: boolean };
+        if (j?.ok) setHasBloomIQ(!!j.has_calibration);
+      } catch { /* silent — discovery hero just stays hidden on failure */ }
+    })();
+  }, []);
 
   // Feature gating. `allowed` is the set of feature keys the user's plan
   // grants. Tiles whose featureKey is missing from this set render in the
@@ -342,6 +363,49 @@ export default function StudentHome() {
               change
             </button>
           </div>
+        )}
+
+        {/* BloomIQ Score discovery hero — first-run only. Shown when we
+            know the student has not yet calibrated. Disappears once they
+            complete the 7-minute Bloom calibration; from then on, the
+            persistent BloomIQScoreBadge in the layout's top-right
+            carries the score everywhere. This is the killer first-
+            impression real estate — placed above the at-a-glance
+            scorecard so it's the dominant element of a fresh dashboard. */}
+        {hasBloomIQ === false && (
+          <Link
+            href="/student/bloom-score"
+            className="block mt-4 rounded-2xl p-5 transition-all hover:scale-[1.01]"
+            style={{
+              background: "linear-gradient(135deg, rgba(16,185,129,0.10) 0%, rgba(99,102,241,0.10) 100%)",
+              border: "1px solid rgba(99,102,241,0.3)",
+            }}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="text-xs uppercase tracking-wider opacity-60">
+                  New &middot; 7 minutes
+                </div>
+                <div className="text-xl md:text-2xl font-bold mt-0.5">
+                  Discover your BloomIQ Score
+                </div>
+                <p className="text-sm opacity-80 mt-1 max-w-lg">
+                  A single 3-digit score (300&ndash;900) that predicts your
+                  exam-day rank &mdash; based on <em>how</em> you think across
+                  all six levels of Bloom&apos;s Taxonomy. Plus a glimpse of
+                  the rank you&apos;d hit if you closed your top weak spots.
+                </p>
+              </div>
+              <div className="hidden md:grid w-20 h-20 place-items-center rounded-xl flex-shrink-0"
+                   style={{ background: "linear-gradient(135deg, #10b981 0%, #6366f1 100%)" }}>
+                <Sparkles className="text-white" size={28} />
+              </div>
+            </div>
+            <div className="mt-3 inline-flex items-center gap-2 text-sm font-semibold"
+                 style={{ color: "#6366f1" }}>
+              Start calibration <span aria-hidden>&rarr;</span>
+            </div>
+          </Link>
         )}
 
         {/* At-a-glance scorecard — only renders for students with at least

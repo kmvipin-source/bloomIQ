@@ -529,7 +529,7 @@ export async function POST(req: Request) {
       (r) => (r as { section?: string | null }).section ?? null,
     );
     const insertRows = allRows.map((r) => {
-      const { quality, section, ...rest } = r;
+      const { quality, section, ...rest } = r as unknown as Record<string, unknown> & { quality?: unknown; section?: unknown };
       void quality;
       void section;
       return rest;

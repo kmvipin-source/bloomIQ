@@ -86,7 +86,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // invite. Teacher accepts via their dashboard.
     const { data: usersList, error: listErr } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 });
     if (listErr) return NextResponse.json({ error: listErr.message }, { status: 500 });
-    const target = usersList.users.find((u) => u.email?.toLowerCase() === email);
+    const target = (usersList.users as Array<{ id: string; email?: string | null }>).find((u) => u.email?.toLowerCase() === email);
     if (target) {
       if (target.id === user.id) {
         return NextResponse.json(

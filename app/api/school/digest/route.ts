@@ -63,7 +63,7 @@ function normaliseDigest(raw: Record<string, unknown>): Digest {
   const issuesRaw = Array.isArray(raw.issues) ? (raw.issues as unknown[]) : [];
   const issues: DigestIssue[] = issuesRaw.slice(0, 4).map((it) => {
     const o = (it && typeof it === "object" ? it : {}) as Record<string, unknown>;
-    const priority = o.priority === "high" || o.priority === "low" ? o.priority : "medium";
+    const priority = (o.priority === "high" || o.priority === "low" ? o.priority : "medium") as "high" | "medium" | "low";
     return {
       title: trim(o.title, 60),
       detail: trim(o.detail, 200),
@@ -80,9 +80,9 @@ function normaliseDigest(raw: Record<string, unknown>): Digest {
   const actionsRaw = Array.isArray(raw.actions) ? (raw.actions as unknown[]) : [];
   const actions: DigestAction[] = actionsRaw.slice(0, 4).map((it) => {
     const o = (it && typeof it === "object" ? it : {}) as Record<string, unknown>;
-    const owner = o.owner === "principal" || o.owner === "teacher" || o.owner === "both"
+    const owner = ((o.owner === "principal" || o.owner === "teacher" || o.owner === "both")
       ? o.owner
-      : "principal";
+      : "principal") as "principal" | "teacher" | "both";
     return {
       title: trim(o.title, 60),
       detail: trim(o.detail, 200),

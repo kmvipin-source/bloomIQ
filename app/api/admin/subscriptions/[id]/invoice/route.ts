@@ -61,11 +61,22 @@ export async function GET(req: Request, ctx: RouteContext) {
     const { id: subscriptionId } = await ctx.params;
     const admin = supabaseAdmin();
 
-    const { data: sub } = await admin
+    type SubRow = {
+      id: string;
+      plan_id: string | null;
+      school_id: string | null;
+      expires_at: string | null;
+      override_price_paise: number | null;
+      invoice_number: string | null;
+      payment_received_at: string | null;
+      contracted_students: number | null;
+    };
+    const { data: subRaw } = await admin
       .from("subscriptions")
       .select("id, plan_id, school_id, expires_at, override_price_paise, invoice_number, payment_received_at, contracted_students")
       .eq("id", subscriptionId)
       .maybeSingle();
+    const sub = (subRaw as unknown as SubRow | null) ?? null;
     if (!sub || !sub.school_id) {
       return NextResponse.json({ error: "Subscription not found or not school-bound" }, { status: 404 });
     }
@@ -77,14 +88,15 @@ export async function GET(req: Request, ctx: RouteContext) {
       .single();
     if (!school) return NextResponse.json({ error: "School not found" }, { status: 404 });
 
-    let plan: { label: string | null; per_student_price_paise: number | null; period_days: number | null } | null = null;
+    type PlanRow = { label: string | null; per_student_price_paise: number | null; period_days: number | null };
+    let plan: PlanRow | null = null;
     if (sub.plan_id) {
       const { data: p } = await admin
         .from("plans")
         .select("label, per_student_price_paise, period_days")
         .eq("id", sub.plan_id)
         .maybeSingle();
-      plan = (p as typeof plan) ?? null;
+      plan = (p as unknown as PlanRow | null) ?? null;
     }
 
     // Actual signed-in student count (used as a fallback when no

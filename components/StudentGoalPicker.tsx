@@ -26,6 +26,8 @@ import { GraduationCap, ArrowRight } from "lucide-react";
  */
 
 export const STUDENT_GOALS = [
+  { id: "class_5_8",       label: "Class 5–8",         emoji: "🎒", sub: "Primary + middle school NCERT" },
+  { id: "class_9",         label: "Class 9",              emoji: "📕", sub: "Foundation for boards" },
   { id: "class_10_boards", label: "Class 10 boards",     emoji: "📘", sub: "CBSE, ICSE, state boards" },
   { id: "class_12_boards", label: "Class 12 boards",     emoji: "📗", sub: "CBSE, ICSE, state boards" },
   { id: "jee_prep",        label: "JEE prep",            emoji: "🛠️", sub: "Engineering entrance" },

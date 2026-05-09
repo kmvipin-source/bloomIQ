@@ -143,8 +143,22 @@ export async function POST(req: Request, ctx: RouteContext) {
 
     // Find existing school subscription FIRST (needed below to decide
     // whether this is a brand-new bind, a mid-cycle plan change, or an
-    // explicit renewal).
-    const { data: existing } = await admin
+    // explicit renewal). Cast through unknown because the auto-generated
+    // Supabase types don't yet know about the new columns until the user
+    // applies migrations 62/63/64/65.
+    type ExistingSubRow = {
+      id: string;
+      plan_id: string | null;
+      invoice_number: string | null;
+      contracted_students: number | null;
+      override_price_paise: number | null;
+      override_reason: string | null;
+      payment_method: string | null;
+      payment_received_at: string | null;
+      started_at: string | null;
+      expires_at: string | null;
+    };
+    const { data: existingRaw } = await admin
       .from("subscriptions")
       .select(
         "id, plan_id, invoice_number, contracted_students, override_price_paise, override_reason, " +
@@ -152,6 +166,7 @@ export async function POST(req: Request, ctx: RouteContext) {
       )
       .eq("school_id", schoolId)
       .maybeSingle();
+    const existing = (existingRaw as unknown as ExistingSubRow | null) ?? null;
 
     // ─────────── started_at / expires_at decision tree ───────────
     // The right answer depends on intent. We support four distinct cases,

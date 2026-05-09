@@ -14,7 +14,7 @@ export default function FlashcardsPage() {
   const search = useSearchParams();
 
   // Suggested defaults pulled from query string (so /student/progress can deep-link).
-  const initialBloom = (search.get("level") as BloomLevel) || "Understand";
+  const initialBloom = (search.get("level") as BloomLevel) || ("understand" as BloomLevel);
   const initialTopic = search.get("topic") || "";
 
   const [bloom, setBloom] = useState<BloomLevel>(initialBloom);

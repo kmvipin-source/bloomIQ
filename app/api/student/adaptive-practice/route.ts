@@ -124,8 +124,14 @@ export async function POST(req: Request) {
     }
 
     // Body
-    const body = (await req.json().catch(() => ({}))) as { topic?: unknown };
+    const body = (await req.json().catch(() => ({}))) as { topic?: unknown; target_bloom?: unknown };
     const topic = typeof body.topic === "string" ? body.topic.trim() : "";
+    // Optional caller-provided Bloom override — used by the BloomIQ Score
+    // active-path Start buttons that deep-link "drill my Evaluate weak spot".
+    // When provided, we skip the auto-pick and target the requested level.
+    const requestedBloom = typeof body.target_bloom === "string" && isBloomLevel(body.target_bloom)
+      ? (body.target_bloom as BloomLevel)
+      : null;
     if (topic.length < 2) {
       return NextResponse.json(
         { error: "Tell us what topic you'd like to practise." },
@@ -139,23 +145,64 @@ export async function POST(req: Request) {
       );
     }
 
-    // 1) Build student context → pick targeted level
+    // 1) Pick targeted level — caller override wins over auto-pick.
     let targetedLevel: BloomLevel = DEFAULT_LEVEL;
-    try {
-      const ctx = await buildStudentContext(user.id);
-      targetedLevel = pickWeakestLevel(ctx.bloom_mastery_30d);
-    } catch (e) {
-      // eslint-disable-next-line no-console
-      console.warn(
-        `[adaptive-practice] buildStudentContext failed, defaulting to ${DEFAULT_LEVEL}:`,
-        e instanceof Error ? e.message : e
-      );
+    if (requestedBloom) {
+      targetedLevel = requestedBloom;
+    } else {
+      try {
+        const ctx = await buildStudentContext(user.id);
+        targetedLevel = pickWeakestLevel(ctx.bloom_mastery_30d);
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[adaptive-practice] buildStudentContext failed, defaulting to ${DEFAULT_LEVEL}:`,
+          e instanceof Error ? e.message : e
+        );
+      }
+      if (!isBloomLevel(targetedLevel)) targetedLevel = DEFAULT_LEVEL;
     }
-    if (!isBloomLevel(targetedLevel)) targetedLevel = DEFAULT_LEVEL;
+
+    // 1a) If the caller passed a "generic" topic (sent by the BloomIQ Score
+    //     active-path Start buttons when we don't know a specific weak topic
+    //     yet), upgrade it to a REAL topic from this user's calibration_
+    //     responses where they got the question wrong at the targeted Bloom
+    //     level. This stops Groq from generating meta-questions about what
+    //     "core syllabus" means.
+    let effectiveTopic = topic;
+    const looksGeneric = /\b(core syllabus|general syllabus|general practice|mix of)\b/i.test(topic) || topic.length > 60;
+    if (looksGeneric) {
+      try {
+        const admin = supabaseAdmin();
+        const { data: weakRows } = await admin
+          .from("calibration_responses")
+          .select("topic, bloom_level, is_correct")
+          .eq("user_id", user.id)
+          .eq("bloom_level", targetedLevel)
+          .eq("is_correct", false)
+          .not("topic", "is", null)
+          .limit(20);
+        const topics = (weakRows || [])
+          .map((r) => (r as { topic?: string | null }).topic)
+          .filter((s): s is string => typeof s === "string" && s.trim().length >= 3);
+        if (topics.length > 0) {
+          // Pick the most common topic among wrong answers at this Bloom level.
+          const counts: Record<string, number> = {};
+          for (const tp of topics) counts[tp] = (counts[tp] || 0) + 1;
+          const ranked = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+          effectiveTopic = ranked[0][0];
+          // eslint-disable-next-line no-console
+          console.log(`[adaptive-practice] generic topic upgraded to "${effectiveTopic}" from calibration_responses`);
+        }
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.warn(`[adaptive-practice] topic upgrade failed (non-fatal):`, e instanceof Error ? e.message : e);
+      }
+    }
 
     // eslint-disable-next-line no-console
     console.log(
-      `[adaptive-practice] start userId=${user.id} topic="${topic}" targetedLevel=${targetedLevel}`
+      `[adaptive-practice] start userId=${user.id} topic="${effectiveTopic}" targetedLevel=${targetedLevel}`
     );
 
     // 2) Misconception seeds — best effort. Independent students typically have
@@ -164,7 +211,7 @@ export async function POST(req: Request) {
     try {
       const seeds = await findMisconceptionDistractors({
         ownerId: user.id,
-        topic,
+        topic: effectiveTopic,
         bloomLevel: targetedLevel,
         limit: 5,
         accessToken: token,
@@ -185,7 +232,7 @@ export async function POST(req: Request) {
     // 3) Generate 5 MCQs at the targeted level
     let raw: Record<string, unknown>;
     try {
-      raw = await groqJSON(SYSTEM, buildPrompt(topic, targetedLevel, QUESTION_COUNT, seedBlock));
+      raw = await groqJSON(SYSTEM, buildPrompt(effectiveTopic, targetedLevel, QUESTION_COUNT, seedBlock));
     } catch (e) {
       // eslint-disable-next-line no-console
       console.error(`[adaptive-practice] groqJSON failed:`, e instanceof Error ? e.message : e);

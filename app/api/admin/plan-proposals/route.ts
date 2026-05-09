@@ -370,7 +370,7 @@ export async function POST(req: Request) {
         ? (body.proposed as Record<string, unknown>)
         : {};
     const v = validatePayload(proposedRaw, kind);
-    if (!v.ok) return NextResponse.json({ error: v.error }, { status: 400 });
+    if (!v.ok) return NextResponse.json({ error: (v as unknown as { error: string }).error }, { status: 400 });
 
     // For 'create', confirm the slug isn't already taken by a live plan or
     // another open create-proposal. Live-plan uniqueness is enforced by

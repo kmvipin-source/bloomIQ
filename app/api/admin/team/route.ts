@@ -104,7 +104,7 @@ export async function POST(req: Request) {
     const admin = supabaseAdmin();
     const { data: usersList, error: listErr } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 });
     if (listErr) return NextResponse.json({ error: listErr.message }, { status: 500 });
-    let target = usersList.users.find((u) => u.email?.toLowerCase() === email);
+    let target = (usersList.users as Array<{ id: string; email?: string | null; email_confirmed_at?: string | null; confirmed_at?: string | null }>).find((u) => u.email?.toLowerCase() === email);
 
     // -----------------------------------------------------------------
     // Sign-in link flow (one-time URL, no plaintext password ever)

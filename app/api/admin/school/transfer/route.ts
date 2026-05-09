@@ -86,7 +86,7 @@ export async function POST(req: Request) {
     // 2) Resolve target user by email.
     const { data: usersList, error: listErr } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 });
     if (listErr) return NextResponse.json({ error: listErr.message }, { status: 500 });
-    const target = usersList.users.find((u) => u.email?.toLowerCase() === email);
+    const target = (usersList.users as Array<{ id: string; email?: string | null }>).find((u) => u.email?.toLowerCase() === email);
     if (!target) {
       return NextResponse.json(
         { error: "No account with that email. Ask them to sign up first, then try again." },

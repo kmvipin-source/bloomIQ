@@ -418,7 +418,7 @@ export async function POST(req: Request) {
     const gate = await requireFeature(user.id, "concept_visualizer");
     if (!gate.allowed) {
       return NextResponse.json(
-        { error: gate.reason, code: "feature_locked", required_tier: gate.requiredTier },
+        { error: (gate as unknown as { reason: string }).reason, code: "feature_locked", required_tier: (gate as unknown as { requiredTier: string | null }).requiredTier },
         { status: 403 },
       );
     }
