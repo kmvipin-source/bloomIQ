@@ -10,6 +10,10 @@ type PlanInfo = {
   tier: string;
   source: "self" | "school";
   school_name?: string | null;
+  // Plan expiry — populated for the "school" path so Admin Heads and
+  // deputies see when their school's plan needs to be renewed. Independent
+  // students get expiry surfaced through RenewBanner instead.
+  expires_at?: string | null;
 };
 
 /**
@@ -81,6 +85,7 @@ export default function CurrentPlanBadge() {
             tier: plan?.tier || sub?.tier || "free",
             source: "school",
             school_name: (schoolRow as { name?: string } | null)?.name || null,
+            expires_at: sub?.expires_at ?? null,
           });
           return;
         }
@@ -113,6 +118,21 @@ export default function CurrentPlanBadge() {
   const tone = toneFor(info.tier);
   const Icon = info.tier.startsWith("school_") ? GraduationCap : info.tier === "free" ? Sparkles : Crown;
   const showUpsell = info.source === "self" && (info.tier === "free" || info.tier === "premium");
+
+  // Expiry tail: only for the school source — independent students already
+  // get a clear expiry signal from RenewBanner above the fold. Format as
+  // "renews 12 Aug 2026" (active) or "expired 12 Aug 2026" (past). Days-
+  // until is omitted; RenewBanner is responsible for the "X days left"
+  // urgency call-out.
+  let expiryTail: string | null = null;
+  if (info.source === "school" && info.expires_at) {
+    const t = new Date(info.expires_at);
+    if (!Number.isNaN(t.getTime())) {
+      const formatted = t.toLocaleDateString("en-IN", { year: "numeric", month: "short", day: "numeric" });
+      expiryTail = t.getTime() < Date.now() ? `expired ${formatted}` : `renews ${formatted}`;
+    }
+  }
+
   return (
     <div
       className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold"
@@ -121,6 +141,9 @@ export default function CurrentPlanBadge() {
       <Icon size={14} />
       <span className="opacity-70">{info.source === "school" ? `${info.school_name || "School"}:` : "Plan:"}</span>
       <span>{info.label}</span>
+      {expiryTail && (
+        <span className="opacity-60 font-normal">· {expiryTail}</span>
+      )}
       {showUpsell && (
         <Link href="/pricing" className="ml-1 inline-flex items-center gap-0.5 hover:underline opacity-90">
           Upgrade <ArrowRight size={11} />

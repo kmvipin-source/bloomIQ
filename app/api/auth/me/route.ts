@@ -53,6 +53,48 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: "session_superseded" }, { status: 401 });
     }
 
+    // ─── Activation-pending flip ───
+    // When a super_teacher signs in for the first time after onboarding,
+    // and their school's subscription was created with activation_pending=
+    // true (the operator chose "defer activation until first sign-in" so
+    // the school doesn't lose days while finance moves), flip it now:
+    // started_at → today, expires_at → today + plan period, flag → false.
+    //
+    // Why here and not elsewhere: /api/auth/me is the first server-side
+    // call on EVERY page load, including the post-invite landing — so
+    // the term clock starts the moment the human actually shows up. The
+    // flip is idempotent (only runs while activation_pending is still
+    // true) and gated to super_teachers so a regular teacher signing in
+    // first doesn't trigger it.
+    if (prof?.role === "super_teacher" && prof.school_id) {
+      const { data: sub } = await admin
+        .from("subscriptions")
+        .select("id, plan_id, activation_pending")
+        .eq("school_id", prof.school_id)
+        .maybeSingle();
+      if (sub?.activation_pending && sub.id) {
+        let periodDays = 365;
+        if (sub.plan_id) {
+          const { data: planRow } = await admin
+            .from("plans")
+            .select("period_days")
+            .eq("id", sub.plan_id)
+            .maybeSingle();
+          if (planRow?.period_days) periodDays = planRow.period_days;
+        }
+        const now = new Date();
+        const expiresAt = new Date(now.getTime() + periodDays * 24 * 60 * 60 * 1000);
+        await admin
+          .from("subscriptions")
+          .update({
+            started_at: now.toISOString(),
+            expires_at: expiresAt.toISOString(),
+            activation_pending: false,
+          })
+          .eq("id", sub.id);
+      }
+    }
+
     const metaRole = String((user.user_metadata as { role?: string } | undefined)?.role || "");
     return NextResponse.json({
       ok: true,

@@ -46,9 +46,16 @@ const TIER_META: Record<string, { label: string; tagline: string }> = {
   free:             { label: "Free",          tagline: "Anonymous + lightly-engaged users" },
   premium:          { label: "Premium",       tagline: "Individual paying subscribers" },
   premium_plus:     { label: "Premium Plus",  tagline: "Premium + competitive-exam toolkit" },
-  school_pilot:     { label: "School Pilot",  tagline: "Small schools, ₹49/student/yr" },
-  school_standard:  { label: "School Standard", tagline: "Mid-size schools, ₹39/student/yr" },
-  school_plus:      { label: "School Plus",   tagline: "Large schools, ₹29/student/yr" },
+  // Per-student rates here are illustrative anchors only — the
+  // authoritative price lives on each plan card (read from the DB).
+  // We say "from ₹X" so the heading communicates positioning without
+  // duplicating the SKU's actual price (which a platform admin can
+  // edit via the proposal queue without anyone needing to chase
+  // this hardcoded label). Updated post-migration-61 when the
+  // pricing ladder was inverted from volume-based to feature-based.
+  school_pilot:     { label: "School Pilot",    tagline: "Entry tier, basic features. From ₹29/student/yr" },
+  school_standard:  { label: "School Standard", tagline: "Adds Coach, exports, weekly digest. From ₹49/student/yr" },
+  school_plus:      { label: "School Plus",     tagline: "Premium AI suite + dedicated CSM. From ₹69/student/yr" },
 };
 
 const TIER_ORDER = ["free", "premium", "premium_plus", "school_pilot", "school_standard", "school_plus"];

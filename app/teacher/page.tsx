@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { supabaseBrowser } from "@/lib/supabase/client";
-import { Sparkles, Library, ListChecks, Users, Building2, LogOut, ArrowRight, ClipboardCheck, Radio, Calendar } from "lucide-react";
+import { Sparkles, Library, ListChecks, Users, Building2, ArrowRight, ClipboardCheck, Radio, Calendar } from "lucide-react";
 import TeacherRetakeRequests from "@/components/TeacherRetakeRequests";
 import TeacherInvites from "@/components/TeacherInvites";
 import CurrentPlanBadge from "@/components/CurrentPlanBadge";
@@ -109,24 +109,16 @@ export default function TeacherHome() {
     }
   }
 
-  async function leaveSchool() {
-    if (!confirm("Leave this school? You'll be removed from any classes you're assigned to. Your own quizzes stay with you.")) return;
-    const sb = supabaseBrowser();
-    const { data: { session } } = await sb.auth.getSession();
-    if (!session) return;
-    const res = await fetch("/api/school/join", {
-      method: "DELETE",
-      headers: { Authorization: `Bearer ${session.access_token}` },
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      alert(`Could not leave: ${data.error}`);
-      return;
-    }
-    setJoinInfo(null);
-    setJoinErr(null);
-    await loadProfile();
-  }
+  // leaveSchool() was a self-service teacher-leaves-school action wired
+  // to a tiny "Leave" button in the home-page header. Removed because:
+  // a misclick + a reflex-dismissed native confirm could revoke a primary
+  // teacher mid-term and leave their class unassigned, which broke
+  // students' access to in-flight tests. School offboarding belongs to
+  // the Admin Head's flow (DELETE via /school/teachers, which preserves
+  // an audit trail and prompts class reassignment first). The DELETE
+  // endpoint at /api/school/join still exists in case we want to surface
+  // the action again from a Profile-page "danger zone" with a stronger
+  // confirm — that's a deliberate later decision, not an oversight.
 
   useEffect(() => {
     (async () => {
@@ -330,15 +322,15 @@ export default function TeacherHome() {
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             <CurrentPlanBadge />
-            {schoolId && (
-              <button type="button"
-                onClick={leaveSchool}
-                className="text-[11px] muted hover:text-red-600 inline-flex items-center gap-1"
-                title="Leave this school"
-              >
-                <LogOut size={11} /> Leave
-              </button>
-            )}
+            {/* "Leave school" button removed. It was a footgun: one
+                mistaken click + a reflex-dismissed native confirm could
+                revoke a primary teacher mid-term and leave the class
+                unassigned. School offboarding belongs to the Admin
+                Head's flow at /school/teachers — preserves audit
+                trail and prompts class reassignment before access
+                is revoked. The DELETE endpoint at /api/school/join
+                still exists if we want to surface this from a Profile
+                danger-zone later with a stronger confirm. */}
           </div>
         </div>
       </div>

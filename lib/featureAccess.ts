@@ -43,10 +43,19 @@ export type FeatureAccessState = {
   // Slug of the bound plan, used by RenewBanner to call /api/checkout
   // with the right plan_slug for the renewal payment.
   planSlug: string | null;
-  // True when expires_at has passed. The hook treats expired
-  // subscriptions as Free (empty allowed set), so locked tiles render
-  // and the renew banner becomes the only path back to features.
+  // True when expires_at has passed AND the grace window has elapsed.
+  // The hook treats expired subscriptions as Free (empty allowed set),
+  // so locked tiles render and the renew banner becomes the only path
+  // back to features.
   isExpired: boolean;
+  // True when the official expires_at is past but we're still within
+  // grace_period_days. Features remain enabled (so the school doesn't
+  // hit a hard cliff while renewal paperwork is moving), but the renew
+  // banner switches to the urgent red mode. Modern-SaaS expectation.
+  isInGrace: boolean;
+  // How many days (positive int) remain in the grace window. 0 when not
+  // in grace. Used for banner messaging.
+  graceRemainingDays: number;
 };
 
 const EMPTY: FeatureAccessState = {
@@ -58,6 +67,8 @@ const EMPTY: FeatureAccessState = {
   expiresAt: null,
   planSlug: null,
   isExpired: false,
+  isInGrace: false,
+  graceRemainingDays: 0,
 };
 
 /**
@@ -126,13 +137,14 @@ export function useFeatureAccess(): FeatureAccessState {
 
       let planRow: { tier: string | null; label: string | null; features: unknown; slug: string | null } | null = null;
       let expiresAtRaw: string | null = null;
+      let graceDays: number = 14;
       let source: "personal" | "school" | "none" = "none";
 
       if (prof?.is_school_student && prof.school_id) {
         // School student — read the school's active subscription.
         const { data: schoolSub } = await sb
           .from("subscriptions")
-          .select("plan_id, status, expires_at")
+          .select("plan_id, status, expires_at, grace_period_days")
           .eq("school_id", prof.school_id)
           .eq("status", "active")
           .maybeSingle();
@@ -146,6 +158,7 @@ export function useFeatureAccess(): FeatureAccessState {
             planRow = plan;
             source = "school";
             expiresAtRaw = (schoolSub as { expires_at?: string | null }).expires_at || null;
+            graceDays = (schoolSub as { grace_period_days?: number | null }).grace_period_days ?? 14;
           }
         }
       }
@@ -156,7 +169,7 @@ export function useFeatureAccess(): FeatureAccessState {
       if (!planRow) {
         const { data: sub } = await sb
           .from("subscriptions")
-          .select("plan_id, status, expires_at")
+          .select("plan_id, status, expires_at, grace_period_days")
           .eq("user_id", user.id)
           .maybeSingle();
         if (sub?.plan_id) {
@@ -169,6 +182,7 @@ export function useFeatureAccess(): FeatureAccessState {
             planRow = plan;
             source = "personal";
             expiresAtRaw = (sub as { expires_at?: string | null }).expires_at || null;
+            graceDays = (sub as { grace_period_days?: number | null }).grace_period_days ?? 14;
           }
         }
       }
@@ -184,19 +198,35 @@ export function useFeatureAccess(): FeatureAccessState {
           expiresAt: null,
           planSlug: null,
           isExpired: false,
+          isInGrace: false,
+          graceRemainingDays: 0,
         });
         return;
       }
 
       // ---------- Expiry enforcement ----------
-      // The DB stores expires_at on every paid subscription. If it's in
-      // the past, treat the user as Free regardless of plan tier — locked
-      // tiles render and the renew banner becomes the only path back to
-      // their features. This is the single most important fix for the
-      // "buy-once stay-forever" hole that existed before Path A.
+      // The DB stores expires_at on every paid subscription. Past
+      // expires_at → grace_period_days window where features still work
+      // but RenewBanner switches to red urgent mode. After grace →
+      // hard cutoff (Free, locked tiles).
+      //
+      // Why grace? Modern SaaS UX. Schools renew via NEFT/cheque which
+      // takes 2-3 working days to clear, finance approvals take a day
+      // or two on top, and the term renewal contract may need physical
+      // signatures. A hard cliff at the stroke of midnight is the
+      // wrong shape for B2B education customers in India. Default
+      // grace is 14 days, configurable per-subscription.
+      const DAY = 24 * 60 * 60 * 1000;
       const now = Date.now();
       const expiresAtMs = expiresAtRaw ? Date.parse(expiresAtRaw) : null;
-      const isExpired = expiresAtMs !== null && expiresAtMs < now;
+      const graceMs = (graceDays || 0) * DAY;
+      const inGracePast = expiresAtMs !== null && expiresAtMs < now;
+      const beyondGrace = expiresAtMs !== null && expiresAtMs + graceMs < now;
+      const isExpired = beyondGrace;
+      const isInGrace = inGracePast && !beyondGrace;
+      const graceRemainingDays = isInGrace
+        ? Math.max(0, Math.ceil((expiresAtMs! + graceMs - now) / DAY))
+        : 0;
 
       const tier = (planRow.tier as PlanTier | undefined) || "free";
       const features: string[] = Array.isArray(planRow.features)
@@ -206,12 +236,15 @@ export function useFeatureAccess(): FeatureAccessState {
       setState({
         planTier: isExpired ? "free" : tier,
         planLabel: isExpired ? "Free (expired)" : (planRow.label || tierLabel(tier)),
+        // In-grace = features still work; only hard-expired empties the set.
         allowed: isExpired ? new Set() : new Set(features),
         isLoading: false,
         source,
         expiresAt: expiresAtRaw,
         planSlug: planRow.slug || null,
         isExpired,
+        isInGrace,
+        graceRemainingDays,
       });
     })();
   }, []);

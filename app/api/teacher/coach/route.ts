@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { groqText } from "@/lib/groq";
 import { getBearer, supabaseServer } from "@/lib/supabase/server";
+import { checkCoachQuota, logCoachCall } from "@/lib/coachQuota";
 import { buildTeacherContext } from "@/lib/teacherContext";
 
 export const runtime = "nodejs";
@@ -91,6 +92,23 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Message is required." }, { status: 400 });
     }
 
+    // Coach quota gate — see lib/coachQuota.ts. Teachers inherit
+    // the school's plan, so the same Pilot=0 / Standard=50 / Plus=∞
+    // ladder applies. Returns 402 when over quota.
+    const gate = await checkCoachQuota(user.id, "teacher");
+    if (!gate.allowed) {
+      return NextResponse.json(
+        {
+          error: gate.reason,
+          code: "coach_quota_exceeded",
+          planSlug: gate.planSlug,
+          used: gate.used,
+          limit: gate.limit,
+        },
+        { status: 402 }
+      );
+    }
+
     const ctx = await buildTeacherContext(user.id);
     const ctxJson = JSON.stringify(ctx, null, 2);
     const system = SYSTEM_TEMPLATE(ctxJson);
@@ -101,9 +119,17 @@ export async function POST(req: Request) {
 
     const reply = await groqText(system, userPrompt);
 
+    // Log AFTER the LLM responds so transient failures don't burn quota.
+    await logCoachCall(user.id, "teacher");
+
     return NextResponse.json({
       reply,
       contextSnapshot: { asOf: ctx.asOf, totals: ctx.totals },
+      quota: {
+        planSlug: gate.planSlug,
+        used: gate.used + 1,
+        limit: gate.limit,
+      },
     });
   } catch (e) {
     return NextResponse.json(

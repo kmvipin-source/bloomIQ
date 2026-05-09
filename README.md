@@ -146,7 +146,299 @@ platform-admin invite flow at `/admin/onboard-school` instead.
 
 ---
 
-## 🆕 Latest session — 2026-05-08 / 2026-05-09 (Co-teacher visibility model, scope clarity, route progress, help system)
+## 🆕 Latest session — 2026-05-09 / 2026-05-10 (B2B billing: negotiated price, GST invoices, renewal workflow, modern expiry)
+
+The headline shift: BloomIQ now has a **complete operator-driven B2B
+billing pipeline** for school deals — from negotiated-price onboarding
+through GST-compliant invoice generation, NEFT payment recording,
+year-on-year renewal cycles with audit trail, and modern-app expiry
+handling (grace period, deferred activation, mid-cycle plan-change
+preservation). Replaces the previous "self-serve Razorpay only"
+assumption that didn't fit how Indian schools actually buy.
+
+Six migrations (60–65), one new admin screen (`/admin/schools/[id]`),
+new endpoints for invoice + mark-paid + renewal, and across-the-board
+visibility of plan expiry on operator and customer surfaces.
+
+### What shipped
+
+**Pricing realignment (migrations 60–61):**
+- Removed `weekly_digest` from the School Pilot feature set (Pilot is
+  the entry tier, no Coach, no digest; Standard adds 50/mo Coach;
+  Plus is unlimited Coach + everything).
+- Realigned per-student-per-year prices to a monotonic ladder:
+  ₹29 (Pilot) / ₹49 (Standard) / ₹69 (Plus). The previous numbers
+  had Plus cheaper than Standard, which inverted the upgrade story.
+- Dropped the legacy `max_students` cap on Pilot/Standard so a 2 000-
+  student school doesn't get blocked off the cheaper tiers.
+
+**Coach quota (migration 59):**
+- New `coach_usage` table (one row per Coach call) keyed by user_id +
+  surface ('teacher' | 'school'). RLS: users read their own; only
+  service role inserts.
+- `lib/coachQuota.ts` exposes `checkCoachQuota(userId, surface)` and
+  `logCoachCall`. Per-month bucket: Pilot 0, Standard 50, Plus ∞.
+- Both Coach endpoints (`/api/teacher/coach`, `/api/school/coach`)
+  call the gate before LLM, return 402 + `quota.{used,limit,planSlug}`
+  when exceeded; surface stays usable in the UI but with the lock badge.
+
+**Negotiated-price subscriptions (migration 62):**
+- Added `subscriptions.override_price_paise`, `override_reason`,
+  `override_set_by`, `override_set_at`, `invoice_number`,
+  `payment_method` (CHECK in razorpay/neft/cheque/manual),
+  `payment_received_at` columns.
+- Override beats formula: list price = `per_student × students`, but
+  `override_price_paise` (when set) is the authoritative line-item
+  amount on the invoice.
+- All audit fields are write-once-on-change so plan picker changes
+  don't reset override timestamps.
+
+**Contracted students (migration 63):**
+- New `subscriptions.contracted_students INTEGER`. Distinguishes the
+  "school agreed to buy 700 seats" number (drives invoicing) from the
+  "23 kids have actually signed in by Day 30" number (`profiles` count).
+- Invoice line-item quantity uses `contracted_students` when set,
+  otherwise actual student count.
+
+**Invoice archive (migration 64):**
+- New `subscription_invoice_archive` table — immutable per-billing-cycle
+  snapshot. Service-role-only (RLS denies everyone else).
+- Captures invoice number, contracted seats, override price, reason,
+  payment method, payment timestamp, cycle started/expired anchors,
+  who archived it.
+- Populated by `set-plan` when called with `start_renewal: true` —
+  the closing cycle's data is preserved before the live row is wiped
+  for the new term.
+
+**Modern expiry (migration 65) — the deepest change:**
+- Added `subscriptions.grace_period_days INTEGER DEFAULT 14` — soft
+  window after `expires_at` where features still work but RenewBanner
+  flips to red urgent mode. Configurable per school (0 = hard cliff).
+- Added `subscriptions.activation_pending BOOLEAN DEFAULT FALSE`.
+  When true, `started_at`/`expires_at` are placeholders; the term
+  clock actually starts on the school super_teacher's first sign-in.
+  Solves the "onboarded 1 Aug, admin first signs in 5 Aug" lag.
+
+**`/admin/schools/[id]` — the operator's single-screen B2B console:**
+
+A new per-school admin page that drives the entire B2B deal end-to-end:
+
+- HEADER: school name + status badge (Active / Expiring in Nd /
+  Expired) + 3 tiles (Plan / Expires-with-countdown / Active price).
+- PLAN & PRICING: plan picker, contracted-students input, recalculating
+  list price card (`rate × seats = ₹X`), negotiated-price override card
+  with audit reason, payment method picker.
+- ACTIVATION & GRACE (post-mig-65): activation date picker (lets
+  operator backdate or future-date for academic-year deals), "Defer
+  until first sign-in" checkbox, grace-period-days input.
+- INVOICE & PAYMENT: invoice number, payment status, **View / download
+  invoice** button (opens GST tax invoice PDF), **Mark payment received**
+  (extends expiry), **Start renewal cycle** (only visible after a
+  payment exists — archives current cycle, clears invoice number, primes
+  for next year's BLM/YYYY/NNNN).
+- PAST BILLING CYCLES: read-only table from `subscription_invoice_archive`
+  showing every closed term — invoice #, dates, seats, amount, paid date.
+
+Reachable from the new "Manage" link in `/admin/onboard-school` Recent
+onboardings + the new "Upcoming plan expirations" widget on `/admin/dashboard`.
+
+**Invoice generator:**
+- `GET /api/admin/subscriptions/[id]/invoice` produces a GST-compliant
+  Indian tax invoice PDF (jspdf + jspdf-autotable). HSN/SAC 998313, IGST
+  18%, BLM/YYYY/NNNN auto-numbering, vendor block from env vars
+  (`INVOICE_VENDOR_NAME`, `_GSTIN`, `_ADDRESS`, `_STATE`, `INVOICE_BANK_*`),
+  customer name from `schools.name`, line item from contracted_students ×
+  per-student rate (or override).
+- Invoice number is persisted on the subscription row on first download
+  so re-downloads return the same PDF; "Start renewal cycle" clears it
+  so the next download mints a fresh number.
+- Bridge page at `/admin/subscriptions/[id]/invoice` solves the
+  Bearer-only auth problem — fetches the PDF with the access token,
+  creates an object URL, embeds in iframe (so direct linking works
+  even though the API is Authorization-header-only).
+
+**Mark-paid endpoint:**
+- `POST /api/admin/subscriptions/[id]/mark-paid` records NEFT/cheque
+  receipt; sets `payment_received_at`, flips `status='active'`, clears
+  `activation_pending`, extends `expires_at` by one full plan period.
+- Smart anchor logic: early renewal preserves remainder (extend from
+  existing.expires_at), late/first payment anchors on received_at.
+- Body accepts `extend_from: 'smart' | 'previous_expiry' | 'received_at'`
+  for B2B finance teams that need clean academic-year cycles vs
+  penalty-style late-renewal resets.
+- Response returns both `previous_expires_at` and `expires_at` so the
+  UI can render an audit-style "extends X → Y" preview.
+
+**`set-plan` endpoint — four-case decision tree for `started_at`/`expires_at`:**
+
+1. **`start_renewal:true`** — fresh cycle. Archive prior cycle to
+   `subscription_invoice_archive`, then `started_at = now` (or explicit
+   `body.started_at`), `expires_at = started_at + period_days`.
+2. **Brand-new bind** (no existing row OR existing had no plan) —
+   `started_at = body.started_at || now`, expires_at as above.
+3. **Mid-cycle plan change** (existing row has plan + expires_at, no
+   `start_renewal` flag) — **PRESERVES** existing `started_at` and
+   `expires_at`. Pilot→Plus mid-year keeps the year they paid for; the
+   prorated upgrade fee is a separate billing decision.
+4. **Plan removed** (planId is null) — null out dates so `/school` reads
+   "Not subscribed".
+
+Plus accepts new body fields: `started_at` (ISO date), `activation_pending`
+(bool), `grace_period_days` (number).
+
+**First-sign-in activation flip:**
+- `/api/auth/me` (called on every page load) checks: am I a super_teacher
+  whose school has `activation_pending=true`? If yes, write
+  `started_at = now`, `expires_at = now + period_days`, clear the flag.
+  Idempotent (only fires while flag is true), gated to super_teacher
+  (regular teacher signing in first doesn't trigger).
+
+**Expiry & grace in `useFeatureAccess` + `RenewBanner`:**
+- New `isInGrace: boolean` and `graceRemainingDays: number` exposed
+  from `useFeatureAccess`. `isExpired` now means "past expires_at AND
+  past grace window" — features stay enabled in grace.
+- `RenewBanner` adds a third state: in-grace (red, "X grace days
+  remaining — features still active during this short window").
+  Existing 7-day-warn (amber) and beyond-grace (red, hard lockout)
+  states preserved.
+- `CurrentPlanBadge` now shows `Greenwood: School Plus · renews 12 Aug 2026`
+  (or `expired 12 Aug 2026`) inline — visible always on `/school`,
+  `/student`, `/settings/profile`.
+
+**Cross-surface visibility of plan expiry:**
+- `/admin/dashboard` — new "Upcoming plan expirations" section listing
+  schools whose plans expire in the next 60 days (or already lapsed).
+  Tone-coded: red >14 days past, amber ≤14 days remaining, slate beyond.
+  Each row → "Manage" link to `/admin/schools/[id]`.
+- `/admin/onboard-school` — Recent onboardings table gained an "Expires"
+  column with three-bucket badge (Active green / Expires in Nd amber /
+  Expired DD MMM red / muted dash for unbound plans).
+- `/admin/schools/[id]` — header status badge + three metric tiles
+  (already covered above).
+- `/school` (Admin Head's view) — `CurrentPlanBadge` shows the renews
+  date; `RenewBanner` covers the 7-day-warn + grace + expired states.
+
+**Help system updates:**
+- New "How does renewal work? When do I pay?" topic under Account & Plan
+  on `/help` for super_teachers — explains both NEFT (BloomIQ emails GST
+  invoice → school pays via bank → we mark received → plan extends) and
+  Razorpay paths, plus the 7-day amber warning, the 14-day grace, and
+  the email-us-anytime fallback. Fixed stale "managed by Anthropic / sales"
+  copy → "managed by the BloomIQ team".
+
+### Files touched
+
+**Migrations:**
+- `supabase/migrations/59_coach_quota.sql` (new)
+- `supabase/migrations/60_school_plan_cleanup.sql` (new)
+- `supabase/migrations/61_school_plan_pricing_realign.sql` (new)
+- `supabase/migrations/62_subscription_negotiated_price.sql` (new)
+- `supabase/migrations/63_subscription_contracted_students.sql` (new)
+- `supabase/migrations/64_subscription_invoice_archive.sql` (new)
+- `supabase/migrations/65_subscription_expiry_modernization.sql` (new)
+
+**New endpoints:**
+- `app/api/admin/schools/[id]/route.ts` (new — GET school+sub+plan+invoices, DELETE school)
+- `app/api/admin/schools/[id]/set-plan/route.ts` (new — bind plan + override + start_renewal)
+- `app/api/admin/subscriptions/[id]/invoice/route.ts` (new — GST tax invoice PDF)
+- `app/api/admin/subscriptions/[id]/mark-paid/route.ts` (new — NEFT receipt + extend expiry)
+
+**New screens:**
+- `app/admin/schools/[id]/page.tsx` (new — per-school B2B console)
+- `app/admin/subscriptions/[id]/invoice/page.tsx` (new — Bearer-token PDF bridge)
+
+**Modified:**
+- `app/admin/dashboard/page.tsx` + `app/api/admin/dashboard/route.ts` — Upcoming expirations widget
+- `app/admin/onboard-school/page.tsx` + `app/api/admin/onboard-school/route.ts` — Manage link, Expires column
+- `app/admin/plans/page.tsx` — pricing labels updated to ₹29/₹49/₹69
+- `app/api/auth/me/route.ts` — first-sign-in activation flip
+- `app/api/school/coach/route.ts` + `app/api/teacher/coach/route.ts` — coach quota gate
+- `app/api/school/digest/route.ts` — feature gate (Pilot doesn't get weekly_digest)
+- `app/help/page.tsx` — renewal workflow topic
+- `app/school/page.tsx` + `app/student/page.tsx` — pass isInGrace/graceRemainingDays to RenewBanner
+- `app/teacher/page.tsx` — minor cleanup (visibility model from previous session)
+- `components/CurrentPlanBadge.tsx` — renews-date tail
+- `components/RenewBanner.tsx` — in-grace state
+- `components/Sidebar.tsx` — gate weekly_digest sidebar entries
+- `lib/coachQuota.ts` (new)
+- `lib/featureAccess.ts` — grace window honored, isInGrace/graceRemainingDays exposed
+
+### Pre-deploy checklist
+
+1. Run migrations 59 → 65 IN ORDER in Supabase SQL editor. Each is
+   idempotent (`if not exists` guards) but order matters because 65
+   references columns added in earlier migrations.
+2. Set vendor + bank env vars before any school tries to download an
+   invoice — endpoint 500s with a clear error otherwise:
+   - `INVOICE_VENDOR_NAME`
+   - `INVOICE_VENDOR_GSTIN`
+   - `INVOICE_VENDOR_ADDRESS`
+   - `INVOICE_VENDOR_STATE`
+   - `INVOICE_BANK_NAME`
+   - `INVOICE_BANK_ACCOUNT`
+   - `INVOICE_BANK_IFSC`
+3. Sanity-check after migration: `select count(*) from subscriptions
+   where grace_period_days is null` should return 0 (the migration
+   backfills 14 days for every existing row).
+4. The first super_teacher sign-in after deploy will trigger the
+   activation-pending flip for any school whose subscription was
+   created with the flag set. Existing rows have it false by default,
+   so no surprise behaviour for already-active schools.
+5. The "Manage" link in `/admin/onboard-school` and the "Upcoming
+   expirations" widget on `/admin/dashboard` are gated to schools that
+   have a subscription row — schools onboarded but never plan-bound
+   show as "— No plan —".
+
+### Edge cases handled
+
+- **Mid-cycle plan upgrade** (Pilot → Plus four months in): Case C
+  preserves `started_at` + `expires_at`. School keeps the year they paid for.
+- **Onboarding lag** (school onboarded Aug 1, admin first signs in Aug 5):
+  set `activation_pending=true` at onboard; `/api/auth/me` flips on first sign-in.
+- **Future-dated activation** (Indian academic year, contract signed in
+  March, term starts 1 June): operator types 2026-06-01 in the activation
+  date field; `expires_at` becomes 1 June 2027.
+- **Early renewal** (paid 7 days before expiry): mark-paid's smart anchor
+  preserves the unused remainder. `extends_to` preview shows it before
+  click.
+- **Late renewal** (paid 14 days after expiry, but inside grace): in-grace
+  banner shows; mark-paid extends from received_at; school had continuous
+  access throughout.
+- **GST-compliant invoice numbering across years**: Start renewal cycle
+  archives the previous BLM/2026/0007 to subscription_invoice_archive
+  and clears invoice_number, so next download mints BLM/2027/0001.
+- **Override price + contracted seats**: invoice line item shows
+  "School Plus — annual subscription, 700 contracted seats (negotiated
+  rate)" and `₹35,000` flat instead of formula × actual.
+- **Re-record payment** (correcting a wrong receipt date): mark-paid
+  preserves `extend_from` semantics; "Re-record payment" label appears
+  when `payment_received_at` is already set.
+
+### Decisions made and explicitly NOT shipped
+
+- **Grace period auto-tuning by tier** — for now every school gets 14
+  days; could be 7 for Pilot, 30 for Plus. Defer; one knob per school
+  is simpler today.
+- **Multi-year upfront purchases with prorated discount** — requires
+  another schema field for "term length × N" or a multiplier on
+  expires_at; defer until a school actually asks.
+- **Pause / suspend (summer break)** — would need a "pause from / pause
+  until" pair and resume math. <1% of B2B education deals; defer.
+- **Mid-cycle refunds** — explicitly out of scope. If a school cancels
+  mid-year we handle it via a manual credit note off-platform.
+- **Auto-billing-history table that mirrors mark-paid receipts** —
+  the archive captures cycles, not every payment event. Today a single
+  cycle has at most one payment so this is fine; add later if a cycle
+  ever has multiple payments (e.g. partial advance + balance).
+- **Customer-facing "renew now" Razorpay button for school plans** —
+  RenewBanner exists and works for personal subscriptions, but for
+  schools we deliberately route through the BloomIQ team via mailto
+  because B2B contracts include negotiation, GST invoice, NEFT —
+  none of which fit a self-serve checkout button.
+
+---
+
+## 🆕 Earlier session — 2026-05-08 / 2026-05-09 (Co-teacher visibility model, scope clarity, route progress, help system)
 
 The headline change: replaced the over-permissive "any teacher of an assigned
 class sees the test" rule that migrations 53–57 had been chasing with a

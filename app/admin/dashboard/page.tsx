@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { supabaseBrowser } from "@/lib/supabase/client";
-import { BarChart3, Users, Building2, GraduationCap, IndianRupee, Sparkles, Crown, School, Receipt, TrendingUp } from "lucide-react";
+import Link from "next/link";
+import { BarChart3, Users, Building2, GraduationCap, IndianRupee, Sparkles, Crown, School, Receipt, TrendingUp, Calendar, AlertCircle, ArrowRight } from "lucide-react";
 
 type PlanRow = {
   slug: string;
@@ -31,12 +32,20 @@ type Totals = {
 };
 type TeacherRow = { name: string; school: string; sub_role: "super_teacher" | "primary" | "co_teacher" | "unassigned" };
 type TeacherCounts = { super_teacher: number; primary: number; co_teacher: number; unassigned: number };
+type ExpiringRow = {
+  school_id: string;
+  school_name: string;
+  plan_label: string | null;
+  expires_at: string;
+  days_until: number;
+};
 type Payload = {
   totals: Totals;
   categories: Category[];
   topSchools: { name: string; students: number }[];
   teachers: TeacherRow[];
   teacherCounts: TeacherCounts;
+  expiringSoon: ExpiringRow[];
 };
 
 const fmtRupee = (paise: number) =>
@@ -96,7 +105,7 @@ export default function AdminDashboardPage() {
     );
   }
 
-  const { totals, categories, topSchools, teachers, teacherCounts } = data;
+  const { totals, categories, topSchools, teachers, teacherCounts, expiringSoon } = data;
   const teachersBySchool = new Map<string, TeacherRow[]>();
   for (const t of teachers) {
     const arr = teachersBySchool.get(t.school) || [];
@@ -202,6 +211,72 @@ export default function AdminDashboardPage() {
           </div>
         </div>
       </section>
+
+      {/* Upcoming expirations — schools whose plan expires in the next
+          60 days OR is already expired. The platform admin uses this to
+          chase renewals before students lose access. Sorted soonest first. */}
+      {expiringSoon && expiringSoon.length > 0 && (
+        <section>
+          <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-500 mb-3 flex items-center gap-2">
+            <Calendar size={16} /> Upcoming plan expirations
+            <span className="text-xs font-normal normal-case muted">— next 60 days</span>
+          </h2>
+          <div className="card p-0 overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left" style={{ background: "var(--color-bg-soft)" }}>
+                  <th className="px-4 py-2 font-semibold">School</th>
+                  <th className="px-4 py-2 font-semibold">Plan</th>
+                  <th className="px-4 py-2 font-semibold">Expires</th>
+                  <th className="px-4 py-2 font-semibold">Status</th>
+                  <th className="px-4 py-2 font-semibold text-right">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {expiringSoon.map((r) => {
+                  const expired = r.days_until < 0;
+                  const urgent  = !expired && r.days_until <= 14;
+                  return (
+                    <tr key={r.school_id} className="border-t" style={{ borderColor: "var(--color-border)" }}>
+                      <td className="px-4 py-2.5 font-medium">{r.school_name}</td>
+                      <td className="px-4 py-2.5 text-xs muted">{r.plan_label || "—"}</td>
+                      <td className="px-4 py-2.5 text-xs whitespace-nowrap">
+                        {new Date(r.expires_at).toLocaleDateString("en-IN", {
+                          year: "numeric", month: "short", day: "numeric",
+                        })}
+                      </td>
+                      <td className="px-4 py-2.5">
+                        {expired ? (
+                          <span className="inline-flex items-center gap-1 text-xs font-semibold text-red-700 bg-red-50 border border-red-200 rounded-full px-2 py-0.5">
+                            <AlertCircle size={12} /> Expired {Math.abs(r.days_until)}d ago
+                          </span>
+                        ) : urgent ? (
+                          <span className="inline-flex items-center gap-1 text-xs font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5">
+                            <AlertCircle size={12} /> {r.days_until}d left
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-xs font-semibold text-slate-700 bg-slate-50 border border-slate-200 rounded-full px-2 py-0.5">
+                            <Calendar size={12} /> {r.days_until}d left
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-4 py-2.5 text-right">
+                        <Link
+                          href={`/admin/schools/${r.school_id}`}
+                          className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700 hover:underline"
+                          title="Open per-school admin: renew plan, generate invoice, mark NEFT received"
+                        >
+                          Manage <ArrowRight size={12} />
+                        </Link>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
 
       {/* Teachers — by school + sub-role */}
       <section>

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { groqText } from "@/lib/groq";
 import { getBearer, supabaseServer } from "@/lib/supabase/server";
 import { buildSchoolContext } from "@/lib/schoolContext";
+import { checkCoachQuota, logCoachCall } from "@/lib/coachQuota";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -26,6 +27,7 @@ const SYSTEM_TEMPLATE = (contextJson: string) => `You are the BloomIQ Principal 
 Rules:
 - Answer in 2-5 short paragraphs OR a tight bulleted list. Never wall-of-text.
 - ALWAYS cite specific numbers from the JSON (avg scores, student names, deltas) — vague answers are useless to a Principal.
+- When you mention a student by name (top performers, at-risk, anyone), ALWAYS append their class in parentheses, e.g. "Aanya (Grade 7 - Biology B)" — the class name comes from the \`class\` field next to each name in the JSON. A list of names without classes is unusable: the Principal can't tell which teacher to follow up with. If a student's class is null, it's fine to omit.
 - If the data doesn't support a confident answer, say so and ask one clarifying question.
 - Never invent data. If a number isn't in the JSON, don't fabricate it.
 - Never reveal the JSON structure to the user. Speak as a colleague would.
@@ -96,6 +98,24 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Message is required." }, { status: 400 });
     }
 
+    // Coach quota gate — Pilot=0, Standard=50/30d, Plus=∞. Returns
+    // 402 with the relevant plan + usage so the UI can render an
+    // upgrade nudge. We check BEFORE calling the LLM so we don't
+    // burn LLM tokens for users over quota.
+    const gate = await checkCoachQuota(user.id, "school");
+    if (!gate.allowed) {
+      return NextResponse.json(
+        {
+          error: gate.reason,
+          code: "coach_quota_exceeded",
+          planSlug: gate.planSlug,
+          used: gate.used,
+          limit: gate.limit,
+        },
+        { status: 402 }
+      );
+    }
+
     const ctx = await buildSchoolContext(prof.school_id as string);
     const ctxJson = JSON.stringify(ctx, null, 2);
     const system = SYSTEM_TEMPLATE(ctxJson);
@@ -106,9 +126,19 @@ export async function POST(req: Request) {
 
     const reply = await groqText(system, userPrompt);
 
+    // Log AFTER a successful LLM round-trip so transient failures
+    // don't burn the user's quota.
+    await logCoachCall(user.id, "school");
+
     return NextResponse.json({
       reply,
       contextSnapshot: { asOf: ctx.asOf, totals: ctx.totals },
+      // Echo current quota so the UI can render "12 of 50 used".
+      quota: {
+        planSlug: gate.planSlug,
+        used: gate.used + 1,
+        limit: gate.limit,
+      },
     });
   } catch (e) {
     return NextResponse.json(

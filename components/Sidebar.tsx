@@ -188,12 +188,30 @@ export default function Sidebar({ role }: { role: SidebarRole }) {
     })();
   }, []);
 
-  const items =
+  const baseItems =
     role === "teacher" ? TEACHER :
     role === "super_teacher" ? SUPER_TEACHER :
     role === "platform_admin" ? PLATFORM_ADMIN :
     isSchoolStudent === null ? [] :
     isSchoolStudent ? STUDENT_SCHOOL : STUDENT_INDEPENDENT;
+
+  // Filter out entries the user's plan doesn't include. Currently
+  // only "This Week" (digest) is plan-gated — Pilot loses it,
+  // Standard + Plus keep it. Other entries stay visible across
+  // all tiers (analytics is intentionally not tiered). If we add
+  // more plan-gated sidebar entries later, extend the map here.
+  const items = baseItems.map((group) => ({
+    ...group,
+    items: group.items.filter((it) => {
+      if (it.href === "/teacher/digest" || it.href === "/school/digest") {
+        // Plan still loading? Show optimistically — better to flicker the
+        // entry once than to hide a valid entry from a paying admin.
+        if (access.isLoading) return true;
+        return access.allowed.has("weekly_digest");
+      }
+      return true;
+    }),
+  })).filter((g) => g.items.length > 0);
 
   async function logout() {
     // Sign out, then aggressively wipe any auth-shaped local storage so a

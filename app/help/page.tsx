@@ -633,9 +633,34 @@ function SchoolAdminHelp() {
       q: "How do I change my school's plan?",
       body: (
         <>
-          Plan changes are managed by Anthropic / sales right now &mdash; not
-          self-serve. The badge in your top-right shows your current tier. Email
-          support@bloomiq.app to upgrade or change your subscription.
+          Plan changes are managed by the BloomIQ team right now &mdash; not
+          self-serve. The badge in your top-right shows your current tier and
+          the &ldquo;renews&rdquo; date. Email <strong>support@bloomiq.app</strong>
+          to upgrade or change your subscription.
+        </>
+      ),
+    },
+    {
+      icon: Mail,
+      q: "How does renewal work? When do I pay?",
+      body: (
+        <>
+          Two ways. <strong>(1) NEFT / wire transfer:</strong> the BloomIQ team
+          emails you a GST tax invoice with our bank account and a unique
+          invoice number. Pay by NEFT, RTGS, or cheque using that invoice
+          number as the reference. We mark it received once the funds land,
+          and your plan extends by a full year automatically. The badge updates
+          to the new &ldquo;renews&rdquo; date the next time you reload.
+          <br /><br />
+          <strong>(2) Razorpay (online):</strong> if your school is set up
+          for self-serve, the <em>Renew now</em> button on the expiry banner
+          opens a Razorpay checkout. Card / UPI / netbanking. Same outcome,
+          instant.
+          <br /><br />
+          You&apos;ll see an amber warning banner on your School Home about
+          7&nbsp;days before expiry, and a red one if it lapses. Want to
+          renew earlier? Email us anytime at <strong>support@bloomiq.app</strong>
+          with your school name &mdash; we&apos;ll send the invoice straight away.
         </>
       ),
     },

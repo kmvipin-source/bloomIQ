@@ -119,7 +119,16 @@ export default function SchoolHome() {
       .eq("school_id", prof.school_id);
     type Member = { id: string; role: string; full_name: string | null };
     const memberList = (members as Member[]) || [];
-    const teacherMembers = memberList.filter((m) => m.role === "teacher");
+    // Include super_teacher in the "teacher" pool so deputy admins
+    // count themselves on the Teachers tile and see their own owned
+    // tests on the Tests-made tile + Teacher activity table.
+    // Migration 47 made deputies share role='super_teacher' with the
+    // canonical Head; until this fix, a deputy viewing /school would
+    // see the school count drop by one (themselves) and any tests
+    // they owned silently disappear from the rollup.
+    const teacherMembers = memberList.filter(
+      (m) => m.role === "teacher" || m.role === "super_teacher"
+    );
     const studentMembers = memberList.filter((m) => m.role === "student");
 
     const teacherStats: TeacherRow[] = await Promise.all(
@@ -445,6 +454,8 @@ export default function SchoolHome() {
         <RenewBanner
           expiresAt={access.expiresAt}
           isExpired={access.isExpired}
+          isInGrace={access.isInGrace}
+          graceRemainingDays={access.graceRemainingDays}
           planSlug={access.planSlug}
           source={access.source}
           schoolName={school?.name || null}

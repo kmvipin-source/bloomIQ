@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { groqJSON } from "@/lib/groq";
 import { getBearer, supabaseServer } from "@/lib/supabase/server";
 import { buildSchoolContext } from "@/lib/schoolContext";
+import { requireFeature } from "@/lib/featureAccess.server";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -47,6 +48,7 @@ Rules:
 - 2-4 items per section. No empty arrays — if there are no real issues, write a "monitor" item.
 - Each title <= 60 chars; detail <= 200 chars.
 - Cite specific numbers (avg %, days, student or class names) from the JSON in the detail field.
+- When you mention a student by name (at-risk, top performer, anyone), ALWAYS append their class in parentheses, e.g. "Aanya Joshi (Grade 7 - Biology B)" — the class is in the \`class\` field next to each name in the JSON. A list of names without classes makes it impossible for the principal to know which teacher to follow up with. If a student's class is null, omit the parens.
 - Headline is a single punchy sentence (<= 90 chars) summarising the week.
 - Never invent data.`;
 
@@ -114,6 +116,21 @@ export async function POST(req: Request) {
       return NextResponse.json(
         { error: "Set up your school first to generate the brief." },
         { status: 400 }
+      );
+    }
+
+    // Feature gate — `weekly_digest` is in Standard + Plus only after
+    // migration 60. Pilot schools see the sidebar entry hidden by the
+    // UI gate, but a direct API hit needs to refuse here too.
+    const gate = await requireFeature(user.id, "weekly_digest");
+    if (!gate.allowed) {
+      return NextResponse.json(
+        {
+          error: gate.reason,
+          code: "feature_locked",
+          required_tier: gate.requiredTier,
+        },
+        { status: 403 }
       );
     }
 

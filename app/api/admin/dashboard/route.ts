@@ -262,6 +262,43 @@ export async function GET(req: Request) {
       total_revenue_paise: planRows.reduce((s, r) => s + r.revenue_paise, 0),
     };
 
+    // -- Upcoming expirations --
+    // Schools whose active subscription expires within the next 60 days,
+    // OR has already expired but is still flagged status='active' (so the
+    // platform admin can chase renewals before students lose access).
+    // Sort by soonest-expiring first. Capped at 25 to keep the widget
+    // scannable; anything beyond that is unusual and points at a process
+    // gap that should be solved with a contract review, not a longer list.
+    const SIXTY_DAYS = 60 * 24 * 60 * 60 * 1000;
+    const expiringCandidates = (subs || [])
+      .filter((s) => s.status === "active" && s.school_id && s.expires_at)
+      .map((s) => ({
+        school_id: s.school_id as string,
+        expires_at: s.expires_at as string,
+        plan_label: planById.get(s.plan_id || "")?.label ?? null,
+      }))
+      .filter((s) => {
+        const t = new Date(s.expires_at).getTime();
+        return !Number.isNaN(t) && t - now <= SIXTY_DAYS;
+      })
+      .sort((a, b) => new Date(a.expires_at).getTime() - new Date(b.expires_at).getTime())
+      .slice(0, 25);
+    const expiringSchoolIds = expiringCandidates.map((s) => s.school_id);
+    const { data: expiringSchoolRows } = expiringSchoolIds.length
+      ? await admin.from("schools").select("id, name").in("id", expiringSchoolIds)
+      : { data: [] as { id: string; name: string }[] };
+    const nameByExpId = new Map((expiringSchoolRows || []).map((r) => [r.id as string, r.name as string]));
+    const expiringSoon = expiringCandidates.map((s) => {
+      const days = Math.round((new Date(s.expires_at).getTime() - now) / (24 * 60 * 60 * 1000));
+      return {
+        school_id: s.school_id,
+        school_name: nameByExpId.get(s.school_id) || "—",
+        plan_label: s.plan_label,
+        expires_at: s.expires_at,
+        days_until: days,
+      };
+    });
+
     return NextResponse.json(
       {
         ok: true,
@@ -275,6 +312,7 @@ export async function GET(req: Request) {
         topSchools,
         teachers,
         teacherCounts,
+        expiringSoon,
       },
       { headers: { "Cache-Control": "no-store" } }
     );

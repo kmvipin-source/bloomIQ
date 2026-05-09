@@ -242,16 +242,22 @@ export async function GET(req: Request) {
     // subscriptions are keyed by school_id (not user_id), so this is the
     // authoritative bind point used by useFeatureAccess for school students.
     const schoolIds = (schools || []).map((s) => s.id);
-    const planBySchool = new Map<string, { plan_id: string | null; plan_label: string | null; plan_tier: string | null }>();
+    const planBySchool = new Map<string, {
+      plan_id: string | null;
+      plan_label: string | null;
+      plan_tier: string | null;
+      expires_at: string | null;
+    }>();
     if (schoolIds.length > 0) {
       const { data: subs } = await admin
         .from("subscriptions")
-        .select("school_id, plan_id, plan:plans!subscriptions_plan_id_fkey(label, tier)")
+        .select("school_id, plan_id, expires_at, plan:plans!subscriptions_plan_id_fkey(label, tier)")
         .in("school_id", schoolIds)
         .eq("status", "active");
       type SubRow = {
         school_id: string;
         plan_id: string | null;
+        expires_at: string | null;
         plan: { label: string | null; tier: string | null } | null;
       };
       for (const s of (subs as unknown as SubRow[]) || []) {
@@ -259,6 +265,7 @@ export async function GET(req: Request) {
           plan_id: s.plan_id,
           plan_label: s.plan?.label ?? null,
           plan_tier: s.plan?.tier ?? null,
+          expires_at: s.expires_at,
         });
       }
     }
@@ -271,6 +278,23 @@ export async function GET(req: Request) {
       .select("id, slug, tier, label")
       .like("tier", "school_%")
       .order("tier", { ascending: true });
+
+    // Derive expiry status the same way every admin surface does:
+    //   active   = expiry > 30 days away
+    //   expiring = expiry within next 30 days (warn the operator)
+    //   expired  = expiry already past
+    //   null     = no plan / no expiry recorded
+    const now = Date.now();
+    const DAY = 24 * 60 * 60 * 1000;
+    function expiryStatus(iso: string | null): "active" | "expiring" | "expired" | null {
+      if (!iso) return null;
+      const t = new Date(iso).getTime();
+      if (Number.isNaN(t)) return null;
+      const days = Math.round((t - now) / DAY);
+      if (days < 0) return "expired";
+      if (days <= 30) return "expiring";
+      return "active";
+    }
 
     const rows = (schools || []).map((s) => {
       const confirmedAt = s.super_teacher_id ? confirmedById.get(s.super_teacher_id) || null : null;
@@ -286,6 +310,8 @@ export async function GET(req: Request) {
         current_plan_id: sub?.plan_id ?? null,
         current_plan_label: sub?.plan_label ?? null,
         current_plan_tier: sub?.plan_tier ?? null,
+        expires_at: sub?.expires_at ?? null,
+        expiry_status: expiryStatus(sub?.expires_at ?? null),
       };
     });
 

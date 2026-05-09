@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { supabaseBrowser } from "@/lib/supabase/client";
-import { Building2, Mail, UserRound, Send, CheckCircle2, Clock, Copy, Trash2 } from "lucide-react";
+import { Building2, Mail, UserRound, Send, CheckCircle2, Clock, Copy, Trash2, Settings, Calendar, AlertCircle } from "lucide-react";
 
 /**
  * /admin/onboard-school
@@ -35,6 +36,11 @@ type OnboardedSchool = {
   current_plan_id: string | null;
   current_plan_label: string | null;
   current_plan_tier: string | null;
+  // Plan expiry — driven by subscriptions.expires_at on the school's
+  // active subscription. expiry_status is derived server-side using the
+  // same active/expiring/expired buckets every other admin surface uses.
+  expires_at: string | null;
+  expiry_status: "active" | "expiring" | "expired" | null;
 };
 
 type SchoolPlanOption = {
@@ -186,6 +192,22 @@ export default function OnboardSchoolPage() {
     setTimeout(() => setCopied(null), 1500);
   }
 
+  // Format an ISO date as a short, India-friendly day-month-year string.
+  function fmtDate(iso: string | null): string {
+    if (!iso) return "—";
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return "—";
+    return d.toLocaleDateString("en-IN", { year: "numeric", month: "short", day: "numeric" });
+  }
+
+  // Days from today to the given ISO date. Negative = expired.
+  function daysUntil(iso: string | null): number | null {
+    if (!iso) return null;
+    const t = new Date(iso).getTime();
+    if (Number.isNaN(t)) return null;
+    return Math.round((t - Date.now()) / (24 * 60 * 60 * 1000));
+  }
+
   return (
     <div className="fade-in">
       <h1 className="h1 flex items-center gap-2 mb-1"><Building2 size={28} /> Onboard a school</h1>
@@ -302,6 +324,7 @@ export default function OnboardSchoolPage() {
                 <th className="px-4 py-3 text-left">Admin email</th>
                 <th className="px-4 py-3 text-left">Status</th>
                 <th className="px-4 py-3 text-left">Plan</th>
+                <th className="px-4 py-3 text-left">Expires</th>
                 <th className="px-4 py-3 text-left">Join code</th>
                 <th className="px-4 py-3 text-left">Invited</th>
                 <th className="px-4 py-3 text-right">Action</th>
@@ -343,6 +366,44 @@ export default function OnboardSchoolPage() {
                       {planBusy[s.id] && <span className="spinner" />}
                     </div>
                   </td>
+                  <td className="px-4 py-3 text-xs whitespace-nowrap">
+                    {/* Plan expiry. Three-bucket tone:
+                        active   = >30d away (green)
+                        expiring = ≤30d away (amber, with countdown)
+                        expired  = past (red)
+                        none     = no plan / no expiry yet (muted dash) */}
+                    {(() => {
+                      const days = daysUntil(s.expires_at);
+                      if (s.expiry_status === "expired") {
+                        return (
+                          <span className="inline-flex items-center gap-1 font-semibold text-red-700 bg-red-50 border border-red-200 rounded-full px-2 py-0.5">
+                            <AlertCircle size={12} /> Expired {fmtDate(s.expires_at)}
+                          </span>
+                        );
+                      }
+                      if (s.expiry_status === "expiring" && days != null) {
+                        return (
+                          <span
+                            className="inline-flex items-center gap-1 font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5"
+                            title={`Expires ${fmtDate(s.expires_at)}`}
+                          >
+                            <Calendar size={12} /> Expires in {days}d
+                          </span>
+                        );
+                      }
+                      if (s.expiry_status === "active") {
+                        return (
+                          <span
+                            className="inline-flex items-center gap-1 font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5"
+                            title={days != null ? `${days} days remaining` : undefined}
+                          >
+                            <CheckCircle2 size={12} /> {fmtDate(s.expires_at)}
+                          </span>
+                        );
+                      }
+                      return <span className="muted">—</span>;
+                    })()}
+                  </td>
                   <td className="px-4 py-3">
                     {s.join_code ? (
                       <span className="inline-flex items-center gap-1">
@@ -363,15 +424,28 @@ export default function OnboardSchoolPage() {
                     {s.invited_at ? new Date(s.invited_at).toLocaleDateString() : "—"}
                   </td>
                   <td className="px-4 py-3 text-right">
-                    <button
-                      type="button"
-                      className="btn btn-ghost text-red-600 text-xs inline-flex items-center gap-1"
-                      onClick={() => deleteSchool(s.id, s.name)}
-                      disabled={deleteBusy === s.id}
-                      title="Delete school + cascade"
-                    >
-                      {deleteBusy === s.id ? <span className="spinner" /> : <Trash2 size={14} />} Delete
-                    </button>
+                    <div className="inline-flex items-center gap-2">
+                      {/* Manage = per-school admin page: negotiated price,
+                          invoice download, mark NEFT received. The inline
+                          plan picker above stays — common case. The deeper
+                          B2B controls live behind this link. */}
+                      <Link
+                        href={`/admin/schools/${s.id}`}
+                        className="btn btn-ghost text-xs inline-flex items-center gap-1"
+                        title="Negotiated price, invoice, mark NEFT received"
+                      >
+                        <Settings size={14} /> Manage
+                      </Link>
+                      <button
+                        type="button"
+                        className="btn btn-ghost text-red-600 text-xs inline-flex items-center gap-1"
+                        onClick={() => deleteSchool(s.id, s.name)}
+                        disabled={deleteBusy === s.id}
+                        title="Delete school + cascade"
+                      >
+                        {deleteBusy === s.id ? <span className="spinner" /> : <Trash2 size={14} />} Delete
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}

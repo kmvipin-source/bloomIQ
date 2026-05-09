@@ -52,12 +52,19 @@ function loadRazorpaySdk(): Promise<void> {
 export default function RenewBanner({
   expiresAt,
   isExpired,
+  isInGrace,
+  graceRemainingDays,
   planSlug,
   source,
   schoolName,
 }: {
   expiresAt: string | null;
   isExpired: boolean;
+  // Past expires_at but still inside grace_period_days — features still
+  // work, banner should show "renew within Xd" wording rather than full
+  // lockout. Modern-SaaS expectation; default is 14 days.
+  isInGrace?: boolean;
+  graceRemainingDays?: number;
   planSlug: string | null;
   // From useFeatureAccess. Banner renders for personal subscriptions
   // by default; the super-teacher /school home opts into school-admin
@@ -160,6 +167,40 @@ export default function RenewBanner({
   const mailtoHref = isSchoolAdminMode
     ? `mailto:support@bloomiq.app?subject=${encodeURIComponent(mailtoSubject)}&body=${encodeURIComponent(mailtoBody)}`
     : "";
+
+  // ---------- In grace (red, but features still working) ----------
+  // The school's plan expired but they're inside the configured
+  // grace_period_days (default 14) — features keep working so a
+  // payment-in-flight or still-being-signed renewal contract doesn't
+  // freeze the school overnight. Banner is red and urgent, but the
+  // copy makes it clear there's still a window to act.
+  if (isInGrace && graceRemainingDays && graceRemainingDays > 0 && !isExpired) {
+    const headline = isSchoolAdminMode
+      ? `Your school's plan expired. ${graceRemainingDays} grace day${graceRemainingDays === 1 ? "" : "s"} remaining.`
+      : `Your subscription expired. ${graceRemainingDays} grace day${graceRemainingDays === 1 ? "" : "s"} remaining.`;
+    const subline = isSchoolAdminMode
+      ? `Features are still active during this short grace window so your renewal can complete. Email us today to keep things uninterrupted.`
+      : `Features are still active for a few more days. Renew now to avoid a break in access.`;
+    return (
+      <div className="card border-red-300 bg-red-50 mt-3 flex items-start gap-3 flex-wrap">
+        <AlertCircle size={20} className="text-red-700 mt-0.5 shrink-0" />
+        <div className="flex-1 min-w-[240px]">
+          <div className="font-semibold text-red-900">{headline}</div>
+          <div className="text-xs text-red-800/80 mt-0.5">{subline}</div>
+          {err && <div className="text-xs text-red-900 mt-2">{err}</div>}
+        </div>
+        {isSchoolAdminMode ? (
+          <a href={mailtoHref} className="btn btn-primary text-sm shrink-0">
+            Email support to renew <ArrowRight size={14} />
+          </a>
+        ) : (
+          <button type="button" onClick={renew} disabled={busy} className="btn btn-primary text-sm shrink-0">
+            {busy ? <><span className="spinner" /> Opening checkout…</> : <>Renew now <ArrowRight size={14} /></>}
+          </button>
+        )}
+      </div>
+    );
+  }
 
   // ---------- Expired (red) ----------
   if (isExpired) {
