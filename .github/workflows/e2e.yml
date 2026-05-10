@@ -1,0 +1,57 @@
+name: e2e
+
+# Runs Playwright smoke tests against the Vercel preview URL of the PR.
+# Strategy:
+#  1. Wait for Vercel's "Preview" deployment status on the PR's head SHA
+#     to become success (Vercel posts it as a deployment_status webhook).
+#  2. Read the target_url out of that deployment_status — that's the
+#     preview URL.
+#  3. Run Playwright with PLAYWRIGHT_BASE_URL=<preview>.
+#
+# We trigger on `deployment_status` so the job only fires once Vercel
+# has actually finished building. Filtering inside the job keeps us out
+# of the wrong deployments (production, error states, etc.).
+
+on:
+  deployment_status:
+
+jobs:
+  smoke:
+    name: Playwright smoke tests (preview)
+    # Only run for successful Vercel preview deploys. Vercel labels its
+    # production deploys with environment "Production"; preview deploys
+    # use environment "Preview".
+    if: >-
+      github.event.deployment_status.state == 'success' &&
+      github.event.deployment.environment == 'Preview'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.deployment.sha }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Run Playwright smoke tests against preview
+        env:
+          PLAYWRIGHT_BASE_URL: ${{ github.event.deployment_status.target_url }}
+          CI: "true"
+        run: npx playwright test
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
