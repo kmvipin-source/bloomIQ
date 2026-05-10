@@ -44,5 +44,7 @@ export default withSentryConfig(nextConfig, {
   hideSourceMaps: true,
   // Disable the SDK's auto-injection of the Vercel Cron monitor — we use
   // /api/healthz + UptimeRobot for that signal, not Sentry crons.
-  automaticVercelMonitors: false,
+  webpack: {
+    automaticVercelMonitors: false,
+  },
 });
