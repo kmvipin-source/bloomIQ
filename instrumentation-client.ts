@@ -10,6 +10,9 @@
 
 import * as Sentry from "@sentry/nextjs";
 
+// Required by @sentry/nextjs to instrument App Router client navigations.
+export const onRouterTransitionStart = Sentry.captureRouterTransitionStart;
+
 const DSN = process.env.NEXT_PUBLIC_SENTRY_DSN || "";
 const ENV = process.env.NEXT_PUBLIC_VERCEL_ENV || process.env.NODE_ENV || "development";
 
