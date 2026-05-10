@@ -8,6 +8,7 @@ import type { Question, Quiz } from "@/lib/types";
 import BloomBadge from "@/components/BloomBadge";
 import { formatSeconds } from "@/lib/utils";
 import { ChevronLeft, ChevronRight, AlarmClock, Clock, Play, AlertCircle } from "lucide-react";
+import { track } from "@/lib/posthog";
 
 export default function TakeQuiz() {
   const router = useRouter();
@@ -189,6 +190,12 @@ export default function TakeQuiz() {
       setSecondsLeft(quiz.time_limit_minutes * 60);
       setTrackTime(trackTimeChoice);
       setStarted(true);
+      track("quiz_started", {
+        quiz_id: quiz.id,
+        quiz_code: code,
+        total_questions: questions.length,
+        time_limit_minutes: quiz.time_limit_minutes,
+      });
     } finally {
       setBeginning(false);
     }
@@ -232,6 +239,13 @@ export default function TakeQuiz() {
       total: questions.length,
       time_taken_seconds: seconds,
     }).eq("id", attemptId);
+    track("quiz_submitted", {
+      quiz_id: quiz.id,
+      attempt_id: attemptId,
+      score,
+      total: questions.length,
+      time_taken_seconds: seconds,
+    });
     toast.success("Quiz submitted successfully.");
     router.replace(`/student/results/${attemptId}`);
   }, [answers, attemptId, questions, quiz, router, flushCurrentQuestionTime, trackTime]);

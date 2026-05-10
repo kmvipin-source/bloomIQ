@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { supabaseBrowser } from "@/lib/supabase/client";
 import { Check, Crown, Sparkles, Mail, ArrowRight, PartyPopper, Receipt } from "lucide-react";
+import { track } from "@/lib/posthog";
 
 // =============================================================================
 // PUBLIC-FIRST PRICING PAGE
@@ -271,6 +272,12 @@ function PricingInner() {
             if (!v.ok) throw new Error(j?.error || "Verify failed");
             setSuccess({ tier: j.tier as string, expiresAt: j.expires_at as string });
             setMe((m) => m ? { ...m, tier: j.tier } : m);
+            track("subscription_paid", {
+              tier: j.tier,
+              amount_paise: order.amount_paise,
+              plan_label: order.plan?.label || null,
+              flow: "logged_in",
+            });
             // Drop the autostart query so a refresh doesn't re-fire.
             router.replace("/pricing");
           } catch (e) {
@@ -365,6 +372,12 @@ function PricingInner() {
             if (!v.ok) throw new Error(vj?.error || "Verify failed");
             setSuccess({ tier: vj.tier as string, expiresAt: vj.expires_at as string });
             setMe((m) => m ? { ...m, tier: vj.tier } : m);
+            track("subscription_paid", {
+              tier: vj.tier,
+              amount_paise: j.amount_paise,
+              plan_label: j.plan?.label || null,
+              flow: "guest_signup",
+            });
             setGuestPlan(null);
             setGuestEmail(""); setGuestName(""); setGuestPwd(""); setGuestAcceptedTerms(false);
           } catch (e) {
