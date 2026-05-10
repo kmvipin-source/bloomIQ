@@ -95,16 +95,13 @@ via the `is_test_account` flag.
 3. Their activity is now invisible to platform dashboards / revenue / top
    schools — but the app behaves identically for them.
 
-### Seed test accounts
+### Tester accounts
 
-`scripts/seed-test-accounts.mjs` creates four canonical test users
-(`qa.indep.student@bloomiq.test`, `qa.school.student@bloomiq.test`,
-`qa.teacher@bloomiq.test`, `qa.school.admin@bloomiq.test`). All share the
-password `QATest@2026`. Idempotent — safe to re-run.
-
-```bash
-node scripts/seed-test-accounts.mjs
-```
+The 40-tester cohort signs up through the public flow on prod. There's no
+canonical seed script — each tester creates their own account, then a
+platform admin marks them via the **🧪 Beta tester** toggle on
+`/admin/users`. Once flagged, the account is invisible to dashboards but
+otherwise behaves identically to a real user.
 
 ### Health monitoring
 

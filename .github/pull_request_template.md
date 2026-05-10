@@ -20,11 +20,8 @@ change. If it's a regression fix, name the symptom and the root cause. -->
 Preview URL: <!-- Vercel will fill this in via the bot comment; copy the
 URL into here too so reviewers don't have to scroll. -->
 
-Test accounts (already seeded; password `QATest@2026`):
-- `qa.indep.student@bloomiq.test`
-- `qa.school.student@bloomiq.test`
-- `qa.teacher@bloomiq.test`
-- `qa.school.admin@bloomiq.test`
+Test with a beta-flagged account (any account marked `🧪 Beta tester` on
+`/admin/users` so the activity is excluded from platform metrics).
 
 Click-through:
 1. <!-- step 1 -->
