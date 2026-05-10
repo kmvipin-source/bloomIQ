@@ -34,6 +34,7 @@ type User = {
   email: string | null;
   role: "student" | "teacher" | null;
   is_school_student: boolean;
+  is_test_account: boolean;
   sub_role: SubRole;
   school_id: string | null;
   school_name: string | null;
@@ -69,6 +70,7 @@ export default function AdminUsersPage() {
   const [draftName, setDraftName] = useState("");
   const [draftRole, setDraftRole] = useState<NonNullable<User["role"]>>("student");
   const [draftSchoolStudent, setDraftSchoolStudent] = useState(false);
+  const [draftTestAccount, setDraftTestAccount] = useState(false);
   const [saving, setSaving] = useState(false);
   const [actionErr, setActionErr] = useState<string | null>(null);
   const [actionOk, setActionOk] = useState<string | null>(null);
@@ -102,6 +104,7 @@ export default function AdminUsersPage() {
     setDraftName(u.full_name || "");
     setDraftRole((u.role || "student") as NonNullable<User["role"]>);
     setDraftSchoolStudent(u.is_school_student);
+    setDraftTestAccount(u.is_test_account);
     setActionErr(null);
     setActionOk(null);
   }
@@ -128,6 +131,7 @@ export default function AdminUsersPage() {
           full_name: draftName,
           role: draftRole,
           is_school_student: draftSchoolStudent,
+          is_test_account: draftTestAccount,
         }),
       });
       const j = await r.json().catch(() => ({}));
@@ -298,9 +302,16 @@ export default function AdminUsersPage() {
                     <div className="text-xs muted truncate max-w-[260px]">{u.email || u.id}</div>
                   </td>
                   <td className="px-4 py-3">
-                    <span className={`inline-block text-[10px] uppercase tracking-wide font-bold rounded-full px-2 py-0.5 border ${SUB_ROLE_TONE[u.sub_role]}`}>
-                      {SUB_ROLE_LABEL[u.sub_role]}
-                    </span>
+                    <div className="flex flex-col gap-1">
+                      <span className={`inline-block text-[10px] uppercase tracking-wide font-bold rounded-full px-2 py-0.5 border ${SUB_ROLE_TONE[u.sub_role]}`}>
+                        {SUB_ROLE_LABEL[u.sub_role]}
+                      </span>
+                      {u.is_test_account && (
+                        <span className="inline-block text-[10px] uppercase tracking-wide font-bold rounded-full px-2 py-0.5 border bg-amber-50 text-amber-800 border-amber-200">
+                          🧪 Beta Tester
+                        </span>
+                      )}
+                    </div>
                   </td>
                   <td className="px-4 py-3">
                     {u.school_name ? (
@@ -381,6 +392,19 @@ export default function AdminUsersPage() {
                   onChange={(e) => setDraftSchoolStudent(e.target.checked)}
                 />
                 <span>School-managed student (sets <code className="text-xs">is_school_student</code>)</span>
+              </label>
+              <label className="flex items-start gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={draftTestAccount}
+                  onChange={(e) => setDraftTestAccount(e.target.checked)}
+                  className="mt-0.5"
+                />
+                <span>
+                  Beta tester (sets <code className="text-xs">is_test_account</code>) — this account&apos;s
+                  activity is excluded from platform dashboards / revenue / top-students rollups.
+                  Use for the QA cohort hitting prod.
+                </span>
               </label>
             </div>
 

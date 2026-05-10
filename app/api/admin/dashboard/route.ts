@@ -44,9 +44,13 @@ export async function GET(req: Request) {
       .select("id, user_id, school_id, plan_id, tier, status, price_paid_paise, expires_at");
 
     // -- Profiles minimal — used for free-tier count + role mix.
+    // is_test_account rows are deliberately excluded so the QA cohort
+    // hitting prod doesn't pollute platform metrics (Total users,
+    // Paying subscribers, Top schools, Revenue, etc.).
     const { data: profiles } = await admin
       .from("profiles")
-      .select("id, role, is_school_student, school_id, platform_admin");
+      .select("id, role, is_school_student, school_id, platform_admin, is_test_account")
+      .or("is_test_account.is.null,is_test_account.eq.false");
 
     const { data: schools } = await admin.from("schools").select("id, created_at");
 

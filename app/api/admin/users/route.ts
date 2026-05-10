@@ -53,7 +53,7 @@ export async function GET(req: Request) {
     const [{ data: profs, error: pErr }, { data: schools }] = await Promise.all([
       admin
         .from("profiles")
-        .select("id, full_name, role, is_school_student, platform_admin, school_id, created_at")
+        .select("id, full_name, role, is_school_student, platform_admin, school_id, is_test_account, created_at")
         .in("role", ["student", "teacher"])
         .or("platform_admin.is.null,platform_admin.eq.false")
         .order("created_at", { ascending: false }),
@@ -80,6 +80,7 @@ export async function GET(req: Request) {
       is_school_student: boolean | null;
       platform_admin: boolean | null;
       school_id: string | null;
+      is_test_account: boolean | null;
       created_at: string | null;
     };
     const profList = ((profs as ProfRow[] | null) || [])
@@ -124,6 +125,7 @@ export async function GET(req: Request) {
       email: emailById.get(p.id) ?? null,
       role: p.role,
       is_school_student: !!p.is_school_student,
+      is_test_account: !!p.is_test_account,
       sub_role: subRoleOf(p),
       school_id: p.school_id,
       school_name: p.school_id ? (schoolNameById.get(p.school_id) ?? null) : null,

@@ -90,6 +90,9 @@ export async function PATCH(
     if (typeof body.is_school_student === "boolean") {
       patch.is_school_student = body.is_school_student;
     }
+    if (typeof body.is_test_account === "boolean") {
+      patch.is_test_account = body.is_test_account;
+    }
 
     if (Object.keys(patch).length === 0) {
       return NextResponse.json({ error: "Nothing to update." }, { status: 400 });
