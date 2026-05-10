@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 import { supabaseBrowser } from "@/lib/supabase/client";
 import { ArrowLeft, ArrowRight, Eye, EyeOff } from "lucide-react";
+import { track } from "@/lib/posthog";
 
 // Admin Head (super_teacher) accounts are NOT self-serve. They are provisioned
 // by BloomIQ staff via /admin/onboard-school after the school's payment lands,
@@ -230,6 +231,8 @@ function SignupForm({ role }: { role: Role }) {
       setBusy(false);
       return;
     }
+
+    track("signup_completed", { role, has_school: !!school, intent: intent || null });
 
     if (
       role === "student" &&

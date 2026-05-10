@@ -11,6 +11,7 @@ import { ThemeProvider } from "@/components/ThemeProvider";
 import { THEME_INIT_SCRIPT } from "@/lib/theme";
 import { SpeedInsights } from "@vercel/speed-insights/next";
 import { Analytics } from "@vercel/analytics/next";
+import PostHogProvider from "@/components/PostHogProvider";
 
 // Premium-clean fonts. Inter is the workhorse; we load common weights
 // and let the @theme block in globals.css name it as --font-sans.
@@ -67,14 +68,16 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body suppressHydrationWarning>
         <ThemeProvider>
-          <AuthHealer />
-          {children}
-          <TwoFactorNudge />
-          <IdleSignOut />
-          <Toaster />
-          <PWARegister />
-          <SpeedInsights />
-          <Analytics />
+          <PostHogProvider>
+            <AuthHealer />
+            {children}
+            <TwoFactorNudge />
+            <IdleSignOut />
+            <Toaster />
+            <PWARegister />
+            <SpeedInsights />
+            <Analytics />
+          </PostHogProvider>
         </ThemeProvider>
       </body>
     </html>
