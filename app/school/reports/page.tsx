@@ -110,134 +110,54 @@ function SchoolReportsInner() {
   const [busyExport, setBusyExport] = useState<"pdf" | "xlsx" | "copy" | null>(null);
   const [exportMsg, setExportMsg] = useState<string | null>(null);
 
+  // Bundled load via /api/school/reports — service-role read avoids the
+  // RLS race the previous user-token-client implementation had on
+  // first paint, and the endpoint owns the super_teacher-inclusion fix
+  // for teacher rollups + class-scoped attempt filtering.
   async function load() {
     setLoading(true);
     const sb = supabaseBrowser();
-    const { data: { user } } = await sb.auth.getUser();
-    if (!user) return;
-
-    const { data: prof } = await sb
-      .from("profiles")
-      .select("school_id")
-      .eq("id", user.id)
-      .single();
-    if (!prof?.school_id) { setLoading(false); return; }
-    setSchoolId(prof.school_id);
-
-    const { data: school } = await sb.from("schools").select("name").eq("id", prof.school_id).single();
-    setSchoolName((school as { name: string } | null)?.name || "Your school");
-
-    // Date cutoff
+    const { data: { session } } = await sb.auth.getSession();
+    if (!session) { setLoading(false); return; }
     const preset = RANGE_PRESETS.find((r) => r.id === rangeId);
-    const since = preset?.days
-      ? new Date(Date.now() - preset.days * 24 * 60 * 60 * 1000).toISOString()
-      : null;
-
-    // Pull profiles in this school (split into students + teachers).
-    const { data: profiles } = await sb
-      .from("profiles")
-      .select("id, full_name, role")
-      .eq("school_id", prof.school_id);
-    const profList = (profiles as Profile[]) || [];
-    const teacherList = profList.filter((p) => p.role === "teacher");
-    const studentList = profList.filter((p) => p.role === "student");
-    setTeachers(teacherList);
-    setStudents(studentList);
-
-    // Classes in this school
-    const { data: cs } = await sb
-      .from("classes")
-      .select("id, name, grade, owner_id")
-      .eq("school_id", prof.school_id);
-    const classList = (cs as Cls[]) || [];
-    setClasses(classList);
-
-    const classIds = classList.map((c) => c.id);
-    if (classIds.length === 0) {
-      setMembers([]); setAttempts([]); setAnswers([]);
-      setLoading(false);
-      return;
-    }
-
-    // Memberships (so we know which student belongs to which class)
-    const { data: ms } = await sb
-      .from("class_members")
-      .select("class_id, student_id")
-      .in("class_id", classIds);
-    setMembers((ms as Member[]) || []);
-
-    const studentIds = studentList.map((s) => s.id);
-    if (studentIds.length === 0) {
-      setAttempts([]); setAnswers([]);
-      setLoading(false);
-      return;
-    }
-
-    // Class-scoped quiz_ids for the school's classes. School reports
-    // are official records — they MUST exclude personal practice the
-    // student did on their own. We only count attempts on quizzes
-    // that were formally assigned to the school's classes.
-    const classQuizIds = await loadClassQuizIdsForClasses(sb, classIds);
-    const classQuizIdArr = Array.from(classQuizIds);
-    if (classQuizIdArr.length === 0) {
-      setAttempts([]); setAnswers([]);
-      setLoading(false);
-      return;
-    }
-
-    // Attempts in window — scoped to class quizzes only.
-    let attemptsQ = sb
-      .from("quiz_attempts")
-      .select("id, student_id, quiz_id, score, total, submitted_at")
-      .in("student_id", studentIds)
-      .in("quiz_id", classQuizIdArr)
-      .not("submitted_at", "is", null);
-    if (since) attemptsQ = attemptsQ.gte("submitted_at", since);
-    const { data: atts } = await attemptsQ;
-    const attList = (atts as Att[]) || [];
-    setAttempts(attList);
-
-    // Answers for those attempts
-    if (attList.length === 0) {
-      setAnswers([]);
-      setLoading(false);
-      return;
-    }
-    const attemptIds = attList.map((a) => a.id);
-    const { data: ans } = await sb
-      .from("attempt_answers")
-      .select("attempt_id, question_id, bloom_level, is_correct")
-      .in("attempt_id", attemptIds);
-    setAnswers((ans as Ans[]) || []);
-
-    // ── More-insights extras (parallel fetch). All five run together;
-    // the page is already painted from the data above so this is a
-    // background fill that updates the new section when it arrives.
-    const [asgRes, quizRes, qbRes, liveRes] = await Promise.all([
-      sb.from("quiz_assignments").select("quiz_id, class_id, student_id").in("class_id", classIds),
-      sb.from("quizzes").select("id, name, subject, owner_id, created_at").in("id", classQuizIdArr),
-      // Question bank rows for every question_id touched by the answers.
-      // Used by question-quality flags + class-struggle topics + teacher
-      // bloom contribution. Owners come from question_bank; quizzes
-      // table also has owner but the question-bank owner is what counts
-      // for "who wrote this question" attribution.
-      (async () => {
-        const qids = Array.from(new Set(((ans as Ans[]) || []).map((a) => a.question_id).filter(Boolean)));
-        if (qids.length === 0) return { data: [] as QbRow[] };
-        return sb.from("question_bank").select("id, topic_family, bloom_level, owner_id").in("id", qids);
-      })(),
-      // Count of live sessions per host teacher for adoption metric.
-      sb.from("live_sessions").select("host_teacher_id").in("host_teacher_id", teacherList.map((t) => t.id).concat(["00000000-0000-0000-0000-000000000000"])),
-    ]);
-    setAssignments(((asgRes.data as unknown) as AsgRow[]) || []);
-    setQuizzesMeta(((quizRes.data as unknown) as QzRow[]) || []);
-    setQuestionsMeta(((qbRes.data as unknown) as QbRow[]) || []);
-    const liveCounts = new Map<string, number>();
-    for (const r of (((liveRes.data as unknown) as Array<{ host_teacher_id: string }>) || [])) {
-      liveCounts.set(r.host_teacher_id, (liveCounts.get(r.host_teacher_id) || 0) + 1);
-    }
-    setLiveSessionByTeacher(liveCounts);
-
+    const days = preset?.days ? String(preset.days) : "all";
+    try {
+      const res = await fetch(`/api/school/reports?days=${encodeURIComponent(days)}`, {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+        cache: "no-store",
+      });
+      if (!res.ok) { setLoading(false); return; }
+      const j = await res.json() as {
+        ok: boolean;
+        school: { id: string; name: string } | null;
+        teachers: Profile[];
+        students: Profile[];
+        classes: Cls[];
+        members: Member[];
+        attempts: Att[];
+        answers: Ans[];
+        assignments: AsgRow[];
+        quizzesMeta: QzRow[];
+        questionsMeta: QbRow[];
+        liveCountsByTeacher: Record<string, number>;
+      };
+      if (j.school) {
+        setSchoolId(j.school.id);
+        setSchoolName(j.school.name || "Your school");
+      }
+      setTeachers(j.teachers || []);
+      setStudents(j.students || []);
+      setClasses(j.classes || []);
+      setMembers(j.members || []);
+      setAttempts(j.attempts || []);
+      setAnswers(j.answers || []);
+      setAssignments(j.assignments || []);
+      setQuizzesMeta(j.quizzesMeta || []);
+      setQuestionsMeta(j.questionsMeta || []);
+      const liveMap = new Map<string, number>();
+      for (const [k, v] of Object.entries(j.liveCountsByTeacher || {})) liveMap.set(k, v as number);
+      setLiveSessionByTeacher(liveMap);
+    } catch { /* surface via empty state */ }
     setLoading(false);
   }
   useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [rangeId]);

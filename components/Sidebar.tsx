@@ -209,6 +209,16 @@ export default function Sidebar({ role }: { role: SidebarRole }) {
         if (access.isLoading) return true;
         return access.allowed.has("weekly_digest");
       }
+      if (it.href === "/school/coach") {
+        // Coach is Standard + Plus only — Pilot's per-month quota is 0
+        // (see lib/coachQuota.ts). Hide on Pilot so a click doesn't
+        // dead-end at a generic "Coach failed to reply" banner from
+        // the 402 response. Gate on planSlug rather than features
+        // because coach is implemented as a quota lookup, not a
+        // feature-key entry on plans.features.
+        if (access.isLoading) return true;
+        return access.planSlug !== "school_pilot";
+      }
       return true;
     }),
   })).filter((g) => g.items.length > 0);

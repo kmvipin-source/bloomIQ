@@ -89,11 +89,15 @@ export default function SchoolClassesPage() {
     if (!me.school_id) { setLoading(false); return; }
     const prof = { school_id: me.school_id };
 
+    // Include super_teachers (Head + Deputies) in the assignable pool —
+    // they often teach a class themselves and the home page already
+    // counts them in the teacher rollup. Filtering to role='teacher'
+    // alone made a primary-teaching Head invisible in their own dropdown.
     const { data: teachers } = await sb
       .from("profiles")
       .select("id, full_name")
       .eq("school_id", prof.school_id)
-      .eq("role", "teacher")
+      .in("role", ["teacher", "super_teacher"])
       .order("full_name", { ascending: true, nullsFirst: false });
     setTeachersInSchool((teachers as Teacher[]) || []);
 

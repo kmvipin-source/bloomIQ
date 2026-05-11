@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { groqJSON } from "@/lib/groq";
-import { getBearer, supabaseServer } from "@/lib/supabase/server";
+import { getBearer, supabaseServer, supabaseAdmin } from "@/lib/supabase/server";
 import { buildSchoolContext } from "@/lib/schoolContext";
 import { requireFeature } from "@/lib/featureAccess.server";
 
@@ -101,11 +101,16 @@ export async function POST(req: Request) {
     const { data: { user } } = await sb.auth.getUser();
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-    const { data: prof } = await sb
+    // Use the service-role admin client for the role lookup. The
+    // user-token client raced RLS for some Heads, especially on the
+    // first request after sign-in, and returned 403 to legitimate
+    // users until they hard-refreshed.
+    const adminClient = supabaseAdmin();
+    const { data: prof } = await adminClient
       .from("profiles")
       .select("role, school_id")
       .eq("id", user.id)
-      .single();
+      .maybeSingle();
     if (!prof || prof.role !== "super_teacher") {
       return NextResponse.json(
         { error: "Only school admins can generate the brief." },

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getBearer, supabaseServer, supabaseAdmin } from "@/lib/supabase/server";
+import { getBearer, supabaseServer, supabaseAdmin, SCHOOL_STUDENT_DOMAIN } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
 
@@ -74,7 +74,7 @@ export async function POST(req: Request) {
     if (!email) {
       return NextResponse.json({ error: "Enter the new Admin Head\u2019s email." }, { status: 400 });
     }
-    if (email.endsWith("@bloomiq.invalid")) {
+    if (email.endsWith(`@${SCHOOL_STUDENT_DOMAIN}`)) {
       return NextResponse.json(
         { error: "That email belongs to a school student account, not a real user." },
         { status: 400 }
@@ -83,10 +83,19 @@ export async function POST(req: Request) {
 
     const admin = supabaseAdmin();
 
-    // 2) Resolve target user by email.
-    const { data: usersList, error: listErr } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 });
-    if (listErr) return NextResponse.json({ error: listErr.message }, { status: 500 });
-    const target = (usersList.users as Array<{ id: string; email?: string | null }>).find((u) => u.email?.toLowerCase() === email);
+    // 2) Resolve target user by email. Paged loop — the old single-page
+    //    listUsers({perPage:1000}) silently mis-resolved emails for any
+    //    tenant past 1000 users.
+    let target: { id: string; email?: string | null } | null = null;
+    const perPage = 200;
+    for (let page = 1; page <= 50; page++) {
+      const { data, error: listErr } = await admin.auth.admin.listUsers({ page, perPage });
+      if (listErr) return NextResponse.json({ error: listErr.message }, { status: 500 });
+      const users = (data.users as Array<{ id: string; email?: string | null }>) || [];
+      const hit = users.find((u) => u.email?.toLowerCase() === email);
+      if (hit) { target = hit; break; }
+      if (users.length < perPage) break;
+    }
     if (!target) {
       return NextResponse.json(
         { error: "No account with that email. Ask them to sign up first, then try again." },
@@ -163,10 +172,19 @@ export async function POST(req: Request) {
       .update({ role: "teacher" })
       .eq("id", user.id);
     if (demoteErr) {
+      // Compensating rollback: undo steps 5 + 6 so the school is not
+      // left with two super_teachers (the original caller AND the
+      // target) and the school's super_teacher_id is restored.
+      await admin
+        .from("schools")
+        .update({ super_teacher_id: user.id })
+        .eq("id", me.school_id);
+      await admin
+        .from("profiles")
+        .update({ role: "teacher" })
+        .eq("id", target.id);
       return NextResponse.json(
-        {
-          error: `Transfer mostly worked, but demoting the previous Admin Head failed: ${demoteErr.message}. Fix manually in Supabase.`,
-        },
+        { error: `Demote failed; transfer rolled back. ${demoteErr.message}` },
         { status: 500 }
       );
     }
