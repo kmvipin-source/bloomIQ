@@ -11,6 +11,7 @@ import {
   Wrench, Search, Radio, MessageCircle, UserPlus,
 } from "lucide-react";
 import { supabaseBrowser } from "@/lib/supabase/client";
+import { useFeatureAccess } from "@/lib/featureAccess";
 
 type Role = "teacher" | "student" | "super_teacher" | "platform_admin";
 
@@ -83,11 +84,28 @@ export default function MobileNav({ role }: { role: Role }) {
   // Close drawer on route change.
   useEffect(() => { setOpen(false); }, [pathname]);
 
-  const groups =
+  // Plan-gate the same entries the desktop sidebar gates. Without this
+  // a Pilot-tier teacher on mobile sees /teacher/digest in the drawer,
+  // taps it, and hits the new 402 quota wall — desktop hides the entry
+  // instead. Keep mobile + desktop in sync.
+  const access = useFeatureAccess();
+  const baseGroups =
     role === "teacher" ? TEACHER :
     role === "super_teacher" ? SUPER_TEACHER :
     role === "platform_admin" ? PLATFORM_ADMIN :
     STUDENT;
+  const groups = baseGroups
+    .map((group) => ({
+      ...group,
+      items: group.items.filter((it) => {
+        if (it.href === "/teacher/digest" || it.href === "/school/digest") {
+          if (access.isLoading) return true; // optimistic
+          return access.allowed.has("weekly_digest");
+        }
+        return true;
+      }),
+    }))
+    .filter((g) => g.items.length > 0);
 
   async function logout() {
     // Same aggressive sign-out as the desktop sidebar — wipe auth tokens
