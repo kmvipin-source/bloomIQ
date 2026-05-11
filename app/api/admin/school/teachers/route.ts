@@ -3,6 +3,30 @@ import { getBearer, supabaseServer, supabaseAdmin } from "@/lib/supabase/server"
 
 export const runtime = "nodejs";
 
+// In-memory email index, lazy-built on first miss. Supabase's
+// listUsers() only returns one page at a time; the previous code
+// requested page 1 with perPage:1000 and assumed every account fit on
+// it, silently mis-resolving emails for any tenant past 1000 users.
+// We page through until we find the requested email, then cache the
+// result for the rest of the function instance. Lives for as long as
+// the Vercel function instance survives — good enough; misses re-page.
+async function findUserByEmail(
+  admin: ReturnType<typeof supabaseAdmin>,
+  email: string
+): Promise<{ id: string; email?: string | null } | null> {
+  const target = email.toLowerCase();
+  const perPage = 200;
+  for (let page = 1; page <= 50; page++) {
+    const { data, error } = await admin.auth.admin.listUsers({ page, perPage });
+    if (error) throw error;
+    const users = (data.users as Array<{ id: string; email?: string | null }>) || [];
+    const hit = users.find((u) => (u.email || "").toLowerCase() === target);
+    if (hit) return hit;
+    if (users.length < perPage) return null; // no more pages
+  }
+  return null;
+}
+
 /**
  * POST → add an existing teacher account to the Admin Head's school.
  * Body: { email: string }
@@ -15,8 +39,11 @@ export async function POST(req: Request) {
     const { data: { user } } = await sb.auth.getUser();
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-    // Caller must be the Admin Head (super_teacher) with a school
-    const { data: me } = await sb.from("profiles").select("role, school_id").eq("id", user.id).single();
+    const admin = supabaseAdmin();
+    // Caller-role lookup uses service-role to avoid the RLS race that
+    // affects /api/school/digest and /api/school/coach when the
+    // dashboard probes a freshly-logged-in head.
+    const { data: me } = await admin.from("profiles").select("role, school_id").eq("id", user.id).maybeSingle();
     if (!me || me.role !== "super_teacher") {
       return NextResponse.json({ error: "Only the Admin Head can do this." }, { status: 403 });
     }
@@ -28,10 +55,7 @@ export async function POST(req: Request) {
     const email: string = String(body.email || "").trim().toLowerCase();
     if (!email) return NextResponse.json({ error: "Email is required" }, { status: 400 });
 
-    const admin = supabaseAdmin();
-    const { data: usersList, error: listErr } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 });
-    if (listErr) return NextResponse.json({ error: listErr.message }, { status: 500 });
-    const u = (usersList.users as Array<{ id: string; email?: string | null }>).find((x) => x.email?.toLowerCase() === email);
+    const u = await findUserByEmail(admin, email);
     if (!u) {
       return NextResponse.json({ error: "No account with that email. Ask them to sign up first." }, { status: 404 });
     }
@@ -68,12 +92,12 @@ export async function GET(req: Request) {
     const { data: { user } } = await sb.auth.getUser();
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-    const { data: me } = await sb.from("profiles").select("role, school_id").eq("id", user.id).single();
+    const admin = supabaseAdmin();
+    const { data: me } = await admin.from("profiles").select("role, school_id").eq("id", user.id).maybeSingle();
     if (!me || me.role !== "super_teacher" || !me.school_id) {
       return NextResponse.json({ error: "Only the Admin Head can do this." }, { status: 403 });
     }
 
-    const admin = supabaseAdmin();
     // Pull every teacher AND super-teacher in this school. Including
     // super_teacher rows lets the /school/teachers page render the Admin
     // Head + Deputies in the same roster (the page filters them into
@@ -90,14 +114,19 @@ export async function GET(req: Request) {
       return NextResponse.json({ teachers: [] });
     }
 
-    // Fetch emails for those user_ids. listUsers paginates; for the
-    // sizes we expect here (a few dozen teachers per school) one page
-    // is plenty. If any school grows past 1000 teachers, this would
-    // need a paged loop.
-    const { data: usersList, error: uErr } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 });
-    if (uErr) return NextResponse.json({ error: uErr.message }, { status: 500 });
+    // Fetch emails by id. getUserById is O(1) and avoids the listUsers
+    // pagination trap that capped us at 1000 users globally.
     const emailById = new Map<string, string | null>();
-    for (const u of usersList.users) emailById.set(u.id, u.email ?? null);
+    await Promise.all(
+      profList.map(async (p) => {
+        try {
+          const { data } = await admin.auth.admin.getUserById(p.id);
+          emailById.set(p.id, data.user?.email ?? null);
+        } catch {
+          emailById.set(p.id, null);
+        }
+      })
+    );
 
     const teachers = profList.map((p) => ({
       id: p.id,
@@ -114,6 +143,12 @@ export async function GET(req: Request) {
 /**
  * DELETE → remove a teacher from the school.
  * Body: { teacher_id: string }
+ *
+ * Refuses to demote a super_teacher (Head or Deputy) — they must go
+ * through the Transfer Admin Head flow or be demoted by the canonical
+ * Head first. Refuses to remove the canonical Head outright because
+ * that would orphan the school (schools.super_teacher_id would point
+ * at a profile with no school_id).
  */
 export async function DELETE(req: Request) {
   try {
@@ -123,7 +158,8 @@ export async function DELETE(req: Request) {
     const { data: { user } } = await sb.auth.getUser();
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-    const { data: me } = await sb.from("profiles").select("role, school_id").eq("id", user.id).single();
+    const admin = supabaseAdmin();
+    const { data: me } = await admin.from("profiles").select("role, school_id").eq("id", user.id).maybeSingle();
     if (!me || me.role !== "super_teacher" || !me.school_id) {
       return NextResponse.json({ error: "Not authorised" }, { status: 403 });
     }
@@ -132,7 +168,37 @@ export async function DELETE(req: Request) {
     const teacherId: string = String(body.teacher_id || "").trim();
     if (!teacherId) return NextResponse.json({ error: "teacher_id is required" }, { status: 400 });
 
-    const admin = supabaseAdmin();
+    // Block the orphan-school case: removing the Head themselves
+    // would leave schools.super_teacher_id pointing at a school-less
+    // profile, and no UI path would let anyone reclaim the school.
+    const { data: school } = await admin
+      .from("schools")
+      .select("super_teacher_id")
+      .eq("id", me.school_id)
+      .maybeSingle();
+    if ((school as { super_teacher_id?: string | null } | null)?.super_teacher_id === teacherId) {
+      return NextResponse.json(
+        { error: "Use Transfer Admin Head to move this role to someone else first." },
+        { status: 400 }
+      );
+    }
+
+    // Block silently demoting a Deputy through this endpoint. The
+    // /school/teachers UI exposes a dedicated demote flow that walks
+    // through the consequences. Removing a Deputy via the generic
+    // teacher-delete here would skip that confirmation.
+    const { data: targetProf } = await admin
+      .from("profiles")
+      .select("role")
+      .eq("id", teacherId)
+      .maybeSingle();
+    if ((targetProf as { role?: string } | null)?.role === "super_teacher") {
+      return NextResponse.json(
+        { error: "This account is an Admin (Head or Deputy). Demote it first via the Promote/Demote flow." },
+        { status: 400 }
+      );
+    }
+
     const { error } = await admin.from("profiles").update({ school_id: null }).eq("id", teacherId).eq("school_id", me.school_id);
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     return NextResponse.json({ ok: true });
