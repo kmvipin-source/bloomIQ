@@ -4,6 +4,7 @@ import { geminiJSON, geminiText, isGeminiConfigured } from "@/lib/gemini";
 import { fixFrameLayout, type LayoutElement } from "@/lib/visualizerLayout";
 import { getBearer, supabaseServer } from "@/lib/supabase/server";
 import { requireFeature } from "@/lib/featureAccess.server";
+import { checkRateLimit, checkDailyCap } from "@/lib/rateLimit";
 
 export const runtime = "nodejs";
 export const maxDuration = 90;
@@ -409,6 +410,12 @@ export async function POST(req: Request) {
     const sb = supabaseServer(token);
     const { data: { user } } = await sb.auth.getUser();
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    // Visualizer is expensive (two Gemini calls per request). Burst 3,
+    // refill 6/hr, hard daily cap 15.
+    const rate = checkRateLimit(user.id, "visualizer.create", { capacity: 3, refillPerHour: 6 });
+    if (!rate.allowed) return NextResponse.json({ error: "Too many requests.", code: "rate_limited" }, { status: 429, headers: { "Retry-After": String(rate.retryAfterSec) } });
+    const daily = checkDailyCap(user.id, "visualizer.create", 15);
+    if (!daily.allowed) return NextResponse.json({ error: `Daily limit reached (${daily.limit}).`, code: "daily_cap" }, { status: 429 });
 
     // Server-side feature gate. Concept Visualizer is gated to top-tier
     // plans (Premium Plus / School Plus). The client-side dashboard tile

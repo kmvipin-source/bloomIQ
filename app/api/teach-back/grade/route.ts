@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { groqJSON } from "@/lib/groq";
 import { BLOOM_LEVELS, type BloomLevel } from "@/lib/bloom";
-import { getBearer, supabaseServer } from "@/lib/supabase/server";
+import { aiGate } from "@/lib/aiGate";
+import { supabaseAdmin } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -92,11 +93,12 @@ function compositeOverall(scores: Record<BloomLevel, number>): number {
 
 export async function POST(req: Request) {
   try {
-    const token = getBearer(req);
-    if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    const sb = supabaseServer(token);
-    const { data: { user } } = await sb.auth.getUser();
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const gate = await aiGate(req, {
+      route: "teach-back.grade",
+      rateLimit: { capacity: 20, refillPerHour: 30 },
+    });
+    if (!gate.ok) return gate.response;
+    const user = { id: gate.userId };
 
     const body = await req.json().catch(() => ({}));
     const topic: string = String(body.topic || "").trim();

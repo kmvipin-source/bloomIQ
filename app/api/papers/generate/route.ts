@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { groqJSON, groqJSONVision } from "@/lib/groq";
 import { getBearer, supabaseServer } from "@/lib/supabase/server";
+import { checkRateLimit, checkDailyCap } from "@/lib/rateLimit";
 import {
   findMisconceptionDistractors,
   formatDistractorSeedsForPrompt,
@@ -101,6 +102,12 @@ export async function POST(req: Request) {
     const sb = supabaseServer(token);
     const { data: { user } } = await sb.auth.getUser();
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    // Papers generate is the heaviest LLM surface — multi-Bloom + vision
+    // when an image source is used. Tighter caps than /generate.
+    const rate = checkRateLimit(user.id, "papers.generate", { capacity: 3, refillPerHour: 6 });
+    if (!rate.allowed) return NextResponse.json({ error: "Too many requests.", code: "rate_limited" }, { status: 429, headers: { "Retry-After": String(rate.retryAfterSec) } });
+    const daily = checkDailyCap(user.id, "papers.generate", 15);
+    if (!daily.allowed) return NextResponse.json({ error: `Daily limit reached (${daily.limit}).`, code: "daily_cap" }, { status: 429 });
 
     const { data: prof } = await sb.from("profiles").select("role").eq("id", user.id).single();
     if (prof?.role !== "teacher") {
