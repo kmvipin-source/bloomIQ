@@ -48,12 +48,20 @@ export async function GET() {
     const admin = supabaseAdmin();
     const { error } = await admin.from("profiles").select("id").limit(1);
     if (error) {
-      dbError = error.message;
+      // Log the real error server-side; surface only an opaque token
+      // to the public JSON body. The previous handler returned the
+      // raw Supabase error message (could leak schema names / role
+      // hints to scrapers).
+      // eslint-disable-next-line no-console
+      console.error("[healthz] db_read failed:", error.message);
+      dbError = "db_unreachable";
     } else {
       checks.db_read = "ok";
     }
   } catch (e) {
-    dbError = e instanceof Error ? e.message : String(e);
+    // eslint-disable-next-line no-console
+    console.error("[healthz] unexpected:", e instanceof Error ? e.message : String(e));
+    dbError = "db_unreachable";
   }
 
   const elapsed_ms = Date.now() - startedAt;
@@ -64,7 +72,7 @@ export async function GET() {
 
   const body = ok
     ? { ok: true, ts: new Date().toISOString(), elapsed_ms, checks }
-    : { ok: false, ts: new Date().toISOString(), elapsed_ms, checks, error: dbError ?? "missing env var(s)" };
+    : { ok: false, ts: new Date().toISOString(), elapsed_ms, checks, error: dbError ?? "missing_env_var" };
 
   return NextResponse.json(body, {
     status: ok ? 200 : 500,
