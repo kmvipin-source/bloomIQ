@@ -6,6 +6,7 @@ import { supabaseBrowser } from "@/lib/supabase/client";
 import { Zap, ChevronRight, Check, X, ArrowLeft, RefreshCw } from "lucide-react";
 import BloomBadge from "@/components/BloomBadge";
 import type { BloomLevel } from "@/lib/bloom";
+import { triggerScoreRecompute } from "@/lib/scoreRecompute";
 
 type DrillItem = {
   id: string;
@@ -92,6 +93,8 @@ export default function DailyDrillPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Could not submit.");
       setResult(data as SubmitResult);
+      // Recompute BloomIQ score after a successful drill submission.
+      void triggerScoreRecompute("drill", null);
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Submit failed.");
     } finally {

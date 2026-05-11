@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { supabaseBrowser } from "@/lib/supabase/client";
 import { BLOOM_META, isBloomLevel, type BloomLevel } from "@/lib/bloom";
+import { triggerScoreRecompute } from "@/lib/scoreRecompute";
 import {
   Timer, Zap, Sparkles, ArrowLeft, Loader2, CheckCircle2, XCircle, History,
 } from "lucide-react";
@@ -229,6 +230,8 @@ export default function SpeedTrainerPage() {
       if (!r.ok) throw new Error(j?.error || "Submit failed");
       setResult(j as SubmitResp);
       void loadHistory();
+      // Recompute BloomIQ score after a speed-trainer round.
+      void triggerScoreRecompute("drill", null);
 
       // Best-effort: log confidence-calibration events alongside the speed
       // session. Only events where the student actually rated their confidence
