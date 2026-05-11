@@ -950,7 +950,6 @@ export default function ClassDetailPage() {
                 <th className="px-4 py-3 text-left">Name</th>
                 <th className="px-4 py-3 text-left">Username</th>
                 <th className="px-4 py-3 text-left">Last login</th>
-                <th className="px-4 py-3 text-left">Last login</th>
                 <th className="px-4 py-3 text-left">Activity</th>
                 <th className="px-4 py-3 text-right">Actions</th>
               </tr>

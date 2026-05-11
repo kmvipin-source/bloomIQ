@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { groqJSON } from "@/lib/groq";
 import { getBearer, supabaseServer } from "@/lib/supabase/server";
 import { buildTeacherContext } from "@/lib/teacherContext";
+import { checkCoachQuota, logCoachCall } from "@/lib/coachQuota";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -113,10 +114,26 @@ export async function POST(req: Request) {
       );
     }
 
+    // Gate on the same Coach quota the /api/teacher/coach route uses.
+    // The sidebar already hides the digest link for Pilot, but without
+    // this server-side gate the endpoint itself is reachable directly
+    // and a teacher could drain LLM tokens with repeated POSTs.
+    const gate = await checkCoachQuota(user.id, "teacher");
+    if (!gate.allowed) {
+      return NextResponse.json(
+        { error: gate.reason, code: "coach_quota_exceeded", planSlug: gate.planSlug, used: gate.used, limit: gate.limit },
+        { status: 402 }
+      );
+    }
+
     const ctx = await buildTeacherContext(user.id);
     const userPrompt = JSON.stringify(ctx, null, 2);
     const raw = await groqJSON(SYSTEM, userPrompt);
     const digest = normaliseDigest(raw);
+
+    // Log against the quota only after the LLM call succeeded so a
+    // transient Groq failure doesn't burn the teacher's monthly count.
+    await logCoachCall(user.id, "teacher");
 
     return NextResponse.json({
       digest,

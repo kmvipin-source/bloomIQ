@@ -303,22 +303,33 @@ export default function LiveHostPage() {
 
           {leaderboard.length > 0 && (
             <div className="grid grid-cols-3 gap-3 mt-4 max-w-xl mx-auto">
-              {[1, 0, 2].map((rank) => {
-                const p = leaderboard[rank];
-                if (!p) return <div key={rank} />;
-                const heights = ["h-32", "h-40", "h-24"]; // 2nd, 1st, 3rd
+              {/*
+                Podium layout: slot 0 = left (2nd place), slot 1 = center
+                (1st place, tallest), slot 2 = right (3rd place). The
+                `slotToRank` array maps each display slot to the actual
+                leaderboard rank to show in it. heights / colors / labels
+                are now indexed by SLOT (not rank), so the 1st-place
+                player always lands on the gold center pillar.
+              */}
+              {(() => {
+                const slotToRank = [1, 0, 2]; // 2nd, 1st, 3rd
+                const heights = ["h-32", "h-40", "h-24"];
                 const colors = ["bg-slate-300", "bg-amber-400", "bg-amber-700"];
                 const labels = ["2nd", "1st", "3rd"];
-                return (
-                  <div key={p.student_id} className="flex flex-col items-center justify-end">
-                    <div className="text-sm font-semibold mb-1 text-center">{p.display_name || "Player"}</div>
-                    <div className="text-xs muted mb-1">{p.score} pts</div>
-                    <div className={`${heights[rank]} ${colors[rank]} w-full rounded-t-lg grid place-items-center text-white font-bold`}>
-                      {labels[rank]}
+                return slotToRank.map((rank, slot) => {
+                  const p = leaderboard[rank];
+                  if (!p) return <div key={`empty-${slot}`} />;
+                  return (
+                    <div key={p.student_id} className="flex flex-col items-center justify-end">
+                      <div className="text-sm font-semibold mb-1 text-center">{p.display_name || "Player"}</div>
+                      <div className="text-xs muted mb-1">{p.score} pts</div>
+                      <div className={`${heights[slot]} ${colors[slot]} w-full rounded-t-lg grid place-items-center text-white font-bold`}>
+                        {labels[slot]}
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
+                  );
+                });
+              })()}
             </div>
           )}
 
