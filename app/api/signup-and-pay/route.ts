@@ -46,8 +46,21 @@ export async function POST(req: Request) {
     if (plan.price_paise <= 0) return NextResponse.json({ error: "This plan is free — sign up via /signup." }, { status: 400 });
 
     // Reject if email already in use — push to /login flow instead of paying.
-    const { data: existingList } = await admin.auth.admin.listUsers({ page: 1, perPage: 200 });
-    const exists = (existingList?.users as Array<{ id: string; email?: string | null }>)?.find((u) => (u.email || "").toLowerCase() === email);
+    // Paged loop instead of a single listUsers({perPage:200}) page,
+    // which silently mis-resolved emails past the first 200 auth users
+    // and allowed duplicate accounts to slip through.
+    let exists: { id: string; email?: string | null } | undefined;
+    {
+      const perPage = 200;
+      for (let page = 1; page <= 50; page++) {
+        const { data, error: listErr } = await admin.auth.admin.listUsers({ page, perPage });
+        if (listErr) break;
+        const users = (data.users as Array<{ id: string; email?: string | null }>) || [];
+        const hit = users.find((u) => (u.email || "").toLowerCase() === email);
+        if (hit) { exists = hit; break; }
+        if (users.length < perPage) break;
+      }
+    }
     if (exists) {
       return NextResponse.json(
         { error: "An account with this email already exists. Please sign in first.", code: "email_exists" },
@@ -122,6 +135,12 @@ export async function POST(req: Request) {
     });
     if (!r.ok) {
       const errText = await r.text();
+      // Compensating delete: the auth user + profile row were created
+      // above and the visitor has a session, but they cannot pay. Leaving
+      // the orphan account means they can sign in later with no
+      // subscription and no easy recovery path. Roll back the user so
+      // they can retry cleanly from /pricing.
+      try { await admin.auth.admin.deleteUser(userId); } catch { /* ignore */ }
       return NextResponse.json({ error: `Razorpay order failed: ${errText.slice(0, 200)}` }, { status: 500 });
     }
     const order = (await r.json()) as { id: string; amount: number; currency: string };

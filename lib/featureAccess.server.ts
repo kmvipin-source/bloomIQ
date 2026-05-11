@@ -46,11 +46,17 @@ export async function requireFeature(
     let plan: Plan | null = null;
     let expiresAt: string | null = null;
 
+    // Track grace_period_days alongside expires_at so the server gate
+    // matches the client useFeatureAccess hook — without this a school
+    // in its grace window saw unlocked tiles client-side but got 403s
+    // on every API call. The client + server now agree.
+    let gracePeriodDays = 14;
+
     // School student → school's plan.
     if (prof?.is_school_student && prof.school_id) {
       const { data: schoolSub } = await sb
         .from("subscriptions")
-        .select("plan_id, expires_at, status")
+        .select("plan_id, expires_at, status, grace_period_days")
         .eq("school_id", prof.school_id)
         .eq("status", "active")
         .maybeSingle();
@@ -63,6 +69,8 @@ export async function requireFeature(
         if (p) {
           plan = p as Plan;
           expiresAt = (schoolSub as { expires_at?: string | null }).expires_at || null;
+          const g = (schoolSub as { grace_period_days?: number | null }).grace_period_days;
+          if (typeof g === "number" && g >= 0) gracePeriodDays = g;
         }
       }
     }
@@ -72,7 +80,7 @@ export async function requireFeature(
     if (!plan) {
       const { data: sub } = await sb
         .from("subscriptions")
-        .select("plan_id, expires_at, status")
+        .select("plan_id, expires_at, status, grace_period_days")
         .eq("user_id", userId)
         .maybeSingle();
       if (sub?.plan_id) {
@@ -84,18 +92,24 @@ export async function requireFeature(
         if (p) {
           plan = p as Plan;
           expiresAt = (sub as { expires_at?: string | null }).expires_at || null;
+          const g = (sub as { grace_period_days?: number | null }).grace_period_days;
+          if (typeof g === "number" && g >= 0) gracePeriodDays = g;
         }
       }
     }
 
-    // Step 2 — is the subscription still in date?
-    if (expiresAt && Date.parse(expiresAt) < Date.now()) {
-      const required = await findCheapestUnlockingTier(featureKey);
-      return {
-        allowed: false,
-        reason: "Your subscription has expired. Renew to access this feature.",
-        requiredTier: required,
-      };
+    // Step 2 — is the subscription still in date, accounting for grace?
+    if (expiresAt) {
+      const expiresMs = Date.parse(expiresAt);
+      const hardCutoffMs = expiresMs + gracePeriodDays * 24 * 60 * 60 * 1000;
+      if (Number.isFinite(hardCutoffMs) && Date.now() > hardCutoffMs) {
+        const required = await findCheapestUnlockingTier(featureKey);
+        return {
+          allowed: false,
+          reason: "Your subscription has expired. Renew to access this feature.",
+          requiredTier: required,
+        };
+      }
     }
 
     // Step 3 — feature membership.
