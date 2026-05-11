@@ -1,6 +1,25 @@
 import { NextResponse } from "next/server";
-import { getBearer, supabaseServer, supabaseAdmin } from "@/lib/supabase/server";
+import { getBearer, supabaseServer, supabaseAdmin, SCHOOL_STUDENT_DOMAIN } from "@/lib/supabase/server";
 import { generateQuizCode } from "@/lib/utils";
+
+// Paged email lookup. listUsers({page:1, perPage:1000}) silently mis-
+// resolved emails past 1000 users; paginate until found.
+async function findUserByEmail(
+  admin: ReturnType<typeof supabaseAdmin>,
+  email: string
+): Promise<{ id: string; email?: string | null } | null> {
+  const target = email.toLowerCase();
+  const perPage = 200;
+  for (let page = 1; page <= 50; page++) {
+    const { data, error } = await admin.auth.admin.listUsers({ page, perPage });
+    if (error) throw error;
+    const users = (data.users as Array<{ id: string; email?: string | null }>) || [];
+    const hit = users.find((u) => (u.email || "").toLowerCase() === target);
+    if (hit) return hit;
+    if (users.length < perPage) return null;
+  }
+  return null;
+}
 
 export const runtime = "nodejs";
 
@@ -43,7 +62,7 @@ export async function POST(req: Request) {
     if (!schoolName) return NextResponse.json({ error: "School name is required." }, { status: 400 });
     if (!adminEmail) return NextResponse.json({ error: "Admin Head email is required." }, { status: 400 });
     if (!adminFullName) return NextResponse.json({ error: "Admin Head full name is required." }, { status: 400 });
-    if (adminEmail.endsWith("@bloomiq.invalid")) {
+    if (adminEmail.endsWith(`@${SCHOOL_STUDENT_DOMAIN}`)) {
       return NextResponse.json(
         { error: "That email belongs to a synthetic school-student account, not a real inbox." },
         { status: 400 }
@@ -55,9 +74,7 @@ export async function POST(req: Request) {
 
     const admin = supabaseAdmin();
 
-    const { data: usersList, error: listErr } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 });
-    if (listErr) return NextResponse.json({ error: listErr.message }, { status: 500 });
-    const existing = (usersList.users as Array<{ id: string; email?: string | null }>).find((u) => u.email?.toLowerCase() === adminEmail);
+    const existing = await findUserByEmail(admin, adminEmail);
     if (existing) {
       return NextResponse.json(
         {
@@ -132,16 +149,15 @@ export async function POST(req: Request) {
       .update({ school_id: school.id, school: schoolName })
       .eq("id", newAdminUserId);
     if (profErr) {
+      // Compensating rollback: delete the freshly-created school + the
+      // freshly-invited auth user. The previous behaviour returned
+      // ok:true with a warning and left an orphan school + a Head
+      // profile that had no school_id, requiring manual SQL cleanup.
+      try { await admin.from("schools").delete().eq("id", school.id); } catch { /* ignore */ }
+      try { await admin.auth.admin.deleteUser(newAdminUserId); } catch { /* ignore */ }
       return NextResponse.json(
-        {
-          ok: true,
-          warning:
-            `Invite sent and school created, but linking the profile failed: ${profErr.message}. ` +
-            `Set profiles.school_id = ${school.id} on user ${newAdminUserId} in Supabase.`,
-          school_id: school.id,
-          admin_user_id: newAdminUserId,
-        },
-        { status: 200 }
+        { error: `Could not link profile to school: ${profErr.message}. Onboarding rolled back.` },
+        { status: 500 }
       );
     }
 
@@ -159,12 +175,38 @@ export async function POST(req: Request) {
         .select("id, label, tier, period_days")
         .eq("id", requestedPlanId)
         .maybeSingle();
-      if (plan) {
+      // Reject non-school plans bound to a school subscription. Without
+      // this guard a platform admin could attach an individual Premium
+      // plan to a school's subscription row, which would skew every
+      // feature gate downstream.
+      if (plan && plan.tier.startsWith("school_")) {
         const legacyTier =
           plan.tier === "school_plus" ? "premium_plus"
-          : plan.tier.startsWith("school_") ? "premium"
-          : plan.tier;
-        const expiresAt = new Date(Date.now() + plan.period_days * 24 * 60 * 60 * 1000).toISOString();
+          : "premium";
+        // Honour the modern-expiry knobs from migration 65 so an
+        // onboarded school's clock doesn't start the instant the
+        // invite is created. Defaults match the per-school admin
+        // page: activation_pending=true (clock starts on first
+        // super_teacher sign-in via /api/auth/me), grace_period_days=14.
+        // Operator can override either via the onboard form.
+        const activationPending = body.activation_pending !== false;
+        const gracePeriodDays = typeof body.grace_period_days === "number" && body.grace_period_days >= 0
+          ? Math.round(body.grace_period_days)
+          : 14;
+        const contractedStudents = typeof body.contracted_students === "number" && body.contracted_students > 0
+          ? Math.round(body.contracted_students)
+          : null;
+        // started_at: explicit value if provided (academic-year deals),
+        // otherwise now() as the placeholder that first sign-in will
+        // overwrite when activation_pending is true.
+        let startedAt = new Date();
+        if (typeof body.started_at === "string" && body.started_at.trim()) {
+          const raw = body.started_at.trim();
+          const isDateOnly = /^\d{4}-\d{2}-\d{2}$/.test(raw);
+          const ts = Date.parse(isDateOnly ? `${raw}T00:00:00+05:30` : raw);
+          if (!Number.isNaN(ts)) startedAt = new Date(ts);
+        }
+        const expiresAt = new Date(startedAt.getTime() + plan.period_days * 24 * 60 * 60 * 1000);
         const { error: subErr } = await admin
           .from("subscriptions")
           .insert({
@@ -173,8 +215,11 @@ export async function POST(req: Request) {
             plan_id: plan.id,
             tier: legacyTier,
             status: "active",
-            started_at: new Date().toISOString(),
-            expires_at: expiresAt,
+            started_at: startedAt.toISOString(),
+            expires_at: expiresAt.toISOString(),
+            activation_pending: activationPending,
+            grace_period_days: gracePeriodDays,
+            contracted_students: contractedStudents,
           });
         if (!subErr) {
           boundPlan = { id: plan.id, label: plan.label, tier: plan.tier };
@@ -232,10 +277,20 @@ export async function GET(req: Request) {
       .limit(50);
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-    const { data: usersList } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 });
-    const confirmedById = new Map<string, string | null>(
-      (usersList?.users || []).map((u) => [u.id, u.email_confirmed_at || u.confirmed_at || null])
-    );
+    // Paginate through auth.users to build the confirmed-at map. The
+    // previous single-page fetch capped us at 1000 users.
+    const confirmedById = new Map<string, string | null>();
+    {
+      const perPage = 200;
+      for (let page = 1; page <= 50; page++) {
+        const { data, error } = await admin.auth.admin.listUsers({ page, perPage });
+        if (error) break;
+        for (const u of (data.users as Array<{ id: string; email_confirmed_at?: string | null; confirmed_at?: string | null }>)) {
+          confirmedById.set(u.id, u.email_confirmed_at || u.confirmed_at || null);
+        }
+        if ((data.users as unknown[]).length < perPage) break;
+      }
+    }
 
     // Pull current school subscriptions in one query so we can join in
     // each school's plan_id without a per-school round trip. School

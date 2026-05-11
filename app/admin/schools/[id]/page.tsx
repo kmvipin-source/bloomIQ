@@ -52,7 +52,7 @@ type SchoolDetail = {
     activation_pending: boolean | null;
     grace_period_days: number | null;
   };
-  plan: null | { id: string; slug: string | null; label: string | null; per_student_price_paise: number | null };
+  plan: null | { id: string; slug: string | null; label: string | null; per_student_price_paise: number | null; period_days: number | null };
   student_count: number;
   school_plans: Array<{ id: string; slug: string | null; label: string | null; per_student_price_paise: number | null }>;
   // Past billing cycles archived by "Start renewal cycle". Most-recent first.
@@ -210,12 +210,11 @@ export default function SchoolAdminPage(props: PageProps) {
     // Compute renewal preview client-side for the confirm dialog so the
     // operator sees "extends from X → Y" before committing. Mirror the
     // server's "smart" extend logic (early renewal preserves remainder).
-    const periodDays = (() => {
-      // We only have per-student-price + tier on the plan in client state,
-      // not period_days. Default to 365 — server will recompute the
-      // authoritative value either way.
-      return 365;
-    })();
+    // Pull period_days from the actual plan so the preview matches
+    // what the server will commit. Falls back to 365 when the plan
+    // hasn't been loaded yet (rare — the page won't render the
+    // mark-paid button without subscription state anyway).
+    const periodDays = data.plan?.period_days ?? 365;
     const prevExp = data.subscription.expires_at ? new Date(data.subscription.expires_at) : null;
     const now     = new Date();
     const baseTime = prevExp && prevExp.getTime() > now.getTime() ? prevExp.getTime() : now.getTime();
@@ -223,7 +222,7 @@ export default function SchoolAdminPage(props: PageProps) {
     const previewMsg =
       `Mark this subscription as paid?\n\n` +
       `Extends from ${prevExp ? formatDate(prevExp.toISOString()) : "—"} to approximately ${formatDate(newExp.toISOString())} ` +
-      `(server uses the plan's actual period; this preview assumes 365 days).\n\n` +
+      `(based on the plan's ${periodDays}-day period).\n\n` +
       `If renewing early, the unused remainder is preserved.`;
     if (!confirm(previewMsg)) return;
     setSavingPaid(true); setErr(null); setInfo(null);

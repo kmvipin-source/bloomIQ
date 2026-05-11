@@ -17,11 +17,15 @@ async function requireAdmin(req: Request) {
   const sb = supabaseServer(token);
   const { data: { user } } = await sb.auth.getUser();
   if (!user) return { error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) };
-  const { data: me } = await sb
+  // Service-role read avoids the RLS race that occasionally 403'd a
+  // legitimate platform admin on the Vercel edge — same fix every
+  // other admin route in this tree already uses.
+  const adminCli = supabaseAdmin();
+  const { data: me } = await adminCli
     .from("profiles")
     .select("platform_admin")
     .eq("id", user.id)
-    .single();
+    .maybeSingle();
   if (!me?.platform_admin) {
     return { error: NextResponse.json({ error: "Forbidden" }, { status: 403 }) };
   }
@@ -135,7 +139,10 @@ export async function POST(req: Request) {
       req.headers.get("origin") ||
       req.headers.get("referer")?.replace(/\/[^/]*$/, "") ||
       new URL(req.url).origin;
-    const redirectTo = `${origin.replace(/\/$/, "")}/auth/set-password?next=/admin/onboard-school`;
+    // Newly invited platform admins land on /admin/dashboard after
+    // setting their password — the canonical rollup, same as a
+    // returning admin's /staff sign-in destination.
+    const redirectTo = `${origin.replace(/\/$/, "")}/auth/set-password?next=/admin/dashboard`;
 
     if (!target) {
       const { data: linkData, error: linkErr } = await admin.auth.admin.generateLink({

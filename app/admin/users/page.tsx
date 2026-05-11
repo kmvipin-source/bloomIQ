@@ -121,18 +121,24 @@ export default function AdminUsersPage() {
       const sb = supabaseBrowser();
       const { data: { session } } = await sb.auth.getSession();
       if (!session) throw new Error("Not signed in.");
+      // Only patch fields the operator actually changed. Sending
+      // `role` unconditionally meant a user whose existing role was
+      // null (rare but real) silently became 'student' the moment
+      // the admin saved any other field — the dropdown defaulted to
+      // 'student' for null-role users.
+      const patch: Record<string, unknown> = {
+        full_name: draftName,
+        is_school_student: draftSchoolStudent,
+        is_test_account: draftTestAccount,
+      };
+      if (draftRole !== editing.role) patch.role = draftRole;
       const r = await fetch(`/api/admin/users/${editing.id}`, {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${session.access_token}`,
         },
-        body: JSON.stringify({
-          full_name: draftName,
-          role: draftRole,
-          is_school_student: draftSchoolStudent,
-          is_test_account: draftTestAccount,
-        }),
+        body: JSON.stringify(patch),
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);

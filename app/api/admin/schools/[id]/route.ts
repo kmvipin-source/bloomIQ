@@ -64,11 +64,14 @@ export async function GET(req: Request, ctx: Ctx) {
       .maybeSingle();
     const subscription = (subRaw as unknown as SubRow | null) ?? null;
 
-    let plan: { id: string; slug: string | null; label: string | null; per_student_price_paise: number | null } | null = null;
+    let plan: { id: string; slug: string | null; label: string | null; per_student_price_paise: number | null; period_days: number | null } | null = null;
     if (subscription?.plan_id) {
       const { data: p } = await admin
         .from("plans")
-        .select("id, slug, label, per_student_price_paise")
+        // period_days surfaces so the mark-paid preview dialog can
+        // show the right "extends by N days" message instead of
+        // hard-coding 365.
+        .select("id, slug, label, per_student_price_paise, period_days")
         .eq("id", subscription.plan_id)
         .maybeSingle();
       plan = (p as typeof plan) ?? null;
