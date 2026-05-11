@@ -204,8 +204,13 @@ function SignupForm({ role }: { role: Role }) {
     // profiles. We also include the version so we can require re-acceptance
     // when Terms change materially.
     const acceptedAt = new Date().toISOString();
+    // Lowercase the email so a mixed-case retry of the same address
+    // doesn't create a second auth.users row that then fails to sign
+    // in via /login (login also doesn't lowercase). Trim too — pastes
+    // sometimes include a trailing space.
+    const normalizedEmail = email.trim().toLowerCase();
     const { data, error } = await sb.auth.signUp({
-      email,
+      email: normalizedEmail,
       password,
       options: {
         data: {

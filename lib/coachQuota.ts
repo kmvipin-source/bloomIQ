@@ -144,3 +144,110 @@ export async function logCoachCall(userId: string, surface: CoachSurface): Promi
     // Swallow: logging failure shouldn't break the user's session.
   }
 }
+
+/**
+ * Atomic alternative to checkCoachQuota + logCoachCall. Uses the
+ * Postgres function check_and_log_coach_call so the count + insert
+ * happen under a single row-level lock — eliminates the TOCTOU race
+ * the two-step path had under concurrent fetches.
+ *
+ * Semantics differ slightly: this BURNS the slot up front, so a
+ * downstream LLM failure does cost the user one call. Use refundCoachCall
+ * to compensate if the LLM round-trip fails.
+ */
+export async function consumeCoachQuota(
+  userId: string,
+  _surface: CoachSurface
+): Promise<QuotaResult> {
+  const sb = supabaseAdmin();
+
+  // Resolve plan (same lookup path as checkCoachQuota, just trimmed).
+  const { data: prof } = await sb
+    .from("profiles")
+    .select("school_id, role")
+    .eq("id", userId)
+    .maybeSingle();
+
+  let planSlug: string | null = null;
+  if (prof?.school_id) {
+    const { data: schoolSub } = await sb
+      .from("subscriptions")
+      .select("plan_id, status, expires_at")
+      .eq("school_id", prof.school_id)
+      .eq("status", "active")
+      .maybeSingle();
+    if (schoolSub?.plan_id) {
+      const expiresAt = (schoolSub as { expires_at?: string | null }).expires_at;
+      const expired = expiresAt && Date.parse(expiresAt) < Date.now();
+      if (!expired) {
+        const { data: plan } = await sb
+          .from("plans")
+          .select("slug")
+          .eq("id", schoolSub.plan_id)
+          .maybeSingle();
+        planSlug = (plan as { slug: string | null } | null)?.slug ?? null;
+      }
+    }
+  }
+
+  const limit = planSlug != null && planSlug in COACH_QUOTA_PER_MONTH
+    ? COACH_QUOTA_PER_MONTH[planSlug]
+    : 0;
+  if (limit === 0) {
+    return {
+      allowed: false,
+      reason: planSlug
+        ? `Coach is not included in your school's ${planSlug.replace("_", " ")} plan.`
+        : "Coach requires an active school subscription.",
+      planSlug,
+      used: 0,
+      limit: 0,
+    };
+  }
+
+  // Postgres int upper-bound = 2147483647. Use that to signal "unlimited"
+  // to the RPC, which lets the Plus tier short-circuit the count.
+  const intLimit = Number.isFinite(limit) ? Math.floor(limit) : 2147483647;
+  const { data: ok, error } = await sb.rpc("check_and_log_coach_call", {
+    p_user_id: userId,
+    p_surface: _surface,
+    p_monthly_limit: intLimit,
+  });
+  if (error) {
+    return { allowed: false, reason: error.message, planSlug, used: 0, limit };
+  }
+  if (ok === false) {
+    return {
+      allowed: false,
+      reason: `You've used your ${limit} Coach questions for this month.`,
+      planSlug,
+      used: intLimit,
+      limit,
+    };
+  }
+  return { allowed: true, planSlug, used: 0, limit };
+}
+
+/**
+ * Refund one already-consumed Coach slot. Use when the LLM call fails
+ * AFTER consumeCoachQuota returned allowed:true so a transient Groq
+ * outage doesn't burn the user's monthly count. Deletes the most
+ * recent coach_usage row for this user within the last 5 minutes.
+ */
+export async function refundCoachCall(userId: string): Promise<void> {
+  try {
+    const sb = supabaseAdmin();
+    const since = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+    const { data: rows } = await sb
+      .from("coach_usage")
+      .select("id")
+      .eq("user_id", userId)
+      .gte("called_at", since)
+      .order("called_at", { ascending: false })
+      .limit(1);
+    const id = (rows as Array<{ id: string }> | null)?.[0]?.id;
+    if (id) await sb.from("coach_usage").delete().eq("id", id);
+  } catch {
+    // Swallow — refund best-effort.
+  }
+}
