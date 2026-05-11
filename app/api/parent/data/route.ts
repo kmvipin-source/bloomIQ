@@ -1,5 +1,22 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/server";
+
+// Rate limit by token to deter brute-force enumeration. 30 lookups per
+// 10-minute window per token; bad-token responses still cost a slot.
+const RATE_WINDOW_MS = 10 * 60 * 1000;
+const RATE_LIMIT = 30;
+const attemptsByToken = new Map<string, number[]>();
+function shouldThrottle(key: string): boolean {
+  const now = Date.now();
+  const recent = (attemptsByToken.get(key) || []).filter((t) => now - t < RATE_WINDOW_MS);
+  if (recent.length >= RATE_LIMIT) {
+    attemptsByToken.set(key, recent);
+    return true;
+  }
+  recent.push(now);
+  attemptsByToken.set(key, recent);
+  return false;
+}
 import { BLOOM_LEVELS, BLOOM_META, type BloomLevel } from "@/lib/bloom";
 
 export const runtime = "nodejs";
@@ -40,17 +57,27 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: "Invalid link" }, { status: 400 });
     }
 
+    if (shouldThrottle(token)) {
+      return NextResponse.json({ error: "Too many requests. Try again in a few minutes." }, { status: 429 });
+    }
+
     const sb = supabaseAdmin();
 
-    // 1. Resolve token → student_id + check revoked_at
+    // 1. Resolve token → student_id + check revoked_at + expires_at
     const { data: invite, error: invErr } = await sb
       .from("parent_invites")
-      .select("id, student_id, parent_label, revoked_at, view_count, created_at")
+      .select("id, student_id, parent_label, revoked_at, view_count, created_at, expires_at")
       .eq("token", token)
       .maybeSingle();
     if (invErr) return NextResponse.json({ error: invErr.message }, { status: 500 });
     if (!invite) return NextResponse.json({ error: "Link not found" }, { status: 404 });
     if (invite.revoked_at) return NextResponse.json({ error: "This link has been revoked." }, { status: 403 });
+    // Reject expired tokens. Without this gate a leaked link was good
+    // forever until manual revoke; now defaults to 90-day rotation.
+    const expiresAt = (invite as { expires_at?: string | null }).expires_at;
+    if (expiresAt && Date.parse(expiresAt) < Date.now()) {
+      return NextResponse.json({ error: "This link has expired. Ask for a fresh share link." }, { status: 403 });
+    }
 
     const studentId = invite.student_id as string;
 

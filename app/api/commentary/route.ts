@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { groqText } from "@/lib/groq";
 import { BLOOM_META, type BloomLevel } from "@/lib/bloom";
 import { getBearer, supabaseServer } from "@/lib/supabase/server";
+import { checkRateLimit } from "@/lib/rateLimit";
 
 export const runtime = "nodejs";
 
@@ -23,6 +24,8 @@ export async function POST(req: Request) {
     const sb = supabaseServer(token);
     const { data: { user } } = await sb.auth.getUser();
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const rate = checkRateLimit(user.id, "commentary", { capacity: 10, refillPerHour: 20 });
+    if (!rate.allowed) return NextResponse.json({ error: "Too many requests.", code: "rate_limited" }, { status: 429, headers: { "Retry-After": String(rate.retryAfterSec) } });
 
     const body = await req.json();
     const kind: "class_summary" | "report_comment" = body.kind || "class_summary";

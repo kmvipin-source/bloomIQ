@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { groqText } from "@/lib/groq";
-import { getBearer, supabaseServer } from "@/lib/supabase/server";
+import { aiGate } from "@/lib/aiGate";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -55,11 +55,13 @@ function clean(turns: unknown): Turn[] {
 
 export async function POST(req: Request) {
   try {
-    const token = getBearer(req);
-    if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    const sb = supabaseServer(token);
-    const { data: { user } } = await sb.auth.getUser();
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    // aiGate: auth + per-user rate limit. Tutor chat is high-volume so
+    // capacity is generous (40 burst, ~120/hr steady state).
+    const gate = await aiGate(req, {
+      route: "tutor.chat",
+      rateLimit: { capacity: 40, refillPerHour: 120 },
+    });
+    if (!gate.ok) return gate.response;
 
     const body = await req.json().catch(() => ({}));
     const message: string = String(body.message || "").trim();
