@@ -103,9 +103,18 @@ export async function POST(req: Request) {
 
     // Apply recency weighting by duplicating recent rows. Crude but
     // transparent — easy to reason about and easy to tune later.
+    //
+    // Handles fractional weights properly: a RECENT_WEIGHT of 1.5
+    // pushes one full copy of the recent set plus the first half of
+    // it again, yielding a true 1.5x weighting rather than rounding
+    // up to 2x (the previous Math.round had silently turned this into
+    // a 2x weight, which didn't match the constant's documentation).
     const weightedRecent: ScorableAnswer[] = [];
-    const recentMultiplier = Math.max(1, Math.round(RECENT_WEIGHT));
-    for (let i = 0; i < recentMultiplier; i += 1) weightedRecent.push(...recentAnswers);
+    const intPart = Math.max(1, Math.floor(RECENT_WEIGHT));
+    for (let i = 0; i < intPart; i += 1) weightedRecent.push(...recentAnswers);
+    const fracPart = Math.max(0, RECENT_WEIGHT - intPart);
+    const fracTake = Math.round(fracPart * recentAnswers.length);
+    if (fracTake > 0) weightedRecent.push(...recentAnswers.slice(0, fracTake));
 
     const combined = [...calibrationAnswers, ...weightedRecent];
     if (combined.length === 0) {
