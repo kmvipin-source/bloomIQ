@@ -199,7 +199,7 @@ export async function POST(req: Request) {
     // top of an active subscription.
     const { data: existing, error: selErr } = await admin
       .from("subscriptions")
-      .select("id, expires_at")
+      .select("id, expires_at, school_id")
       .eq("user_id", user.id)
       .maybeSingle();
     if (selErr) return NextResponse.json({ error: selErr.message }, { status: 500 });
@@ -226,11 +226,21 @@ export async function POST(req: Request) {
     // the subscription so a future plan price-change doesn't retroactively
     // re-price them mid-term. On renewal a fresh row is created with the
     // then-current price.
-    const pricePaidPaise = typeof order.amount === "number" && order.amount > 0
-      ? order.amount
-      : 0;
+    // Fall back to the plan's price if Razorpay's order didn't return
+    // an amount (rare but possible when the order is malformed).
+    // Otherwise the row would carry price_paid_paise=0, polluting
+    // revenue reporting and GST.
+    const pricePaidPaise =
+      typeof order.amount === "number" && order.amount > 0
+        ? order.amount
+        : planRow.price_paise;
 
     if (existing?.id) {
+      // Preserve the existing school_id link — a user paying for a
+      // personal upgrade while attached to a school subscription
+      // shouldn't lose the school context. The previous code blanked
+      // school_id unconditionally.
+      const preservedSchoolId = (existing as { school_id?: string | null }).school_id ?? null;
       const { error: updErr } = await admin
         .from("subscriptions")
         .update({
@@ -241,7 +251,7 @@ export async function POST(req: Request) {
           started_at: new Date().toISOString(),
           expires_at: expiresAt,
           razorpay_payment_id: paymentId,
-          school_id: null,
+          school_id: preservedSchoolId,
         })
         .eq("id", existing.id);
       if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 });

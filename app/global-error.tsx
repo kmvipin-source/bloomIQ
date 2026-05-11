@@ -1,5 +1,7 @@
 "use client";
 
+import { useEffect } from "react";
+
 /**
  * Top-level React error boundary. Triggered when a server-component render,
  * a route layout, or any unhandled exception bubbles up past every page-level
@@ -7,6 +9,10 @@
  *
  * Per Next.js App Router contract this MUST live at app/global-error.tsx,
  * MUST render <html><body>, and MUST be a client component.
+ *
+ * Reporting: forwards the error to PostHog when initialised, and always
+ * console.errors with digest + message so it's visible in Vercel runtime
+ * logs / DevTools without a remote service.
  */
 export default function GlobalError({
   error,
@@ -15,6 +21,22 @@ export default function GlobalError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  useEffect(() => {
+    // Vercel runtime + DevTools console is the cheapest signal.
+    // eslint-disable-next-line no-console
+    console.error("[global-error]", error.digest || "no-digest", error.message, error.stack);
+    // Best-effort PostHog hook — silent no-op when the SDK isn't on
+    // the page (logged-out or page-error rendered before init).
+    try {
+      const ph = (globalThis as { posthog?: { capture?: (e: string, p?: Record<string, unknown>) => void } }).posthog;
+      ph?.capture?.("$exception", {
+        $exception_message: error.message,
+        $exception_type: error.name,
+        digest: error.digest || null,
+      });
+    } catch { /* swallow */ }
+  }, [error]);
+
   return (
     <html>
       <body style={{ margin: 0, fontFamily: "system-ui, sans-serif", background: "#f8fafc" }}>

@@ -107,19 +107,15 @@ export async function POST(req: Request, ctx: RouteCtx) {
       }, { onConflict: "session_id,student_id,question_idx" });
     if (upErr) return NextResponse.json({ error: upErr.message }, { status: 500 });
 
-    // Update player's score: recompute from answers to handle re-answers safely.
-    const { data: ans } = await sb
-      .from("live_session_answers")
-      .select("awarded_points")
-      .eq("session_id", session.id)
-      .eq("student_id", user.id);
-    const newScore = ((ans as Array<{ awarded_points: number }>) || [])
-      .reduce((s, r) => s + (r.awarded_points || 0), 0);
-    await sb
-      .from("live_session_players")
-      .update({ score: newScore, last_seen_at: new Date().toISOString() })
-      .eq("session_id", session.id)
-      .eq("student_id", user.id);
+    // Atomic recompute via RPC. The previous read-sum-write path was
+    // last-write-wins under concurrent answers; the RPC sums + writes
+    // in a single statement so a race can't drop a freshly-awarded
+    // point.
+    const { data: scoreRow } = await sb.rpc("recompute_live_player_score", {
+      p_session_id: session.id,
+      p_student_id: user.id,
+    });
+    const newScore = typeof scoreRow === "number" ? scoreRow : 0;
 
     return NextResponse.json({ is_correct, awarded_points: awarded, score: newScore });
   } catch (e) {

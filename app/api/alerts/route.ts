@@ -44,9 +44,30 @@ export async function POST(req: Request) {
       .not("submitted_at", "is", null)
       .order("submitted_at", { ascending: false });
 
+    // Compute the teacher's authorized student set: students enrolled
+    // in any class this teacher teaches. Defense in depth — even if
+    // RLS over quiz_attempts surfaced a row from outside the teacher's
+    // scope, we won't write an alert referencing that student.
+    const { data: myClasses } = await sb
+      .from("class_teachers")
+      .select("class_id")
+      .eq("teacher_id", user.id);
+    const myClassIds = ((myClasses as Array<{ class_id: string }>) || []).map((c) => c.class_id);
+    const authorisedStudents = new Set<string>();
+    if (myClassIds.length > 0) {
+      const { data: members } = await sb
+        .from("class_members")
+        .select("student_id")
+        .in("class_id", myClassIds);
+      for (const m of ((members as Array<{ student_id: string }>) || [])) {
+        authorisedStudents.add(m.student_id);
+      }
+    }
+
     type A = { id: string; quiz_id: string; student_id: string; score: number; total: number; submitted_at: string };
     const byStudent = new Map<string, A[]>();
     (atts as A[] | null)?.forEach((a) => {
+      if (!authorisedStudents.has(a.student_id)) return;
       const arr = byStudent.get(a.student_id) || [];
       arr.push(a); byStudent.set(a.student_id, arr);
     });

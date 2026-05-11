@@ -117,13 +117,39 @@ export default function IdleSignOut() {
       }
     }
 
+    // Cross-tab sync: activity in tab A should reset the timer in
+    // tab B (and a sign-out in A should sign B out too). localStorage
+    // emits 'storage' events to all OTHER tabs sharing the origin.
+    function onStorage(e: StorageEvent) {
+      if (e.key !== LAST_ACTIVITY_KEY) return;
+      if (e.newValue === null) {
+        // Key was cleared — interpret as cross-tab sign-out.
+        if (!signedOut) signOut();
+        return;
+      }
+      const t = parseInt(e.newValue, 10);
+      if (!Number.isFinite(t)) return;
+      lastActivityRef.current = Math.max(lastActivityRef.current, t);
+      // Reset timers off the new wall-clock anchor without re-persisting
+      // (the other tab already did).
+      if (timerRef.current) window.clearTimeout(timerRef.current);
+      if (warningRef.current) window.clearTimeout(warningRef.current);
+      warningRef.current = window.setTimeout(() => {
+        // eslint-disable-next-line no-console
+        console.info("[idle] signing out in", Math.round(WARN_BEFORE_MS / 1000), "s");
+      }, IDLE_TIMEOUT_MS - WARN_BEFORE_MS);
+      timerRef.current = window.setTimeout(signOut, IDLE_TIMEOUT_MS);
+    }
+
     bump();
     for (const ev of ACTIVITY_EVENTS) window.addEventListener(ev, bump, { passive: true });
     document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("storage", onStorage);
 
     return () => {
       for (const ev of ACTIVITY_EVENTS) window.removeEventListener(ev, bump);
       document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("storage", onStorage);
       if (timerRef.current) window.clearTimeout(timerRef.current);
       if (warningRef.current) window.clearTimeout(warningRef.current);
     };

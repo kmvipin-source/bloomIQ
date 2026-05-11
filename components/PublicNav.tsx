@@ -42,11 +42,14 @@ export default function PublicNav() {
       const sb = supabaseBrowser();
       const { data: { user } } = await sb.auth.getUser();
       if (!user) { setState({ kind: "anon" }); return; }
+      // maybeSingle so a logged-in auth.users row with no profile row
+      // (orphan, race during sign-up) doesn't throw — the nav just
+      // defaults to the student dashboard.
       const { data: prof } = await sb
         .from("profiles")
         .select("role, platform_admin")
         .eq("id", user.id)
-        .single();
+        .maybeSingle();
       const dashboard =
         prof?.platform_admin ? "/admin/onboard-school" :
         prof?.role === "super_teacher" ? "/school" :
