@@ -262,10 +262,24 @@ function ComposerInner() {
 
   async function deleteFromLibrary(id: string) {
     if (!confirm("Permanently delete this question from your bank? It will also be removed from this test draft.")) return;
+    // Route through the service-role endpoint instead of hitting
+    // question_bank with the user-token client. The read path on this
+    // page already does so for the same reason — RLS on the edge has an
+    // intermittent race where a legitimate delete silently affects zero
+    // rows.
     const sb = supabaseBrowser();
-    const { error } = await sb.from("question_bank").delete().eq("id", id);
-    if (error) {
-      alert(`Could not delete: ${error.message}`);
+    const { data: { session } } = await sb.auth.getSession();
+    if (!session) {
+      alert("Not signed in.");
+      return;
+    }
+    const res = await fetch(`/api/teacher/question-bank/${id}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${session.access_token}` },
+    });
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({} as { error?: string }));
+      alert(`Could not delete: ${j.error || `HTTP ${res.status}`}`);
       return;
     }
     setBank((arr) => arr.filter((q) => q.id !== id));

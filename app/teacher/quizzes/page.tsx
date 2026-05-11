@@ -151,14 +151,22 @@ export default function QuizzesPage() {
           {items.map((q) => {
             const unassigned = q.assignment_count === 0;
             return (
-              <Link
+              // Card is a plain div — the title is the explicit Link so the
+              // Copy / Assign buttons are siblings of the navigating element
+              // rather than nested children of an <a> (invalid HTML, broke
+              // keyboard focus, hydration warnings).
+              <div
                 key={q.id}
-                href={`/teacher/quizzes/${q.id}`}
                 className="card card-hover flex items-center justify-between gap-3 flex-wrap"
               >
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-semibold text-slate-900">{q.name}</span>
+                    <Link
+                      href={`/teacher/quizzes/${q.id}`}
+                      className="font-semibold text-slate-900 hover:underline"
+                    >
+                      {q.name}
+                    </Link>
                     {unassigned ? (
                       <span className="text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wide bg-amber-100 text-amber-800 border border-amber-300">
                         Unassigned
@@ -176,7 +184,7 @@ export default function QuizzesPage() {
                 <div className="flex items-center gap-2 flex-wrap">
                   <code className="text-sm px-3 py-1.5 bg-slate-100 rounded font-mono">{q.code}</code>
                   <button type="button"
-                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); copyCode(q.code); }}
+                    onClick={() => copyCode(q.code)}
                     className="btn btn-ghost"
                     title="Copy code"
                     aria-label="Copy test code"
@@ -185,11 +193,7 @@ export default function QuizzesPage() {
                   </button>
                   {classes.length > 0 ? (
                     <button type="button"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        setAssigningQuizId(q.id);
-                      }}
+                      onClick={() => setAssigningQuizId(q.id)}
                       className={`btn ${unassigned ? "btn-primary" : "btn-secondary"} text-sm`}
                       title={
                         unassigned
@@ -201,7 +205,7 @@ export default function QuizzesPage() {
                     </button>
                   ) : null}
                 </div>
-              </Link>
+              </div>
             );
           })}
         </div>

@@ -338,6 +338,11 @@ export default function GeneratePage() {
         body.className = className;
         body.syllabus = syllabus;
       }
+      // Forward the chosen class so the API can tag generated questions
+      // with class_id for later filtering. Extra-key tolerant on /api/generate
+      // — the server ignores unknown fields until topic-suggestion wiring
+      // lands.
+      if (targetClassId) body.class_id = targetClassId;
 
       const res = await fetch("/api/generate", {
         method: "POST",
@@ -404,8 +409,8 @@ export default function GeneratePage() {
           </select>
           {targetClass && (
             <div className="mt-2 text-xs text-emerald-800 bg-emerald-50/60 border border-emerald-200 rounded-lg px-3 py-2">
-              <strong>Generating for {targetClass.name}{targetClass.section ? " · " + targetClass.section : ""}.</strong>{" "}
-              Future versions will surface topic suggestions from this class's recent tests; for now this is just a focus reminder.
+              <strong>Tagging questions to {targetClass.name}{targetClass.section ? " · " + targetClass.section : ""}.</strong>{" "}
+              They will surface first when you build a test for this class.
             </div>
           )}
         </div>
