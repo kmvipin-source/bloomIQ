@@ -37,20 +37,28 @@ export async function POST(req: Request) {
     }
 
     const admin = supabaseAdmin();
+    // Scope the invite lookup to pending rows only. Without this filter,
+    // a previously-declined invite row could coexist with a freshly-
+    // issued pending one, making maybeSingle() throw a multiple-rows
+    // error and silently fail the accept/decline. Also keeps the
+    // accept/decline write below targeted at the row the caller is
+    // responding to right now.
     const { data: invite } = await admin
       .from("class_teacher_invites")
       .select("class_id, email, role, subject")
       .eq("class_id", classId)
       .eq("email", myEmail)
+      .eq("status", "pending")
       .maybeSingle();
-    if (!invite) return NextResponse.json({ error: "No invite for this email and class." }, { status: 404 });
+    if (!invite) return NextResponse.json({ error: "No pending invite for this email and class." }, { status: 404 });
 
     if (action === "decline") {
       await admin
         .from("class_teacher_invites")
         .update({ status: "declined", responded_at: new Date().toISOString() })
         .eq("class_id", classId)
-        .eq("email", myEmail);
+        .eq("email", myEmail)
+        .eq("status", "pending");
       return NextResponse.json({ ok: true, status: "declined" });
     }
 
@@ -117,7 +125,8 @@ export async function POST(req: Request) {
       .from("class_teacher_invites")
       .update({ status: "accepted", responded_at: new Date().toISOString() })
       .eq("class_id", classId)
-      .eq("email", myEmail);
+      .eq("email", myEmail)
+      .eq("status", "pending");
 
     return NextResponse.json({ ok: true, status: "accepted", role: invite.role });
   } catch (e) {
