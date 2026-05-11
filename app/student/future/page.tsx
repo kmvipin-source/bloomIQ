@@ -251,34 +251,25 @@ function Reveal({ data, animate }: { data: Reveal; animate: boolean }) {
   useEffect(() => {
     (async () => {
       try {
+        // Route through the service-role endpoint instead of reading
+        // calibration_responses with the user-token client. The submit
+        // route writes those rows with the admin client, and on the
+        // very first focus of /student/future the user-token read raced
+        // RLS — the reveal landed with a generic fallback topic instead
+        // of the student's actual weak spot. The new endpoint runs the
+        // same selection logic with admin privileges.
         const sb = supabaseBrowser();
-        const { data: { user } } = await sb.auth.getUser();
-        if (!user) return;
+        const { data: { session } } = await sb.auth.getSession();
+        if (!session) return;
         const targetLevel = (data.weakest_bloom_levels && data.weakest_bloom_levels[0]) || null;
-        // Try the precise filter first (wrong + at the targeted Bloom level).
-        let { data: rows } = await sb
-          .from("calibration_responses")
-          .select("topic, bloom_level, is_correct")
-          .eq("user_id", user.id)
-          .eq("is_correct", false)
-          .not("topic", "is", null)
-          .limit(50);
-        let pool: { topic?: string | null; bloom_level?: string }[] = rows || [];
-        // Prefer rows at the targeted Bloom level when available.
-        if (targetLevel) {
-          const atLevel = pool.filter((r) => r.bloom_level === targetLevel);
-          if (atLevel.length > 0) pool = atLevel;
-        }
-        // Pick the most-common topic among the wrong answers.
-        const counts: Record<string, number> = {};
-        for (const r of pool) {
-          const tp = (r.topic || "").trim();
-          if (tp.length >= 3) counts[tp] = (counts[tp] || 0) + 1;
-        }
-        const ranked = Object.entries(counts).sort((a, b) => b[1] - a[1]);
-        if (ranked.length > 0) {
-          setWeakestTopic(ranked[0][0]);
-        }
+        const q = targetLevel ? `?level=${encodeURIComponent(targetLevel)}` : "";
+        const r = await fetch(`/api/student/calibration/weakest-topic${q}`, {
+          headers: { Authorization: `Bearer ${session.access_token}` },
+          cache: "no-store",
+        });
+        if (!r.ok) return;
+        const j = await r.json() as { ok?: boolean; topic?: string | null };
+        if (j?.topic) setWeakestTopic(j.topic);
       } catch { /* silent — topicForGoal fallback kicks in */ }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps

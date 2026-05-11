@@ -142,7 +142,12 @@ export async function GET(req: Request) {
           if (validityDays > 0) {
             const startedAt = new Date();
             const expiresAt = new Date(startedAt.getTime() + validityDays * 24 * 60 * 60 * 1000);
-            await admin.from("subscriptions").insert({
+            // Upsert keyed on user_id so two concurrent first-sign-in
+            // requests can't race past the existence check above and
+            // both insert a duplicate row. ignoreDuplicates keeps the
+            // existing row when one already landed between the
+            // existence read and this write.
+            await admin.from("subscriptions").upsert({
               user_id: user.id,
               plan_id: null,
               tier: "free",
@@ -150,7 +155,7 @@ export async function GET(req: Request) {
               is_trial: true,
               started_at: startedAt.toISOString(),
               expires_at: expiresAt.toISOString(),
-            });
+            }, { onConflict: "user_id", ignoreDuplicates: true });
           }
         } else {
           // Subscription row exists. Detect the expired-Free-trial state so
@@ -178,6 +183,27 @@ export async function GET(req: Request) {
       }
     }
 
+    // Indicate whether the independent student has completed BloomIQ
+    // calibration yet. Powers the first-run gate in the student layout
+    // — without a calibration row, /api/student/score/recompute is a
+    // no-op so the student would silently fall off the BloomIQ Score
+    // funnel. Only meaningful for individual students; school students
+    // skip calibration entirely.
+    let hasCalibration = false;
+    if (
+      prof &&
+      prof.role === "student" &&
+      !prof.is_school_student &&
+      prof.school_id == null
+    ) {
+      const { data: calRow } = await admin
+        .from("calibrations")
+        .select("user_id")
+        .eq("user_id", user.id)
+        .maybeSingle();
+      hasCalibration = !!calRow;
+    }
+
     const metaRole = String((user.user_metadata as { role?: string } | undefined)?.role || "");
     return NextResponse.json({
       ok: true,
@@ -191,6 +217,7 @@ export async function GET(req: Request) {
       exam_goal: (prof as { exam_goal?: string | null } | null)?.exam_goal ?? null,
       learner_profile: (prof as { learner_profile?: string | null } | null)?.learner_profile ?? "k12",
       is_free_expired: isFreeExpired,
+      has_calibration: hasCalibration,
     });
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : "Failed" }, { status: 500 });

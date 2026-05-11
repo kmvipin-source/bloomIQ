@@ -109,6 +109,19 @@ export default function CalibrationPage() {
         <ArrowLeft size={14} /> Back to dashboard
       </Link>
 
+      {/* Banner: this URL is the legacy "confidence calibration" view,
+          NOT the new BloomIQ Score calibration that drives the score badge
+          and Future You reveal. Point users at the right page so docs /
+          old links don't strand them on the wrong screen. */}
+      <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50/70 px-3 py-2 text-sm text-emerald-900 flex items-center justify-between gap-3 flex-wrap">
+        <span>
+          Looking for the <strong>BloomIQ Score</strong> calibration (the 7-minute Future-You reveal)?
+        </span>
+        <Link href="/student/bloom-score" className="font-semibold inline-flex items-center gap-1 hover:underline">
+          Go to BloomIQ Score →
+        </Link>
+      </div>
+
       <div className="flex items-start gap-3">
         <div className="rounded-xl bg-teal-100 text-teal-700 p-3 shrink-0">
           <Gauge size={22} />

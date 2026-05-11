@@ -28,14 +28,21 @@ type ScoreState = {
   delta: number;
 };
 
-let cached: ScoreState | null = null;
-let cachedAt: number = 0;
+// User-keyed cache. Previously this was a single module-scope cache
+// without a user id, so a sign-out → sign-in on the same tab briefly
+// showed the previous user's score (and predicted rank tooltip) until
+// the TTL expired. Keying by user id ensures the badge always reflects
+// the currently-signed-in identity, and an auth state change clears
+// stale entries.
+const cacheByUser = new Map<string, { state: ScoreState; at: number }>();
 const CACHE_MS = 60_000; // 1 minute — short enough that score moves feel live
 
-async function fetchScore(): Promise<ScoreState | null> {
+async function fetchScore(): Promise<{ userId: string; state: ScoreState } | null> {
   const sb = supabaseBrowser();
   const { data: { session } } = await sb.auth.getSession();
   if (!session) return null;
+  const userId = session.user?.id;
+  if (!userId) return null;
   const r = await fetch("/api/student/score", {
     headers: { Authorization: `Bearer ${session.access_token}` },
     cache: "no-store",
@@ -50,30 +57,45 @@ async function fetchScore(): Promise<ScoreState | null> {
   };
   if (!data?.ok) return null;
   return {
-    has_calibration: !!data.has_calibration,
-    score: typeof data.score === "number" ? data.score : null,
-    rank_label: data.rank_label || null,
-    delta: typeof data.trend?.delta === "number" ? data.trend.delta : 0,
+    userId,
+    state: {
+      has_calibration: !!data.has_calibration,
+      score: typeof data.score === "number" ? data.score : null,
+      rank_label: data.rank_label || null,
+      delta: typeof data.trend?.delta === "number" ? data.trend.delta : 0,
+    },
   };
 }
 
 export default function BloomIQScoreBadge() {
-  const [state, setState] = useState<ScoreState | null>(cached);
-  const [loading, setLoading] = useState<boolean>(!cached);
+  const [state, setState] = useState<ScoreState | null>(null);
+  const [loading, setLoading] = useState<boolean>(true);
 
   useEffect(() => {
     let live = true;
+    let activeUserId: string | null = null;
     async function load(force = false) {
-      if (!force && cached && Date.now() - cachedAt < CACHE_MS) {
-        if (live) setState(cached);
+      const sb = supabaseBrowser();
+      const { data: { session } } = await sb.auth.getSession();
+      const userId = session?.user?.id ?? null;
+      activeUserId = userId;
+      if (!userId) {
+        if (live) { setState(null); setLoading(false); }
+        return;
+      }
+      const hit = cacheByUser.get(userId);
+      if (!force && hit && Date.now() - hit.at < CACHE_MS) {
+        if (live) { setState(hit.state); setLoading(false); }
         return;
       }
       const next = await fetchScore();
       if (!live) return;
-      if (next) {
-        cached = next;
-        cachedAt = Date.now();
-        setState(next);
+      // Discard the response if the active user changed mid-flight
+      // (sign-in/out raced the fetch). Without this guard the badge
+      // could surface a score belonging to whoever just signed out.
+      if (next && next.userId === activeUserId) {
+        cacheByUser.set(next.userId, { state: next.state, at: Date.now() });
+        setState(next.state);
       }
       setLoading(false);
     }
@@ -81,9 +103,22 @@ export default function BloomIQScoreBadge() {
 
     function onFocus() { void load(true); }
     window.addEventListener("focus", onFocus);
+
+    // Clear cache + state on sign-out so the next session starts clean.
+    const sb = supabaseBrowser();
+    const { data: authSub } = sb.auth.onAuthStateChange((event) => {
+      if (event === "SIGNED_OUT") {
+        cacheByUser.clear();
+        if (live) { setState(null); setLoading(true); }
+      } else if (event === "SIGNED_IN" || event === "TOKEN_REFRESHED") {
+        void load(true);
+      }
+    });
+
     return () => {
       live = false;
       window.removeEventListener("focus", onFocus);
+      authSub?.subscription?.unsubscribe?.();
     };
   }, []);
 

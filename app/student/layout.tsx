@@ -15,7 +15,8 @@ export default function StudentLayout({ children }: { children: React.ReactNode 
   const taking = pathname.startsWith("/student/quiz/");
 
   useEffect(() => {
-    (async () => {
+    let cancelled = false;
+    async function check() {
       try {
         const sb = supabaseBrowser();
         const { data: { session } } = await sb.auth.getSession();
@@ -38,16 +39,40 @@ export default function StudentLayout({ children }: { children: React.ReactNode 
           }
           if (r.ok) {
             const j = await r.json();
+            if (cancelled) return;
             role = String(j.role || "");
             platformAdmin = !!j.platform_admin;
             // Hard gate: if this student's auto-granted Free plan has expired,
             // every /student/* route except /student/expired itself is blocked.
-            if (j.is_free_expired === true && !pathname.startsWith("/student/expired")) {
+            // Exact-match the expired path so any future sub-routes
+            // under /student/expired/* don't accidentally satisfy the
+            // "already at the gate" check.
+            if (j.is_free_expired === true && pathname !== "/student/expired") {
               router.replace("/student/expired");
+              return;
+            }
+            // First-run BloomIQ calibration gate. Individual students
+            // without a calibration row are routed to the dedicated
+            // /student/bloom-score reveal page so the score system has
+            // an anchor before they take quizzes. Skip the gate on the
+            // calibration / expired / future surfaces themselves and on
+            // /signup-driven landings already heading there.
+            if (
+              role === "student" &&
+              j.is_school_student === false &&
+              j.is_free_expired !== true &&
+              j.has_calibration === false &&
+              !pathname.startsWith("/student/bloom-score") &&
+              !pathname.startsWith("/student/calibration") &&
+              !pathname.startsWith("/student/future") &&
+              !pathname.startsWith("/student/expired")
+            ) {
+              router.replace("/student/bloom-score");
               return;
             }
           }
         } catch { /* fall through */ }
+        if (cancelled) return;
         if (!role) {
           const { data: { user } } = await sb.auth.getUser();
           role = String((user?.user_metadata as { role?: string } | undefined)?.role || "");
@@ -64,11 +89,22 @@ export default function StudentLayout({ children }: { children: React.ReactNode 
       } catch (e) {
         // eslint-disable-next-line no-console
         console.error("[student layout] init failed", e);
-        setOk(true);
+        if (!cancelled) setOk(true);
       }
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    }
+    check();
+    // Re-check on tab focus so a trial that expires mid-session — or a
+    // session that gets superseded by sign-in on another device — is
+    // caught without requiring a full reload.
+    function onFocus() { check(); }
+    window.addEventListener("focus", onFocus);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("focus", onFocus);
+    };
+    // Re-fire on pathname change so route transitions re-evaluate the
+    // trial-expiry + calibration gate.
+  }, [pathname, router]);
 
   if (!ok) {
     return <div className="min-h-screen grid place-items-center"><div className="spinner" /></div>;
