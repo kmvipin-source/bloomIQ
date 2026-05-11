@@ -56,12 +56,16 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Razorpay keys not configured." }, { status: 503 });
     }
 
-    // 1) HMAC verification.
+    // 1) HMAC verification. Constant-time compare so the secret can't
+    // be leaked through timing analysis.
     const expected = crypto
       .createHmac("sha256", keySecret)
       .update(`${orderId}|${paymentId}`)
       .digest("hex");
-    if (expected !== signature) {
+    if (
+      expected.length !== signature.length ||
+      !crypto.timingSafeEqual(Buffer.from(expected, "hex"), Buffer.from(signature, "hex"))
+    ) {
       return NextResponse.json({ error: "Signature mismatch — payment not verified." }, { status: 400 });
     }
 
@@ -99,17 +103,47 @@ export async function POST(req: Request) {
     //    or legacy `plan` key. We always re-load from the DB so we use the
     //    correct tier + period_days as enforcement.
     const admin = supabaseAdmin();
+
+    // Idempotency: if this payment_id has already produced a
+    // subscriptions row, return success without re-applying. Stops
+    // replay / double-click / browser-retry from extending the term
+    // twice. The unique partial index on razorpay_payment_id is the
+    // database-level enforcement; this check makes the response
+    // deterministic instead of bubbling a 23505 to the user.
+    const { data: alreadyApplied } = await admin
+      .from("subscriptions")
+      .select("id, tier, plan_id, expires_at, plan:plans!subscriptions_plan_id_fkey(slug)")
+      .eq("razorpay_payment_id", paymentId)
+      .maybeSingle();
+    if (alreadyApplied) {
+      const applied = alreadyApplied as unknown as {
+        tier: string;
+        plan_id: string | null;
+        expires_at: string | null;
+        plan: { slug: string | null } | null;
+      };
+      return NextResponse.json({
+        ok: true,
+        already_applied: true,
+        tier: applied.tier,
+        plan_id: applied.plan_id,
+        plan_slug: applied.plan?.slug ?? null,
+        expires_at: applied.expires_at,
+      });
+    }
+
     let planRow: {
       id: string;
       slug: string;
       tier: string;
       period_days: number;
+      price_paise: number;
     } | null = null;
 
     if (order.notes?.plan_id) {
       const { data } = await admin
         .from("plans")
-        .select("id, slug, tier, period_days")
+        .select("id, slug, tier, period_days, price_paise")
         .eq("id", order.notes.plan_id)
         .maybeSingle();
       if (data) planRow = data;
@@ -118,11 +152,9 @@ export async function POST(req: Request) {
       const slug = order.notes?.plan_slug
         || (order.notes?.plan ? (LEGACY_SLUG_MAP[order.notes.plan] ?? order.notes.plan) : "");
       if (slug) {
-        // Note: post-migration-30 the plans table has no 'status' column.
-        // Slug is unique, so a plain lookup by slug returns the one row.
         const { data } = await admin
           .from("plans")
-          .select("id, slug, tier, period_days")
+          .select("id, slug, tier, period_days, price_paise")
           .eq("slug", slug)
           .maybeSingle();
         if (data) planRow = data;
@@ -130,6 +162,23 @@ export async function POST(req: Request) {
     }
     if (!planRow) {
       return NextResponse.json({ error: "Could not resolve a plan from the order notes." }, { status: 400 });
+    }
+
+    // Price validation: assert Razorpay's order.amount matches the
+    // plan's current price_paise. Without this assertion a tampered
+    // order (or a stale order from before an admin-side price change)
+    // could lock in a wrong price. The plan row is the canonical
+    // source of truth post-checkout.
+    if (
+      typeof order.amount === "number" &&
+      order.amount > 0 &&
+      planRow.price_paise > 0 &&
+      order.amount !== planRow.price_paise
+    ) {
+      return NextResponse.json(
+        { error: "Order amount does not match the plan price. Refresh the page and try again." },
+        { status: 409 }
+      );
     }
 
     // Map our plan tier ('premium', 'premium_plus', etc.) to the legacy
@@ -191,6 +240,7 @@ export async function POST(req: Request) {
           status: "active",
           started_at: new Date().toISOString(),
           expires_at: expiresAt,
+          razorpay_payment_id: paymentId,
           school_id: null,
         })
         .eq("id", existing.id);
@@ -207,6 +257,7 @@ export async function POST(req: Request) {
           status: "active",
           started_at: new Date().toISOString(),
           expires_at: expiresAt,
+          razorpay_payment_id: paymentId,
         });
       if (insErr) return NextResponse.json({ error: insErr.message }, { status: 500 });
     }

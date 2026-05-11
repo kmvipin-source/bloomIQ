@@ -64,7 +64,15 @@ const TABS: Record<SchoolTab, TabMeta> = {
 function readNextParam(): string | null {
   if (typeof window === "undefined") return null;
   try {
-    return new URLSearchParams(window.location.search).get("next");
+    const raw = new URLSearchParams(window.location.search).get("next");
+    // Reject absolute URLs and protocol-relative paths so a malicious
+    // ?next=https://evil.com or ?next=//evil.com can't redirect a
+    // freshly authenticated user off-site after the just-minted session
+    // gets attached. Only allow same-origin, relative paths.
+    if (!raw) return null;
+    if (!raw.startsWith("/")) return null;
+    if (raw.startsWith("//")) return null;
+    return raw;
   } catch {
     return null;
   }

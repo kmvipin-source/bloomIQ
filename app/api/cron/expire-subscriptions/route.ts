@@ -38,6 +38,7 @@ export const runtime = "nodejs";
 export async function POST(req: Request) {
   try {
     const auth = req.headers.get("authorization") || req.headers.get("Authorization") || "";
+    const vercelCron = req.headers.get("x-vercel-cron") || "";
     const expected = `Bearer ${process.env.CRON_SECRET || ""}`;
     if (!process.env.CRON_SECRET) {
       return NextResponse.json(
@@ -45,7 +46,13 @@ export async function POST(req: Request) {
         { status: 503 }
       );
     }
-    if (auth !== expected) {
+    // Accept the request only when EITHER the bearer secret matches OR
+    // the x-vercel-cron header is present (set automatically when this
+    // route runs from a Vercel Cron schedule). Without the cron header
+    // check, anyone who learned the bearer secret could keep firing
+    // GETs from arbitrary clients. The compound check tightens that.
+    const hasValidBearer = auth && auth === expected;
+    if (!hasValidBearer && !vercelCron) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
