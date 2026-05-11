@@ -1,13 +1,9 @@
 "use client";
 
-import * as Sentry from "@sentry/nextjs";
-import { useEffect } from "react";
-
 /**
  * Top-level React error boundary. Triggered when a server-component render,
  * a route layout, or any unhandled exception bubbles up past every page-level
- * boundary. We forward the error to Sentry and show the user a brief recovery
- * affordance instead of a white screen.
+ * boundary. Shows a brief recovery affordance instead of a white screen.
  *
  * Per Next.js App Router contract this MUST live at app/global-error.tsx,
  * MUST render <html><body>, and MUST be a client component.
@@ -19,10 +15,6 @@ export default function GlobalError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
-  useEffect(() => {
-    Sentry.captureException(error);
-  }, [error]);
-
   return (
     <html>
       <body style={{ margin: 0, fontFamily: "system-ui, sans-serif", background: "#f8fafc" }}>
@@ -40,8 +32,7 @@ export default function GlobalError({
             <div style={{ fontSize: 48, marginBottom: 12 }}>⚠️</div>
             <h1 style={{ margin: 0, fontSize: 22, color: "#0f172a" }}>Something went wrong</h1>
             <p style={{ margin: "12px 0 0", fontSize: 14, color: "#475569" }}>
-              We've logged this error and our team will investigate. You can try again or
-              head back to the homepage.
+              An unexpected error occurred. You can try again or head back to the homepage.
             </p>
             {error.digest && (
               <p style={{ margin: "8px 0 0", fontSize: 11, color: "#94a3b8", fontFamily: "monospace" }}>
