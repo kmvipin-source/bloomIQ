@@ -80,7 +80,7 @@ export async function POST(req: Request) {
       time_taken_seconds: number | null;
     }> = [];
 
-    body.responses.forEach((r, i) => {
+    body.responses.forEach((r) => {
       const q = r.question;
       if (!q || typeof q.stem !== "string" || !Array.isArray(q.options) || q.options.length !== 4) return;
       if (typeof q.correct_index !== "number" || q.correct_index < 0 || q.correct_index > 3) return;
@@ -102,10 +102,14 @@ export async function POST(req: Request) {
         time_taken_seconds: taken ?? undefined,
       });
 
+      // Use the running length of accepted rows as the question_index.
+      // Using the loop index of body.responses instead would leave gaps
+      // when an entry fails validation above, which breaks any analytics
+      // keyed on (session_id, question_index) needing a dense sequence.
       responseRows.push({
         user_id: user.id,
         session_id: body.session_id!,
-        question_index: i,
+        question_index: responseRows.length,
         question_stem: q.stem,
         options: q.options as string[],
         correct_index: q.correct_index,

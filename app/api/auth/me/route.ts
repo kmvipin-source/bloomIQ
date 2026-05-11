@@ -69,7 +69,7 @@ export async function GET(req: Request) {
     if (prof?.role === "super_teacher" && prof.school_id) {
       const { data: sub } = await admin
         .from("subscriptions")
-        .select("id, plan_id, activation_pending")
+        .select("id, plan_id, activation_pending, started_at")
         .eq("school_id", prof.school_id)
         .maybeSingle();
       if (sub?.activation_pending && sub.id) {
@@ -82,15 +82,25 @@ export async function GET(req: Request) {
             .maybeSingle();
           if (planRow?.period_days) periodDays = planRow.period_days;
         }
+        // If the operator deliberately set started_at to a future date
+        // (academic-year deal: onboard early, term starts 1 Aug), don't
+        // overwrite that anchor — clear only the pending flag and let
+        // the explicit term boundaries stand. Otherwise (no anchor or
+        // past anchor), this IS the moment the human showed up, so
+        // anchor here.
         const now = new Date();
-        const expiresAt = new Date(now.getTime() + periodDays * 24 * 60 * 60 * 1000);
+        const existingStartedAt = sub.started_at ? new Date(sub.started_at) : null;
+        const useExistingAnchor = existingStartedAt && existingStartedAt.getTime() > now.getTime();
+        const anchor = useExistingAnchor ? existingStartedAt! : now;
+        const expiresAt = new Date(anchor.getTime() + periodDays * 24 * 60 * 60 * 1000);
+        const patch: Record<string, unknown> = {
+          activation_pending: false,
+          expires_at: expiresAt.toISOString(),
+        };
+        if (!useExistingAnchor) patch.started_at = anchor.toISOString();
         await admin
           .from("subscriptions")
-          .update({
-            started_at: now.toISOString(),
-            expires_at: expiresAt.toISOString(),
-            activation_pending: false,
-          })
+          .update(patch)
           .eq("id", sub.id);
       }
     }

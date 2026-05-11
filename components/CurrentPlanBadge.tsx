@@ -94,7 +94,7 @@ export default function CurrentPlanBadge() {
         if (prof.role === "student" && !inSchool) {
           const { data: sub } = await sb
             .from("subscriptions")
-            .select("plan_id, status, expires_at, tier")
+            .select("plan_id, status, expires_at, tier, grace_period_days")
             .eq("user_id", user.id)
             .maybeSingle();
           let label = "Free";
@@ -103,9 +103,17 @@ export default function CurrentPlanBadge() {
             const { data: plan } = await sb.from("plans").select("label, tier").eq("id", sub.plan_id).maybeSingle();
             if (plan) { label = plan.label; tier = plan.tier; }
             else if (sub.tier) { label = prettyTier(sub.tier); tier = sub.tier; }
-            // Treat expired / inactive as free.
+            // Treat expired / inactive as free — but honour the grace
+            // period so the badge stays in sync with useFeatureAccess.
+            // Without this, a student inside grace would see "Plan: Free"
+            // on the badge while their pro features were still on.
             if (sub.status && sub.status !== "active") { label = "Free"; tier = "free"; }
-            if (sub.expires_at && new Date(sub.expires_at) < new Date()) { label = "Free"; tier = "free"; }
+            if (sub.expires_at) {
+              const expiresMs = new Date(sub.expires_at).getTime();
+              const graceDays = (sub as { grace_period_days?: number | null }).grace_period_days ?? 14;
+              const hardCutoffMs = expiresMs + graceDays * 24 * 60 * 60 * 1000;
+              if (Date.now() > hardCutoffMs) { label = "Free"; tier = "free"; }
+            }
           }
           setInfo({ label, tier, source: "self" });
         }
