@@ -84,7 +84,11 @@ export default function StaffLoginPage() {
         });
       }
     } catch { /* ignore */ }
-    router.push("/admin/onboard-school");
+    // Canonical post-login destination for platform admins is the
+    // dashboard. The previous redirect to /admin/onboard-school
+    // bypassed the rollup view and forced operators through the
+    // onboarding form even when they were just signing in.
+    router.push("/admin/dashboard");
   }
 
   async function submit(e: React.FormEvent) {
