@@ -56,6 +56,12 @@ export type FeatureAccessState = {
   // How many days (positive int) remain in the grace window. 0 when not
   // in grace. Used for banner messaging.
   graceRemainingDays: number;
+  // D17 — Days remaining until expires_at (calendar-day ceiling). Negative
+  // values mean already past expiry. Computed once here so RenewBanner /
+  // sidebar / dashboard tiles agree on the number, instead of each one
+  // calling Date.now() at a slightly different tick. null when there is
+  // no expiry to count down to (free / anon).
+  daysLeft: number | null;
 };
 
 const EMPTY: FeatureAccessState = {
@@ -69,6 +75,7 @@ const EMPTY: FeatureAccessState = {
   isExpired: false,
   isInGrace: false,
   graceRemainingDays: 0,
+  daysLeft: null,
 };
 
 /**
@@ -139,14 +146,22 @@ export function useFeatureAccess(): FeatureAccessState {
       let expiresAtRaw: string | null = null;
       let graceDays: number = 14;
       let source: "personal" | "school" | "none" = "none";
+      // Captured from subscriptions.status. After migration 75 this can be
+      // 'active' / 'past_due' / 'suspended'. 'suspended' should lock the
+      // school out the same way an expired sub does — no feature access,
+      // no data loss.
+      let subStatus: string | null = null;
 
       if (prof?.is_school_student && prof.school_id) {
         // School student — read the school's active subscription.
+        // After migration 75, status can be 'active' / 'past_due' /
+        // 'suspended'. We want the school's row regardless of status so
+        // we can render the "suspended" empty state instead of pretending
+        // they're Free. Removed the .eq("status", "active") filter.
         const { data: schoolSub } = await sb
           .from("subscriptions")
           .select("plan_id, status, expires_at, grace_period_days")
           .eq("school_id", prof.school_id)
-          .eq("status", "active")
           .maybeSingle();
         if (schoolSub?.plan_id) {
           const { data: plan } = await sb
@@ -159,6 +174,7 @@ export function useFeatureAccess(): FeatureAccessState {
             source = "school";
             expiresAtRaw = (schoolSub as { expires_at?: string | null }).expires_at || null;
             graceDays = (schoolSub as { grace_period_days?: number | null }).grace_period_days ?? 14;
+            subStatus = (schoolSub as { status?: string | null }).status || null;
           }
         }
       }
@@ -183,6 +199,7 @@ export function useFeatureAccess(): FeatureAccessState {
             source = "personal";
             expiresAtRaw = (sub as { expires_at?: string | null }).expires_at || null;
             graceDays = (sub as { grace_period_days?: number | null }).grace_period_days ?? 14;
+            subStatus = (sub as { status?: string | null }).status || null;
           }
         }
       }
@@ -200,6 +217,7 @@ export function useFeatureAccess(): FeatureAccessState {
           isExpired: false,
           isInGrace: false,
           graceRemainingDays: 0,
+          daysLeft: null,
         });
         return;
       }
@@ -222,11 +240,24 @@ export function useFeatureAccess(): FeatureAccessState {
       const graceMs = (graceDays || 0) * DAY;
       const inGracePast = expiresAtMs !== null && expiresAtMs < now;
       const beyondGrace = expiresAtMs !== null && expiresAtMs + graceMs < now;
-      const isExpired = beyondGrace;
-      const isInGrace = inGracePast && !beyondGrace;
+      // A suspended subscription is treated exactly like an expired one
+      // for feature-gating purposes: locked tiles, RenewBanner copy as
+      // appropriate, no AI-powered feature access. Data on the server is
+      // untouched — only the door is closed.
+      const isSuspended = subStatus === "suspended" || subStatus === "past_due";
+      const isExpired = beyondGrace || isSuspended;
+      const isInGrace = inGracePast && !beyondGrace && !isSuspended;
       const graceRemainingDays = isInGrace
         ? Math.max(0, Math.ceil((expiresAtMs! + graceMs - now) / DAY))
         : 0;
+      // D17 — calendar-day ceiling, so a sub expiring in 14h20m reads as 1
+      // (the user still has a day) rather than 0. Negative when past
+      // expires_at, which RenewBanner uses for the "expired N days ago"
+      // copy. Single source of truth: every consumer reads this instead
+      // of recomputing from expiresAt + Date.now() independently.
+      const daysLeft: number | null = expiresAtMs !== null
+        ? Math.ceil((expiresAtMs - now) / DAY)
+        : null;
 
       const tier = (planRow.tier as PlanTier | undefined) || "free";
       const features: string[] = Array.isArray(planRow.features)
@@ -245,6 +276,7 @@ export function useFeatureAccess(): FeatureAccessState {
         isExpired,
         isInGrace,
         graceRemainingDays,
+        daysLeft,
       });
     })();
   }, []);

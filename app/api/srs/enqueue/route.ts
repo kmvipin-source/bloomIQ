@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getBearer, supabaseServer } from "@/lib/supabase/server";
+import { requireFeature } from "@/lib/featureAccess.server";
 
 export const runtime = "nodejs";
 
@@ -23,6 +24,19 @@ export async function POST(req: Request) {
     const sb = supabaseServer(token);
     const { data: { user } } = await sb.auth.getUser();
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+    // Memory Tune-Up is REVIEW-only on Free. Adding new cards requires Premium.
+    const featureGate = await requireFeature(user.id, "memory_srs");
+    if (!featureGate.allowed) {
+      return NextResponse.json(
+        {
+          error: "Adding new cards to Memory Tune-Up is a Premium feature. Reviews of existing cards stay free.",
+          code: "feature_locked",
+          required_tier: (featureGate as unknown as { requiredTier: string | null }).requiredTier,
+        },
+        { status: 403 },
+      );
+    }
 
     const body = await req.json().catch(() => ({}));
     let questionIds: string[] = [];

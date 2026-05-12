@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { groqJSON } from "@/lib/groq";
 import { getBearer, supabaseServer } from "@/lib/supabase/server";
+import { checkLifetimeUse, recordLifetimeUse } from "@/lib/freeQuota";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -79,6 +80,14 @@ export async function POST(req: Request) {
     const sb = supabaseServer(token);
     const { data: { user } } = await sb.auth.getUser();
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+    const gate = await checkLifetimeUse(user.id, "trap_detector");
+    if (!gate.allowed) {
+      return NextResponse.json(
+        { error: gate.reason, code: "free_lifetime_used" },
+        { status: 402 }
+      );
+    }
 
     const body = await req.json().catch(() => ({}));
     const attempt_id: string = String(body.attempt_id || "");
@@ -164,6 +173,7 @@ export async function POST(req: Request) {
       };
     });
     await sb.from("distractor_traps").insert(rows);
+    await recordLifetimeUse(user.id, "trap_detector");
 
     return NextResponse.json({
       ok: true,

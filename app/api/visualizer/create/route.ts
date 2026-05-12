@@ -3,7 +3,7 @@ import { groqJSON } from "@/lib/groq";
 import { geminiJSON, geminiText, isGeminiConfigured } from "@/lib/gemini";
 import { fixFrameLayout, type LayoutElement } from "@/lib/visualizerLayout";
 import { getBearer, supabaseServer } from "@/lib/supabase/server";
-import { requireFeature } from "@/lib/featureAccess.server";
+import { checkLifetimeUse, recordLifetimeUse } from "@/lib/freeQuota";
 
 export const runtime = "nodejs";
 export const maxDuration = 90;
@@ -410,16 +410,12 @@ export async function POST(req: Request) {
     const { data: { user } } = await sb.auth.getUser();
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-    // Server-side feature gate. Concept Visualizer is gated to top-tier
-    // plans (Premium Plus / School Plus). The client-side dashboard tile
-    // already locks-and-paywalls non-eligible users, but a determined user
-    // could POST to this endpoint directly — so we enforce on the server
-    // too. Returns a structured 403 the UI can show as an upgrade CTA.
-    const gate = await requireFeature(user.id, "concept_visualizer");
+    // Free-tier lifetime-once gate (admin-configurable). Paid users uncapped.
+    const gate = await checkLifetimeUse(user.id, "visualizer");
     if (!gate.allowed) {
       return NextResponse.json(
-        { error: (gate as unknown as { reason: string }).reason, code: "feature_locked", required_tier: (gate as unknown as { requiredTier: string | null }).requiredTier },
-        { status: 403 },
+        { error: gate.reason, code: "free_lifetime_used" },
+        { status: 402 },
       );
     }
 
@@ -554,6 +550,8 @@ Stay under 350 words. No JSON. No backticks.`;
       .select("id, created_at")
       .single();
     if (insErr) return NextResponse.json({ error: insErr.message }, { status: 500 });
+
+    await recordLifetimeUse(user.id, "visualizer");
 
     return NextResponse.json({
       ok: true,

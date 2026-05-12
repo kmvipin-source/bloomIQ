@@ -535,9 +535,12 @@ function PricingInner() {
               <div className="text-3xl font-bold mt-2">₹0<span className="text-base font-normal muted"> /mo</span></div>
               <p className="muted text-xs mt-1">Try BloomIQ. No card needed.</p>
               <ul className="mt-4 space-y-1.5 text-sm flex-1">
-                <li className="flex items-start gap-2"><Check size={14} className="text-emerald-600 mt-0.5 shrink-0" /> 3 practice tests per day</li>
-                <li className="flex items-start gap-2"><Check size={14} className="text-emerald-600 mt-0.5 shrink-0" /> Basic Bloom report</li>
-                <li className="flex items-start gap-2"><Check size={14} className="text-emerald-600 mt-0.5 shrink-0" /> Single device only</li>
+                <li className="flex items-start gap-2"><Check size={14} className="text-emerald-600 mt-0.5 shrink-0" /> 3 quizzes a day + 1 Daily Drill</li>
+                <li className="flex items-start gap-2"><Check size={14} className="text-emerald-600 mt-0.5 shrink-0" /> BloomIQ Score &amp; basic Bloom report</li>
+                <li className="flex items-start gap-2"><Check size={14} className="text-emerald-600 mt-0.5 shrink-0" /> AI Tutor (5 turns/day) + Performance Coach (5/day)</li>
+                <li className="flex items-start gap-2"><Check size={14} className="text-emerald-600 mt-0.5 shrink-0" /> 1 Speed-Accuracy session &amp; 1 Teach-Back / day</li>
+                <li className="flex items-start gap-2"><Check size={14} className="text-emerald-600 mt-0.5 shrink-0" /> One free taste of X-Ray, Trap Detector, Rank Predictor, Visualizer, Voice Teacher &amp; Knowledge Graph</li>
+                <li className="flex items-start gap-2"><Check size={14} className="text-emerald-600 mt-0.5 shrink-0" /> Memory Tune-Up: review your existing cards</li>
               </ul>
               {!me ? (
                 <Link href="/signup?role=student" className="btn btn-secondary w-full mt-5 inline-flex items-center justify-center gap-2">

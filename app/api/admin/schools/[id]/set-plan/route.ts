@@ -105,6 +105,57 @@ export async function POST(req: Request, ctx: RouteContext) {
         ? Math.round(body.grace_period_days)
         : null;
 
+    // D11 — School-issued purchase-order reference for this cycle.
+    // Free-text, capped at 120 chars so somebody can't paste a novel.
+    const poNumber: string | null =
+      typeof body.po_number === "string" && body.po_number.trim()
+        ? body.po_number.trim().slice(0, 120)
+        : null;
+
+    // D15 — Multi-year contract tracking. 1..10 keeps obviously-bad inputs
+    // out; the DB also has a CHECK constraint with the same bounds.
+    const contractYears: number | null =
+      typeof body.contract_years === "number" && body.contract_years >= 1 && body.contract_years <= 10
+        ? Math.round(body.contract_years)
+        : null;
+
+    // D18 — Structured override reason category. The free-text reason
+    // continues to live in override_reason; this column lets finance group
+    // deals consistently across schools.
+    const ALLOWED_OVERRIDE_REASON_TYPES = [
+      "multi_year_deal",
+      "volume_discount",
+      "partner_discount",
+      "pilot_program",
+      "goodwill",
+      "corrective",
+      "other",
+    ] as const;
+    const overrideReasonType: string | null =
+      typeof body.override_reason_type === "string"
+        && (ALLOWED_OVERRIDE_REASON_TYPES as readonly string[]).includes(body.override_reason_type)
+        ? body.override_reason_type
+        : null;
+
+    // D12 — Schools row updates (state + GSTIN). These live on schools,
+    // not subscriptions, so they get a separate write below. Accept null
+    // explicitly so admin can clear a wrong value.
+    const schoolStateProvided = Object.prototype.hasOwnProperty.call(body, "school_state");
+    const schoolState: string | null =
+      schoolStateProvided
+        ? (typeof body.school_state === "string" && body.school_state.trim()
+            ? body.school_state.trim().slice(0, 80)
+            : null)
+        : null;
+    const schoolGstinProvided = Object.prototype.hasOwnProperty.call(body, "school_gstin");
+    const schoolGstin: string | null =
+      schoolGstinProvided
+        ? (typeof body.school_gstin === "string" && body.school_gstin.trim()
+            // Uppercase + strip whitespace — GSTINs are uppercase by spec.
+            ? body.school_gstin.trim().toUpperCase().slice(0, 15)
+            : null)
+        : null;
+
     const admin = supabaseAdmin();
 
     // Verify the school exists; reject 404 cleanly rather than letting the
@@ -119,11 +170,11 @@ export async function POST(req: Request, ctx: RouteContext) {
     // If a plan was supplied, look it up to derive expires_at and the
     // legacy `tier` text the rest of the app understands. Post-migration-30
     // there's no status column — every plan in the table is sellable.
-    let plan: { id: string; tier: string; period_days: number } | null = null;
+    let plan: { id: string; tier: string; period_days: number; grace_period_days: number | null } | null = null;
     if (planId) {
       const { data: p, error: pErr } = await admin
         .from("plans")
-        .select("id, tier, period_days")
+        .select("id, tier, period_days, grace_period_days")
         .eq("id", planId)
         .maybeSingle();
       if (pErr) return NextResponse.json({ error: pErr.message }, { status: 500 });
@@ -209,10 +260,32 @@ export async function POST(req: Request, ctx: RouteContext) {
         // Case C — preserve cycle anchors.
         writeStartedAt = existing!.started_at ?? new Date().toISOString();
         writeExpiresAt = existing!.expires_at!;
+      } else if (isRenewal && existing?.expires_at && !startedAtIso) {
+        // Case A — renewal cycle. Vipin asked for early-renewal to NOT
+        // throw away the school's unused days from the closing cycle.
+        // Math: new term anchors on max(today, old expires_at), then adds
+        // a full period_days. So a school whose old cycle still has 60
+        // days left, paying for a renewal today, gets:
+        //
+        //   anchor = today + 60        (old expires_at, since it's future)
+        //   new_expires_at = anchor + 365 = today + 425
+        //
+        // Effectively those 60 days are appended to the end of the new
+        // cycle. The new started_at is "today" — that's the date the
+        // renewal action happened (used for invoicing, audit, and
+        // distinguishes "year N" from "year N+1" on the dashboard).
+        const oldExpiresMs = Date.parse(existing.expires_at);
+        const nowMs = Date.now();
+        const anchorMs = Number.isFinite(oldExpiresMs) && oldExpiresMs > nowMs
+          ? oldExpiresMs
+          : nowMs;
+        writeStartedAt = new Date(nowMs).toISOString();
+        writeExpiresAt = new Date(anchorMs + plan.period_days * 24 * 60 * 60 * 1000).toISOString();
       } else {
-        // Cases A + B — fresh period. Honour explicit started_at when given,
-        // otherwise anchor to now(). activation_pending uses now() as a
-        // placeholder; first sign-in will overwrite it.
+        // Cases A (no prior expiry) + B — fresh period. Honour explicit
+        // started_at when given, otherwise anchor to now().
+        // activation_pending uses now() as a placeholder; first sign-in
+        // will overwrite it.
         const anchor = startedAtIso ? Date.parse(startedAtIso) : Date.now();
         writeStartedAt = new Date(anchor).toISOString();
         writeExpiresAt = new Date(anchor + plan.period_days * 24 * 60 * 60 * 1000).toISOString();
@@ -243,8 +316,27 @@ export async function POST(req: Request, ctx: RouteContext) {
     if (body.clear_contracted_students === true) overrideUpdate.contracted_students = null;
     // Modern-expiry knobs flow through the same overrideUpdate so they
     // get written atomically with the plan change.
-    if (gracePeriodDays != null) overrideUpdate.grace_period_days = gracePeriodDays;
+    // D10: per-call > per-plan > global default (14). The DB column has a
+    // default of 14; we set it explicitly when caller passes a value OR when
+    // the bound plan declares one. This means changing a plan's default
+    // propagates to NEW subscriptions on that plan, but doesn't retroactively
+    // override existing rows that were explicitly set.
+    if (gracePeriodDays != null) {
+      overrideUpdate.grace_period_days = gracePeriodDays;
+    } else if (plan && typeof plan.grace_period_days === "number") {
+      overrideUpdate.grace_period_days = plan.grace_period_days;
+    }
     overrideUpdate.activation_pending = activationPending;
+
+    // D11/D15/D18 — write the new finance fields only when the caller
+    // actually supplied them, so a routine plan-change doesn't blank out
+    // the PO number / contract length / reason category.
+    if (poNumber !== null) overrideUpdate.po_number = poNumber;
+    if (body.clear_po_number === true) overrideUpdate.po_number = null;
+    if (contractYears !== null) overrideUpdate.contract_years = contractYears;
+    if (body.clear_contract_years === true) overrideUpdate.contract_years = null;
+    if (overrideReasonType !== null) overrideUpdate.override_reason_type = overrideReasonType;
+    if (body.clear_override === true) overrideUpdate.override_reason_type = null;
 
     // ── Renewal: archive the closing cycle, then clear cycle fields. ──
     // Triggered by `start_renewal: true` from the per-school admin page.
@@ -314,6 +406,29 @@ export async function POST(req: Request, ctx: RouteContext) {
         .single();
       if (insErr) return NextResponse.json({ error: insErr.message }, { status: 500 });
       subscriptionId = (inserted as { id: string }).id;
+    }
+
+    // D12 — Schools row update (state + GSTIN). Done as a separate write
+    // so a malformed GSTIN doesn't block the subscription save (the check
+    // constraint on schools.gstin will reject it). We only touch fields the
+    // caller explicitly included, so a routine plan-change doesn't blank
+    // out the school's tax registration.
+    if (schoolStateProvided || schoolGstinProvided) {
+      const schoolUpdate: Record<string, unknown> = {};
+      if (schoolStateProvided) schoolUpdate.state = schoolState;
+      if (schoolGstinProvided) schoolUpdate.gstin = schoolGstin;
+      const { error: schoolErr } = await admin
+        .from("schools")
+        .update(schoolUpdate)
+        .eq("id", schoolId);
+      if (schoolErr) {
+        // GSTIN format check is the most likely failure here — return a
+        // legible error so the admin can fix the typo.
+        return NextResponse.json(
+          { error: `Subscription saved, but school details rejected: ${schoolErr.message}` },
+          { status: 400 }
+        );
+      }
     }
 
     // Echo subscription_id + override snapshot in the response so callers

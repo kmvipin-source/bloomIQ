@@ -83,10 +83,21 @@ export async function GET(req: Request, ctx: RouteContext) {
 
     const { data: school } = await admin
       .from("schools")
-      .select("id, name")
+      .select("id, name, state, gstin")
       .eq("id", sub.school_id)
       .single();
     if (!school) return NextResponse.json({ error: "School not found" }, { status: 404 });
+
+    // D12: school is interstate (vs vendor) → IGST 18%. Same state → CGST+SGST 9%+9%.
+    // schools.state may be null for legacy rows; fall back to IGST (the safer
+    // default — if same-state should have been used, the school will catch it
+    // on the invoice and we issue a corrective).
+    const schoolStateRaw = (school as { state?: string | null }).state || null;
+    const schoolGstin = (school as { gstin?: string | null }).gstin || null;
+    const sameState =
+      schoolStateRaw !== null &&
+      schoolStateRaw.trim().toLowerCase() ===
+        (process.env.INVOICE_VENDOR_STATE || "Karnataka").trim().toLowerCase();
 
     type PlanRow = { label: string | null; per_student_price_paise: number | null; period_days: number | null };
     let plan: PlanRow | null = null;
@@ -200,12 +211,24 @@ export async function GET(req: Request, ctx: RouteContext) {
     doc.setFont("helvetica", "normal");
     doc.setFontSize(11);
     doc.text(school.name, 14, y + 22);
-    // Note: school address + GSTIN aren't stored yet — call this out so
-    // finance knows to fill them in manually before sending.
     doc.setFontSize(9);
-    doc.setTextColor(120);
-    doc.text("(School address + GSTIN to be added manually if applicable)", 14, y + 27);
-    doc.setTextColor(0);
+    let billY = y + 27;
+    if (schoolStateRaw) {
+      doc.text(`State: ${schoolStateRaw}`, 14, billY);
+      billY += 4;
+    }
+    if (schoolGstin) {
+      doc.text(`GSTIN: ${schoolGstin}`, 14, billY);
+      billY += 4;
+    }
+    if (!schoolStateRaw || !schoolGstin) {
+      doc.setTextColor(120);
+      doc.text(
+        "(" + [!schoolStateRaw && "state", !schoolGstin && "GSTIN"].filter(Boolean).join(" and ") + " missing — please add via /admin/schools)",
+        14, billY
+      );
+      doc.setTextColor(0);
+    }
 
     // Line item table — uses jspdf-autotable for a clean grid.
     const seatLabel = sub.contracted_students != null
@@ -235,11 +258,22 @@ export async function GET(req: Request, ctx: RouteContext) {
     doc.text("Subtotal", labelX, ty);
     doc.text(`₹${rs(subtotalPaise)}`, totalsX, ty, { align: "right" });
     ty += 6;
-    // Default to IGST since we don't have customer state. A future
-    // school.state field would let us split into CGST + SGST.
-    doc.text("IGST @ 18%", labelX, ty);
-    doc.text(`₹${rs(taxPaise)}`, totalsX, ty, { align: "right" });
-    ty += 8;
+    if (sameState) {
+      // D12: same-state — split into CGST + SGST at 9% each.
+      const halfPaise = Math.round(taxPaise / 2);
+      doc.text("CGST @ 9%", labelX, ty);
+      doc.text(`₹${rs(halfPaise)}`, totalsX, ty, { align: "right" });
+      ty += 6;
+      doc.text("SGST @ 9%", labelX, ty);
+      doc.text(`₹${rs(taxPaise - halfPaise)}`, totalsX, ty, { align: "right" });
+      ty += 8;
+    } else {
+      // Interstate or state unknown → IGST 18% (safer default; corrective
+      // issued if school flags same-state and we get state filled in later).
+      doc.text("IGST @ 18%", labelX, ty);
+      doc.text(`₹${rs(taxPaise)}`, totalsX, ty, { align: "right" });
+      ty += 8;
+    }
     doc.setFont("helvetica", "bold");
     doc.setFontSize(12);
     doc.text("Total payable", labelX, ty);

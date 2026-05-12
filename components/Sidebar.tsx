@@ -9,7 +9,7 @@ import {
   BarChart3, FileText, LogOut, User as UserIcon, Users,
   TrendingUp, NotebookPen, Building2, FileEdit,
   ShieldCheck, ArrowUpRight, Wrench, Search, Radio,
-  MessageCircle, HelpCircle, UserPlus,
+  MessageCircle, HelpCircle, UserPlus, CreditCard,
 } from "lucide-react";
 
 type SidebarRole = "teacher" | "student" | "super_teacher" | "platform_admin";
@@ -122,6 +122,12 @@ const SUPER_TEACHER: ItemGroup[] = [
   { label: "Assist", items: [
     { href: "/school/coach",  label: "School Coach", icon: MessageCircle },
     { href: "/school/digest", label: "This Week",    icon: Sparkles },
+  ] },
+  // ACCOUNT — D7. Read-only billing visibility so the super_teacher can
+  // see their plan + invoice + payment status without pinging the platform
+  // admin team.
+  { label: "Account", items: [
+    { href: "/school/billing", label: "Billing", icon: CreditCard },
   ] },
 ];
 

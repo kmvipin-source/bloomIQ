@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getBearer, supabaseServer, supabaseAdmin } from "@/lib/supabase/server";
 import { BLOOM_LEVELS, type BloomLevel, isBloomLevel } from "@/lib/bloom";
+import { checkDailyQuota, recordDailyUse } from "@/lib/freeQuota";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -73,6 +74,17 @@ async function buildDrill(req: Request) {
     .single();
   if (prof?.role !== "student") {
     return NextResponse.json({ error: "Students only." }, { status: 403 });
+  }
+
+  // Free-tier daily cap. School students bypass (B2B subs).
+  if (!prof.school_id) {
+    const gate = await checkDailyQuota(user.id, "daily_drill");
+    if (!gate.allowed) {
+      return NextResponse.json(
+        { error: gate.reason, code: "free_daily_cap", cap: gate.cap, used: gate.used },
+        { status: 402 }
+      );
+    }
   }
 
   const now = new Date();
@@ -218,6 +230,11 @@ async function buildDrill(req: Request) {
     id: it.id, stem: it.stem, options: it.options, bloom_level: it.bloom_level, topic: it.topic,
   }));
   void BLOOM_LEVELS; // (kept import; preserves typing intent)
+
+  if (!prof.school_id && safe.length > 0) {
+    await recordDailyUse(user.id, "daily_drill");
+  }
+
   return NextResponse.json({ items: safe, generated_at: now.toISOString() });
 }
 

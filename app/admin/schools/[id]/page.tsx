@@ -28,27 +28,44 @@ import { use as usePromise, useEffect, useState } from "react";
 import Link from "next/link";
 import {
   ArrowLeft, Save, FileText, CheckCircle2, AlertCircle, Calendar,
-  Users, Building2, RotateCw, History,
+  Users, Building2, RotateCw, History, Download, Pause, Play, ShieldAlert,
 } from "lucide-react";
 import { supabaseBrowser } from "@/lib/supabase/client";
 
 type SchoolDetail = {
-  school: { id: string; name: string; join_code: string | null };
+  school: {
+    id: string;
+    name: string;
+    join_code: string | null;
+    state: string | null;   // D12
+    gstin: string | null;   // D12
+  };
   subscription: null | {
     id: string;
     plan_id: string | null;
     tier: string | null;
+    // 'active' | 'past_due' | 'suspended'. After migration 75 the
+    // operator can manually flip to suspended; feature access stops
+    // immediately, no data touched.
     status: string | null;
+    suspended_at: string | null;
+    suspended_by: string | null;
+    suspended_reason: string | null;
     started_at: string | null;
     expires_at: string | null;
     override_price_paise: number | null;
     override_reason: string | null;
+    override_reason_type: string | null;  // D18
     override_set_by: string | null;
     override_set_at: string | null;
     invoice_number: string | null;
     payment_method: string | null;
     payment_received_at: string | null;
+    payment_recorded_at: string | null;   // D3
+    payment_recorded_by: string | null;   // D3
+    po_number: string | null;             // D11
     contracted_students: number | null;
+    contract_years: number | null;        // D15
     activation_pending: boolean | null;
     grace_period_days: number | null;
   };
@@ -103,9 +120,23 @@ export default function SchoolAdminPage(props: PageProps) {
   const [activationDate, setActivationDate] = useState<string>("");      // YYYY-MM-DD; empty = today
   const [activationPending, setActivationPending] = useState<boolean>(false);
   const [gracePeriodDays, setGracePeriodDays] = useState<string>("");    // "" = use stored / 14 default
+  // D18 — structured override reason (matched against the enum check
+  // constraint on subscriptions.override_reason_type). "" = no category.
+  const [overrideReasonType, setOverrideReasonType] = useState<string>("");
+  // D15 — multi-year deal length. "" = standard single-cycle.
+  const [contractYears, setContractYears] = useState<string>("");
+  // D11 — school's PO reference for THIS billing cycle. Lives on
+  // subscriptions but is surfaced in the Invoice & payment block since
+  // that's where finance actually uses it.
+  const [poNumber, setPoNumber] = useState<string>("");
+  // D12 — GST place-of-supply. State + GSTIN live on the schools row;
+  // both are mirrored into form state so the operator can edit them.
+  const [schoolState, setSchoolState] = useState<string>("");
+  const [schoolGstin, setSchoolGstin] = useState<string>("");
 
   const [savingPlan, setSavingPlan] = useState(false);
   const [savingPaid, setSavingPaid] = useState(false);
+  const [savingSuspend, setSavingSuspend] = useState(false);
 
   async function getToken(): Promise<string | null> {
     const { data: { session } } = await supabaseBrowser().auth.getSession();
@@ -148,6 +179,17 @@ export default function SchoolAdminPage(props: PageProps) {
         ? String(j.subscription.grace_period_days)
         : "",
     );
+    // D18/D15/D11/D12 hydration. Default to "" so the corresponding
+    // <select>/<input> shows the placeholder when the column is null.
+    setOverrideReasonType(j.subscription?.override_reason_type ?? "");
+    setContractYears(
+      j.subscription?.contract_years != null
+        ? String(j.subscription.contract_years)
+        : "",
+    );
+    setPoNumber(j.subscription?.po_number ?? "");
+    setSchoolState(j.school?.state ?? "");
+    setSchoolGstin(j.school?.gstin ?? "");
   }
   // eslint-disable-next-line react-hooks/exhaustive-deps, react-hooks/set-state-in-effect
   useEffect(() => { void load(); }, [schoolId]);
@@ -189,6 +231,45 @@ export default function SchoolAdminPage(props: PageProps) {
         body.override_price_rupees = Math.round(n);
         body.override_reason = overrideReason.trim() || "Manually set by platform admin";
       }
+
+      // D18 — structured override category. Always sent (server only
+      // writes when non-null), so emptying the dropdown is a no-op rather
+      // than clearing an existing value. Use clear_override above for that.
+      if (overrideReasonType.trim()) {
+        body.override_reason_type = overrideReasonType;
+      }
+
+      // D15 — multi-year deal length. Validate 1..10 client-side.
+      if (contractYears.trim()) {
+        const c = Number(contractYears);
+        if (!Number.isFinite(c) || c < 1 || c > 10) {
+          throw new Error("Contract years must be between 1 and 10.");
+        }
+        body.contract_years = Math.round(c);
+      } else if (data?.subscription?.contract_years != null) {
+        // Operator emptied the field on a row that had a value → explicit clear.
+        body.clear_contract_years = true;
+      }
+
+      // D11 — school's PO reference for the current cycle.
+      if (poNumber.trim()) {
+        body.po_number = poNumber.trim();
+      } else if (data?.subscription?.po_number) {
+        body.clear_po_number = true;
+      }
+
+      // D12 — schools.state + schools.gstin. Always send when the operator
+      // touched the inputs (we can detect "touched" by comparing to the
+      // hydrated value — if different, send through). The server-side
+      // GSTIN check constraint will reject malformed values; we surface
+      // that error back to the form.
+      if (schoolState !== (data?.school.state ?? "")) {
+        body.school_state = schoolState.trim();
+      }
+      if (schoolGstin !== (data?.school.gstin ?? "")) {
+        body.school_gstin = schoolGstin.trim().toUpperCase();
+      }
+
       const r = await fetch(`/api/admin/schools/${schoolId}/set-plan`, {
         method: "POST",
         headers: { Authorization: `Bearer ${t}`, "Content-Type": "application/json" },
@@ -207,25 +288,19 @@ export default function SchoolAdminPage(props: PageProps) {
 
   async function markPaid() {
     if (!data?.subscription?.id) return;
-    // Compute renewal preview client-side for the confirm dialog so the
-    // operator sees "extends from X → Y" before committing. Mirror the
-    // server's "smart" extend logic (early renewal preserves remainder).
-    const periodDays = (() => {
-      // We only have per-student-price + tier on the plan in client state,
-      // not period_days. Default to 365 — server will recompute the
-      // authoritative value either way.
-      return 365;
-    })();
-    const prevExp = data.subscription.expires_at ? new Date(data.subscription.expires_at) : null;
-    const now     = new Date();
-    const baseTime = prevExp && prevExp.getTime() > now.getTime() ? prevExp.getTime() : now.getTime();
-    const newExp   = new Date(baseTime + periodDays * 24 * 60 * 60 * 1000);
-    const previewMsg =
+    // Mark-paid is a pure finance event — it stamps payment_received_at +
+    // audit + invoice number on the CURRENT cycle but does not touch
+    // expires_at. The cycle window is owned by "Save plan & pricing" (for
+    // initial activation) or "Start renewal cycle" (for year N → N+1).
+    // This invariant guarantees "1 year paid = 1 year of access" — under
+    // the old smart-extend rule, clicking Save then Mark-paid back-to-back
+    // gave a school 2 years for one payment.
+    const prevExp = data.subscription.expires_at;
+    const confirmMsg =
       `Mark this subscription as paid?\n\n` +
-      `Extends from ${prevExp ? formatDate(prevExp.toISOString()) : "—"} to approximately ${formatDate(newExp.toISOString())} ` +
-      `(server uses the plan's actual period; this preview assumes 365 days).\n\n` +
-      `If renewing early, the unused remainder is preserved.`;
-    if (!confirm(previewMsg)) return;
+      `Cycle expiry stays as ${prevExp ? formatDate(prevExp) : "—"}.\n\n` +
+      `To start a new term, use "Start renewal cycle" first.`;
+    if (!confirm(confirmMsg)) return;
     setSavingPaid(true); setErr(null); setInfo(null);
     try {
       const t = await getToken();
@@ -233,21 +308,76 @@ export default function SchoolAdminPage(props: PageProps) {
       const r = await fetch(`/api/admin/subscriptions/${data.subscription.id}/mark-paid`, {
         method: "POST",
         headers: { Authorization: `Bearer ${t}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ payment_method: paymentMethod }),
+        body: JSON.stringify({
+          payment_method: paymentMethod,
+          // D11 — pass the PO number through to the audit row so
+          // payment_recorded_by/at + po_number land on the same write.
+          ...(poNumber.trim() ? { po_number: poNumber.trim() } : {}),
+        }),
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || "mark-paid failed");
       setInfo(
-        `Payment recorded. ` +
-        (j.previous_expires_at
-          ? `Extended from ${formatDate(j.previous_expires_at)} to ${formatDate(j.expires_at)}.`
-          : `New expiry: ${formatDate(j.expires_at)}.`)
+        j.expires_at_changed
+          ? `Payment recorded. Expiry updated to ${formatDate(j.expires_at)}.`
+          : `Payment recorded. Cycle expires ${formatDate(j.expires_at)} (unchanged).`
       );
       await load();
     } catch (e) {
       setErr(e instanceof Error ? e.message : "mark-paid failed");
     } finally {
       setSavingPaid(false);
+    }
+  }
+
+  async function suspendSubscription() {
+    if (!data?.subscription?.id) return;
+    const reason = prompt(
+      `Suspend this subscription? Features will lock immediately, but ALL data is preserved (classes, students, tests, invoices). Reactivate any time with no data restoration needed.
+
+Optional audit note (e.g. "30 days past due"):`,
+      "Non-payment after 30 days",
+    );
+    if (reason === null) return; // operator cancelled the prompt
+    setSavingSuspend(true); setErr(null); setInfo(null);
+    try {
+      const t = await getToken();
+      if (!t) throw new Error("Sign in required.");
+      const r = await fetch(`/api/admin/subscriptions/${data.subscription.id}/suspend`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${t}`, "Content-Type": "application/json" },
+        body: JSON.stringify(reason.trim() ? { reason: reason.trim() } : {}),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || "Suspend failed");
+      setInfo("Subscription suspended. Feature access locked, data intact.");
+      await load();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Suspend failed");
+    } finally {
+      setSavingSuspend(false);
+    }
+  }
+
+  async function reactivateSubscription() {
+    if (!data?.subscription?.id) return;
+    if (!confirm("Reactivate this subscription? The school regains full feature access immediately.")) return;
+    setSavingSuspend(true); setErr(null); setInfo(null);
+    try {
+      const t = await getToken();
+      if (!t) throw new Error("Sign in required.");
+      const r = await fetch(`/api/admin/subscriptions/${data.subscription.id}/reactivate`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${t}`, "Content-Type": "application/json" },
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || "Reactivate failed");
+      setInfo("Subscription reactivated. Feature access restored.");
+      await load();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Reactivate failed");
+    } finally {
+      setSavingSuspend(false);
     }
   }
 
@@ -317,13 +447,28 @@ export default function SchoolAdminPage(props: PageProps) {
   const computedListPaise = ratePaise * seatsForPricing;
   const activePaise = sub?.override_price_paise ?? computedListPaise;
 
+  // Days since this cycle started — drives the "past due" warning
+  // when the school hasn't paid within 30 days of activation.
+  const daysSinceStarted = sub?.started_at
+    ? Math.floor((Date.now() - Date.parse(sub.started_at)) / 86400000)
+    : null;
+  const isPastDue =
+    !!sub
+    && sub.status !== "suspended"
+    && !sub.payment_received_at
+    && daysSinceStarted != null
+    && daysSinceStarted > 30;
+
   // Expiry status — drives the badge colour + headline text.
+  // Suspended trumps everything; otherwise normal expiry math applies.
   const days = daysUntil(sub?.expires_at ?? null);
   const expiryStatus =
-    !sub?.expires_at        ? { label: "No subscription",      tone: "slate"  } as const :
-    days != null && days < 0  ? { label: "Expired",               tone: "red"    } as const :
-    days != null && days <= 30 ? { label: `Expires in ${days}d`,  tone: "amber"  } as const :
-                              { label: `Active`,                tone: "emerald" } as const;
+    sub?.status === "suspended" ? { label: "Suspended",            tone: "red"     } as const :
+    isPastDue                   ? { label: `Unpaid ${daysSinceStarted!}d`, tone: "amber" } as const :
+    !sub?.expires_at            ? { label: "No subscription",      tone: "slate"   } as const :
+    days != null && days < 0    ? { label: "Expired",              tone: "red"     } as const :
+    days != null && days <= 30  ? { label: `Expires in ${days}d`,  tone: "amber"   } as const :
+                                  { label: `Active`,               tone: "emerald" } as const;
 
   const toneBg = {
     slate:   "bg-slate-100 text-slate-700 border-slate-200",
@@ -484,6 +629,42 @@ export default function SchoolAdminPage(props: PageProps) {
           onChange={(e) => setOverrideReason(e.target.value)}
         />
 
+        {/* D18 — Structured category for finance reporting. Free text above
+            stays as the human-readable note; this picker is what rolls up
+            cleanly in CSV / dashboards. */}
+        <label className="label mt-3">Reason category</label>
+        <select
+          className="select max-w-xs"
+          value={overrideReasonType}
+          onChange={(e) => setOverrideReasonType(e.target.value)}
+        >
+          <option value="">— None —</option>
+          <option value="multi_year_deal">Multi-year deal</option>
+          <option value="volume_discount">Volume discount</option>
+          <option value="partner_discount">Partner discount</option>
+          <option value="pilot_program">Pilot program</option>
+          <option value="goodwill">Goodwill</option>
+          <option value="corrective">Corrective (fix prior error)</option>
+          <option value="other">Other</option>
+        </select>
+
+        {/* D15 — Contract length for multi-year deals. Optional. When set,
+            tells the auto-renewal logic "don't auto-renew at the end of one
+            period_days cycle, extend until the anniversary." */}
+        <label className="label mt-3">Contract length (years, optional)</label>
+        <input
+          className="input max-w-xs"
+          type="number"
+          min={1}
+          max={10}
+          placeholder="e.g. 3 for a three-year deal — leave blank for single cycle"
+          value={contractYears}
+          onChange={(e) => setContractYears(e.target.value)}
+        />
+        <p className="text-[11px] muted mt-1">
+          Use for multi-year contracts (e.g. 3-year pilot). Leave blank for standard year-on-year. Range 1–10.
+        </p>
+
         <label className="label mt-3">Payment method</label>
         <select className="select max-w-xs" value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)}>
           <option value="neft">NEFT / RTGS / wire</option>
@@ -491,6 +672,45 @@ export default function SchoolAdminPage(props: PageProps) {
           <option value="razorpay">Razorpay (online)</option>
           <option value="manual">Manual / other</option>
         </select>
+
+        {/* D12 — GST place-of-supply (CGST+SGST vs IGST). Lives on schools.
+            The invoice PDF generator reads these to decide which tax block
+            to render. Both nullable: missing state → invoice generator
+            falls back to IGST 18%. */}
+        <div className="mt-5 p-3 rounded-lg border border-slate-200 bg-slate-50">
+          <div className="text-xs uppercase tracking-wide font-semibold muted mb-2">
+            School billing details (GST)
+          </div>
+          <div className="grid sm:grid-cols-2 gap-3 text-sm">
+            <div>
+              <label className="label text-[11px]">State (registered)</label>
+              <input
+                className="input"
+                type="text"
+                placeholder="e.g. Karnataka"
+                value={schoolState}
+                onChange={(e) => setSchoolState(e.target.value)}
+              />
+              <p className="text-[10px] muted mt-1">
+                Drives CGST+SGST (same state) vs IGST (interstate) on the invoice PDF.
+              </p>
+            </div>
+            <div>
+              <label className="label text-[11px]">GSTIN (15-char, optional)</label>
+              <input
+                className="input font-mono"
+                type="text"
+                maxLength={15}
+                placeholder="e.g. 29ABCDE1234F1Z5"
+                value={schoolGstin}
+                onChange={(e) => setSchoolGstin(e.target.value.toUpperCase())}
+              />
+              <p className="text-[10px] muted mt-1">
+                Leave blank for schools not registered for GST. Format is validated server-side.
+              </p>
+            </div>
+          </div>
+        </div>
 
         {/* ─── Modern-expiry controls (post-migration-65) ───
             Three knobs, surfaced together so the operator sees them as
@@ -575,8 +795,9 @@ export default function SchoolAdminPage(props: PageProps) {
           <p className="text-xs muted mb-4">
             Tax invoice (GST) for the <strong>current</strong> billing cycle. Workflow: download
             the invoice → email it to the school → school pays NEFT → click <em>Mark payment
-            received</em> (extends expiry by one full plan period). For year-on-year renewals,
-            click <em>Start renewal cycle</em> first so the new term gets a fresh invoice number.
+            received</em> (stamps payment + audit + invoice number on the current cycle &mdash;
+            doesn&apos;t change expiry). For year-on-year renewals, click <em>Start renewal
+            cycle</em> first so the new term gets a fresh window and invoice number.
           </p>
 
           <div className="grid sm:grid-cols-2 gap-3 text-sm">
@@ -593,8 +814,68 @@ export default function SchoolAdminPage(props: PageProps) {
                   ? <span className="text-emerald-700">Received {formatDate(sub.payment_received_at)} via {sub.payment_method ?? "—"}</span>
                   : <span className="text-amber-700">Awaiting payment</span>}
               </div>
+              {/* D3 — server-stamped audit. payment_received_at is the
+                  customer-stated date; payment_recorded_at is when we
+                  actually clicked the button. Surfaced so finance can
+                  see both. */}
+              {sub.payment_recorded_at && sub.payment_recorded_at !== sub.payment_received_at && (
+                <div className="text-[10px] muted mt-1">
+                  Recorded in BloomIQ at {new Date(sub.payment_recorded_at).toLocaleString("en-IN")}
+                </div>
+              )}
             </div>
           </div>
+
+          {/* D11 — School's purchase-order reference for THIS cycle. Free
+              text. Stored on subscriptions.po_number; surfaced here because
+              finance uses it for bank-transfer reconciliation. */}
+          <label className="label mt-4">PO number (optional)</label>
+          <input
+            className="input max-w-md"
+            type="text"
+            placeholder="e.g. PO/2026/12345 — leave blank if no PO"
+            value={poNumber}
+            onChange={(e) => setPoNumber(e.target.value)}
+          />
+          <p className="text-[11px] muted mt-1">
+            School-issued purchase-order reference. Used by finance when the bank-transfer memo references the PO instead of the invoice number. Saved with both &ldquo;Save plan&rdquo; and &ldquo;Mark payment received&rdquo;.
+          </p>
+
+          {/* Past-due warning: unpaid > 30 days since activation. Lets
+              the operator know the school is overdue without auto-suspending
+              (which would surprise them). Vipin's note: "option to deactivate
+              school, but no data lost". The button below triggers it. */}
+          {isPastDue && sub.status !== "suspended" && (
+            <div className="mt-4 p-3 rounded-lg border border-amber-300 bg-amber-50 text-amber-900 text-sm flex items-start gap-2">
+              <ShieldAlert size={16} className="mt-0.5 shrink-0" />
+              <div className="flex-1">
+                <div className="font-semibold">Payment overdue — {daysSinceStarted} days since activation</div>
+                <div className="text-xs text-amber-800 mt-0.5">
+                  No payment recorded yet. Consider suspending the subscription to lock features
+                  (no data is lost). Reactivate any time once the NEFT lands.
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Suspended strip: red, hard to miss. Shows the audit note so
+              whoever's looking can see why and who did it. */}
+          {sub.status === "suspended" && (
+            <div className="mt-4 p-3 rounded-lg border border-red-300 bg-red-50 text-red-900 text-sm flex items-start gap-2">
+              <Pause size={16} className="mt-0.5 shrink-0" />
+              <div className="flex-1">
+                <div className="font-semibold">Suspended</div>
+                <div className="text-xs text-red-800 mt-0.5">
+                  {sub.suspended_reason || "No reason recorded."}
+                  {sub.suspended_at && (
+                    <> · since {new Date(sub.suspended_at).toLocaleString("en-IN")}</>
+                  )}
+                  {" "}· Feature access is locked. All data (classes, students, tests, invoices) is preserved
+                  exactly as it was.
+                </div>
+              </div>
+            </div>
+          )}
 
           <div className="mt-4 flex gap-2 flex-wrap">
             <Link
@@ -616,16 +897,41 @@ export default function SchoolAdminPage(props: PageProps) {
                 has a recorded payment. Archives the current cycle to
                 subscription_invoice_archive then clears invoice_number +
                 payment_received_at on the live row so the new term gets a
-                fresh BLM/YYYY/NNNN. */}
-            {sub.payment_received_at && (
+                fresh BLM/YYYY/NNNN. Early-renewal preserves unused days
+                from the prior cycle (Vipin's request). */}
+            {sub.payment_received_at && sub.status !== "suspended" && (
               <button
                 type="button"
                 className="btn btn-ghost text-emerald-700"
                 onClick={startRenewal}
                 disabled={savingPlan}
-                title="Archive current cycle and start a fresh one with a new invoice number"
+                title="Archive current cycle and start a fresh one with a new invoice number. Unused days carry over."
               >
                 <RotateCw size={14} /> Start renewal cycle
+              </button>
+            )}
+            {/* Suspend / Reactivate. Audited via suspended_by/at/reason.
+                Available when there's an active subscription — no point
+                suspending a free school. */}
+            {sub.status === "suspended" ? (
+              <button
+                type="button"
+                className="btn btn-ghost text-emerald-700"
+                onClick={reactivateSubscription}
+                disabled={savingSuspend}
+                title="Reactivate this subscription — restores feature access immediately"
+              >
+                <Play size={14} /> {savingSuspend ? "Reactivating…" : "Reactivate"}
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="btn btn-ghost text-red-700"
+                onClick={suspendSubscription}
+                disabled={savingSuspend}
+                title="Suspend feature access without deleting any data"
+              >
+                <Pause size={14} /> {savingSuspend ? "Suspending…" : "Suspend"}
               </button>
             )}
           </div>
@@ -635,7 +941,53 @@ export default function SchoolAdminPage(props: PageProps) {
       {/* ============ PAST INVOICES ============ */}
       {data.past_invoices && data.past_invoices.length > 0 && (
         <div className="card mt-6">
-          <h2 className="h2 mb-1 flex items-center gap-2"><History size={20} /> Past billing cycles</h2>
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <h2 className="h2 mb-1 flex items-center gap-2"><History size={20} /> Past billing cycles</h2>
+            {/* D16 — Finance export. Pulls live cycle + every archived cycle
+                as one CSV. Uses a JS click handler instead of a plain anchor
+                because /api routes require a Bearer token (anchors can't
+                carry custom headers). Same pattern the invoice PDF bridge
+                page uses. */}
+            <button
+              type="button"
+              className="btn btn-ghost text-xs"
+              title="Download every billing cycle (live + archived) as CSV"
+              onClick={async () => {
+                try {
+                  const t = await getToken();
+                  if (!t) { setErr("Sign in required."); return; }
+                  const r = await fetch(`/api/admin/schools/${schoolId}/invoices.csv`, {
+                    headers: { Authorization: `Bearer ${t}` },
+                  });
+                  if (!r.ok) {
+                    const tx = await r.text();
+                    setErr(`CSV download failed: ${tx.slice(0, 200)}`);
+                    return;
+                  }
+                  // Pull the suggested filename from Content-Disposition if
+                  // the server set one; otherwise build a fallback. Browsers
+                  // honour the download attribute even when the URL is a
+                  // blob, so this round-trips cleanly.
+                  const cd = r.headers.get("content-disposition") || "";
+                  const m = /filename="([^"]+)"/.exec(cd);
+                  const filename = m?.[1] || `bloomiq-invoices-${schoolId.slice(0, 8)}.csv`;
+                  const blob = await r.blob();
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  a.href = url;
+                  a.download = filename;
+                  document.body.appendChild(a);
+                  a.click();
+                  a.remove();
+                  URL.revokeObjectURL(url);
+                } catch (e) {
+                  setErr(e instanceof Error ? e.message : "CSV download failed");
+                }
+              }}
+            >
+              <Download size={12} /> Download CSV
+            </button>
+          </div>
           <p className="text-xs muted mb-4">
             Closed cycles (archived when you started a renewal). Read-only — kept for finance
             audit trail. Most recent first.

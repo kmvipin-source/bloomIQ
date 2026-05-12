@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { groqJSON } from "@/lib/groq";
 import { BLOOM_LEVELS, type BloomLevel } from "@/lib/bloom";
 import { getBearer, supabaseServer } from "@/lib/supabase/server";
+import { checkLifetimeUse, recordLifetimeUse } from "@/lib/freeQuota";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -80,6 +81,14 @@ export async function POST(req: Request) {
           return NextResponse.json({ ok: true, cached: true, computed_at: cached.computed_at, graph: cached.graph });
         }
       }
+    }
+
+    const gate = await checkLifetimeUse(user.id, "knowledge_graph");
+    if (!gate.allowed) {
+      return NextResponse.json(
+        { error: gate.reason, code: "free_lifetime_used" },
+        { status: 402 }
+      );
     }
 
     // ----- Pull distinct topics + Bloom levels for the user's questions -----
@@ -188,6 +197,8 @@ export async function POST(req: Request) {
       graph,
       computed_at: new Date().toISOString(),
     });
+
+    await recordLifetimeUse(user.id, "knowledge_graph");
 
     return NextResponse.json({ ok: true, cached: false, graph });
   } catch (e) {

@@ -57,6 +57,7 @@ export default function RenewBanner({
   planSlug,
   source,
   schoolName,
+  daysLeft: daysLeftProp,
 }: {
   expiresAt: string | null;
   isExpired: boolean;
@@ -74,6 +75,11 @@ export default function RenewBanner({
   // to enable school-admin mode (mailto CTA, "your school's plan" copy).
   // Leave undefined elsewhere to suppress the banner for school plans.
   schoolName?: string | null;
+  // D17 — pre-computed daysLeft from useFeatureAccess. Optional so legacy
+  // call sites that don't pass it still work (we fall back to a local
+  // computation), but prefer to pass it through so dashboard tiles,
+  // sidebar, and banner all read the same number.
+  daysLeft?: number | null;
 }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -88,8 +94,14 @@ export default function RenewBanner({
   if (source === "none") return null;
 
   const expiresAtMs = Date.parse(expiresAt);
+  // D17 — prefer the value from useFeatureAccess (single source of truth)
+  // so this banner can't disagree with a tile or sidebar pill that all
+  // read from the same hook. Fall back to a local calc when the caller
+  // didn't thread daysLeft through (a few older call sites still don't).
   // eslint-disable-next-line react-hooks/purity
-  const daysLeft = Math.ceil((expiresAtMs - Date.now()) / 86400000);
+  const daysLeft = typeof daysLeftProp === "number"
+    ? daysLeftProp
+    : Math.ceil((expiresAtMs - Date.now()) / 86400000);
 
   // Hide entirely when comfortably in the active window.
   if (!isExpired && daysLeft > 7) return null;

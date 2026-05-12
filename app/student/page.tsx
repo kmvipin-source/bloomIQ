@@ -439,8 +439,9 @@ export default function StudentHome() {
         <RenewBanner
           expiresAt={access.expiresAt}
           isExpired={access.isExpired}
-        isInGrace={access.isInGrace}
-        graceRemainingDays={access.graceRemainingDays}
+          isInGrace={access.isInGrace}
+          graceRemainingDays={access.graceRemainingDays}
+          daysLeft={access.daysLeft}
           planSlug={access.planSlug}
           source={access.source}
         />

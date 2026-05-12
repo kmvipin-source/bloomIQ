@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { groqJSON, groqJSONVision } from "@/lib/groq";
 import { BLOOM_LEVELS, isBloomLevel, type BloomLevel } from "@/lib/bloom";
 import { getBearer, supabaseServer } from "@/lib/supabase/server";
+import { checkLifetimeUse, recordLifetimeUse } from "@/lib/freeQuota";
 
 export const runtime = "nodejs";
 export const maxDuration = 90;
@@ -87,6 +88,14 @@ export async function POST(req: Request) {
     const { data: { user } } = await sb.auth.getUser();
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
+    const gate = await checkLifetimeUse(user.id, "xray");
+    if (!gate.allowed) {
+      return NextResponse.json(
+        { error: gate.reason, code: "free_lifetime_used" },
+        { status: 402 }
+      );
+    }
+
     const body = await req.json().catch(() => ({}));
     const kind: string = String(body.kind || "");
     const file_name: string | null = body.file_name ? String(body.file_name).slice(0, 200) : null;
@@ -146,6 +155,8 @@ export async function POST(req: Request) {
       .select("id")
       .single();
     if (xrErr || !xray) return NextResponse.json({ error: xrErr?.message || "Failed to save xray" }, { status: 500 });
+
+    await recordLifetimeUse(user.id, "xray");
 
     // Persist per-question rows. answer + explanation come from migration 17.
     // If that migration hasn't been applied to the deployed DB yet, retry

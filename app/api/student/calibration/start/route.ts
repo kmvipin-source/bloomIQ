@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { getBearer, supabaseServer, supabaseAdmin } from "@/lib/supabase/server";
 import { generateCalibration } from "@/lib/calibrationGenerator";
+import { checkLifetimeUse, recordLifetimeUse } from "@/lib/freeQuota";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -30,6 +31,14 @@ export async function POST(req: Request) {
     const { data: { user }, error: userErr } = await sb.auth.getUser();
     if (userErr || !user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
+    const gate = await checkLifetimeUse(user.id, "bloom_score");
+    if (!gate.allowed) {
+      return NextResponse.json(
+        { error: gate.reason, code: "free_lifetime_used" },
+        { status: 402 }
+      );
+    }
+
     // Read exam goal from profiles via service-role to avoid the RLS race
     // we hit in /api/auth/me (same fix, same reason).
     const admin = supabaseAdmin();
@@ -41,6 +50,8 @@ export async function POST(req: Request) {
     const examGoal = (prof as { exam_goal?: string | null } | null)?.exam_goal ?? null;
 
     const { questions, groq_model } = await generateCalibration(examGoal);
+
+    await recordLifetimeUse(user.id, "bloom_score");
 
     return NextResponse.json({
       ok: true,

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { groqJSON } from "@/lib/groq";
 import { BLOOM_LEVELS, type BloomLevel } from "@/lib/bloom";
 import { getBearer, supabaseServer } from "@/lib/supabase/server";
+import { checkDailyQuota, recordDailyUse } from "@/lib/freeQuota";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -85,6 +86,14 @@ export async function POST(req: Request) {
     const { data: { user } } = await sb.auth.getUser();
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
+    const gate = await checkDailyQuota(user.id, "speed_session");
+    if (!gate.allowed) {
+      return NextResponse.json(
+        { error: gate.reason, code: "free_daily_cap", cap: gate.cap, used: gate.used },
+        { status: 402 }
+      );
+    }
+
     const body = await req.json().catch(() => ({}));
     let topic: string = String(body.topic || "").trim();
     const requestedCount: number = Number(body.count || 8);
@@ -139,6 +148,8 @@ Generate the JSON now.`;
     // Attach target_ms based on bloom level. Send everything to client; the
     // client times the answer interaction and reports back via /submit.
     const enriched = valid.map((q) => ({ ...q, target_ms: TARGET_MS[q.bloom_level] }));
+
+    await recordDailyUse(user.id, "speed_session");
 
     return NextResponse.json({ ok: true, topic, count: enriched.length, questions: enriched });
   } catch (e) {

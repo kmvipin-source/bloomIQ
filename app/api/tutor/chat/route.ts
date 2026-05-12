@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { groqText } from "@/lib/groq";
 import { getBearer, supabaseServer } from "@/lib/supabase/server";
+import { checkDailyQuota, recordDailyUse } from "@/lib/freeQuota";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -66,6 +67,14 @@ export async function POST(req: Request) {
     if (!message) return NextResponse.json({ error: "Empty message" }, { status: 400 });
     if (message.length > 2000) return NextResponse.json({ error: "Message too long (max 2000 chars)." }, { status: 400 });
 
+    const gate = await checkDailyQuota(user.id, "tutor_chat");
+    if (!gate.allowed) {
+      return NextResponse.json(
+        { error: gate.reason, code: "free_daily_cap", cap: gate.cap, used: gate.used },
+        { status: 402 },
+      );
+    }
+
     const history = clean(body.history);
     const ctx = (body.context || {}) as Record<string, unknown>;
     const ctxStem = typeof ctx.question_stem === "string" ? ctx.question_stem.slice(0, 1500) : "";
@@ -102,6 +111,7 @@ TEACHER:`;
       return NextResponse.json({ error: "AI did not return a reply; please retry." }, { status: 502 });
     }
 
+    await recordDailyUse(user.id, "tutor_chat");
     return NextResponse.json({ ok: true, reply });
   } catch (e) {
     return NextResponse.json(

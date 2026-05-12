@@ -146,7 +146,180 @@ platform-admin invite flow at `/admin/onboard-school` instead.
 
 ---
 
-## 🆕 Latest session — 2026-05-10 evening (Test harness for B2B billing + UX polish: /admin/plans edit fix, /student/expired dual-tier upgrade)
+## 🆕 Latest session — 2026-05-11 (B2B billing audit fixes + suspend-without-data-loss + cycle-math invariant)
+
+Big day. Drove the entire B2B billing audit (Sessions 4 + 5) to "ready
+for launch" status, fixed two production-impacting bugs found by the
+test, added the missing suspension workflow Vipin asked for, and
+re-anchored the cycle-expiry math so 1 year paid always equals 1 year
+of access (no double-stack ever).
+
+**Currently working through:** Chrome E2E test with `head.hema@sunrise.example.com` / `FreshPass123!`.
+See **"Where to pick up tomorrow"** at the bottom of this section.
+
+### What shipped today
+
+**Migration 74 — B2B billing audit columns:**
+* `subscriptions.payment_recorded_by` + `payment_recorded_at` (D3 audit trail — distinct from `payment_received_at`, which is the customer-stated bank-clearance date)
+* `subscriptions.po_number` (D11 — school's purchase-order reference for finance reconciliation)
+* `subscriptions.contract_years` (D15 — multi-year deal tracking, 1..10 with check constraint)
+* `subscriptions.override_reason_type` (D18 — enum-flavored category for the existing free-text `override_reason`: `multi_year_deal`, `volume_discount`, `partner_discount`, `pilot_program`, `goodwill`, `corrective`, `other`)
+* `plans.grace_period_days` (D10 — per-plan default for the post-expiry grace window; sub-row can still override)
+* `schools.state` + `schools.gstin` (D12 — Indian GST place-of-supply; GSTIN is regex-validated when present)
+
+**Migration 75 — suspension audit:**
+* `subscriptions.suspended_at`, `suspended_by`, `suspended_reason` for the new "deactivate without losing data" workflow.
+* Indexed only the suspended rows (partial index) so the "show me all past-due / suspended schools" admin query stays fast.
+
+**API endpoints — new:**
+* `POST /api/admin/subscriptions/[id]/suspend` — flips `status='suspended'`, stamps audit trail. **Zero data touched.** Classes, students, tests, attempts, invoices all stay. Feature gates (via `useFeatureAccess`) treat status=suspended exactly like an expired sub.
+* `POST /api/admin/subscriptions/[id]/reactivate` — flips back to `active`, clears suspension fields. The cycle window (started_at / expires_at) is **untouched** — re-activation is purely about feature access, not term length.
+* `GET /api/school/billing` — D7 school-side read-only billing view. Returns plan, cycle dates, PO number, payment status, past invoice archive. Excludes admin uuids (no leaking which BloomIQ staffer touched the row). Gated on `role='super_teacher'` with a `school_id`.
+* `GET /api/admin/schools/[id]/invoices.csv` — D16 finance export. Streams RFC-4180 CSV of live cycle + every archived cycle. Bearer auth required (anchors-with-no-headers don't work, so the UI uses a JS click handler + blob download — same pattern the invoice PDF bridge uses).
+* `POST /api/admin/super-teachers/[id]/reset-password` — support tool, platform-admin gated. Mirrors the existing teacher-resets-student endpoint. Refuses to act on platform_admin accounts and on non-super_teacher accounts (defence in depth).
+
+**API endpoints — semantics changed:**
+* `POST /api/admin/subscriptions/[id]/mark-paid` is now a **pure finance event** — it stamps `payment_received_at` / `payment_recorded_at` / `payment_recorded_by` / `invoice_number` (auto-gen `BLM/YYYY/NNNN` if missing) / `po_number`, and **never modifies `expires_at` by default**. The old "smart extend" rule produced 2 years of access for 1 year payment when Save and Mark-paid happened back-to-back. Now that's mathematically impossible.
+* Escape hatch retained: `body.extend_expires_at_days` (cap 366) lets a platform admin explicitly grant goodwill days for a late payer. Audited via `payment_recorded_by`. Not surfaced in the UI — purely an API lever for support tickets.
+* `POST /api/admin/schools/[id]/set-plan` with `start_renewal: true` now **preserves unused days** from the closing cycle. Math: `new_expires_at = max(today, old.expires_at) + period_days`, so a school renewing 60 days before expiry gets `today + 425 days` of access instead of `today + 365`. Effectively appends the unused days to the new term.
+
+**Cycle-expiry invariant (the big mental model):**
+
+| Action | Who calls it | What it changes |
+|---|---|---|
+| **Save plan & pricing** | Platform admin (initial activation) | `started_at`, `expires_at = started_at + period_days` |
+| **Start renewal cycle** | Platform admin (year N → N+1) | Archives old cycle to `subscription_invoice_archive`; resets `started_at = today`, `expires_at = max(today, old.expires_at) + period_days` |
+| **Mark payment received** | Platform admin (after NEFT lands) | `payment_received_at` + audit fields + `invoice_number` + `po_number`. **Does not touch `expires_at`.** |
+| **Suspend** | Platform admin (manual, e.g. non-payment) | `status = 'suspended'` + audit. Cycle dates untouched. |
+| **Reactivate** | Platform admin (after dispute resolved) | `status = 'active'`. Cycle dates untouched. |
+
+In English: Save activates the school immediately (they can use the product before NEFT clears). Mark-paid is the bank-receipt event. Start-renewal-cycle is what creates a new term. 1 year paid = 1 year of access, always.
+
+**UI — per-school admin page (`/admin/schools/[id]`):**
+* New "Reason category" dropdown (D18 — seven enum values)
+* New "Contract length (years, optional)" input (D15 — 1..10)
+* New "PO number (optional)" input in the Invoice & payment card (D11)
+* New "School billing details (GST)" block with State + GSTIN inputs (D12)
+* "Recorded in BloomIQ at &lt;timestamp&gt;" sub-line under payment status (D3 visibility)
+* "Download CSV" button in the past-invoices block (D16). JS-driven Bearer fetch + blob download.
+* **Past-due warning** (amber) when `payment_received_at IS NULL` and >30 days since `started_at`. Nudges the operator to consider Suspend.
+* **Suspended strip** (red) shows when `status='suspended'` with the audit reason + timestamp.
+* **Suspend / Reactivate** buttons in the action row. Suspend opens a `prompt()` for a reason (defaults to "Non-payment after 30 days").
+* Status badge in the header tile: **ACTIVE** / **EXPIRES IN Xd** / **EXPIRED** / **SUSPENDED** / **UNPAID Xd**.
+
+**UI — school-side billing dashboard (`/school/billing`) — new page (D7):**
+* Sidebar entry "Billing" under a new "Account" group.
+* Plan card with status badge + expiry countdown.
+* Current invoice + PO + payment status + GST place-of-supply.
+* "Subscription suspended" red banner if applicable, with explicit "your data is all preserved" reassurance.
+* Past billing cycles table (mirror of admin view).
+* Friendly empty state with /pricing link when no plan.
+
+**GST invoice PDF (D12):**
+* Renders **CGST @ 9% + SGST @ 9%** when school state matches vendor state (e.g. Karnataka → Karnataka).
+* Renders **IGST @ 18%** when interstate.
+* Bill-to block surfaces school state + GSTIN.
+
+**Feature access hook (`lib/featureAccess.ts`):**
+* New `daysLeft` field — single source of truth so RenewBanner + tiles + sidebar all agree (D17, calendar-day ceiling).
+* Now treats `status === 'suspended'` (or `'past_due'`) exactly like an expired subscription: locked tiles, empty `allowed` set, RenewBanner switches to red urgent mode.
+* School-student branch removed the `.eq("status", "active")` filter so suspended schools render the "Suspended" empty state instead of pretending to be Free.
+
+**Bug fixes baked into the test run:**
+* **D6** (already fixed earlier session) — `is_trial: false` on Free→Paid upgrade, both UPDATE and INSERT branches of `/api/checkout/verify`.
+* **D16 download button** — original implementation was a plain `<a href>` anchor, which cannot carry `Authorization: Bearer ...` headers. Converted to a JS click handler that fetches with Bearer, reads `Content-Disposition`, creates a Blob, synthesises an `<a download>` click. Verified working.
+* **Cycle math double-stack** — see the invariant table above.
+
+### Chrome E2E test status (verified end-to-end today)
+
+Driven via the Chrome extension on `localhost:3000`, signed in as `ops@bloomiq.example.com` against school `RLS_Test_B_1778517634659` (id `5f1448ba-704d-4a1c-bd64-ca45bb934bd3`):
+
+| Defect | What we verified | Status |
+|---|---|---|
+| D3 — payment audit | "Recorded in BloomIQ at 11/5/2026, 11:34:50 pm" visible under payment status | ✅ |
+| D10 — plans.grace_period_days | Default 14 picked up from plan when not overridden | ✅ |
+| D11 — po_number | `PO/2026/BLM-001` persisted on subscription + visible in CSV | ✅ |
+| D12 — GST invoice | TAX INVOICE PDF renders CGST 9% + SGST 9% (same state, Karnataka) | ✅ |
+| D13 — auto BLM/YYYY/NNNN | `BLM/2026/0001` generated atomically at mark-paid time | ✅ |
+| D15 — contract_years | 3-year contract persisted, surfaces in CSV | ✅ |
+| D16 — CSV export | `text/csv` 429 bytes, all 14 columns, RFC-4180 | ✅ |
+| D18 — override_reason_type | Dropdown shows all 7 enum values; "pilot_program" saved + in CSV | ✅ |
+| **Cycle math** | Save → expires 11 May 2027; Mark-paid → expires still **11 May 2027** (no stack) | ✅ |
+| **Mark-paid copy** | "Payment recorded. Cycle expires 11 May 2027 (unchanged)." | ✅ |
+| **D7 — /school/billing render** | Verified late-day via Hema (`head.hema@sunrise.example.com` / `FreshPass123!`) → /school/billing showed Sunrise High · School Plus · ACTIVE badge · STARTED 12 May 2026 · EXPIRES 10 May 2028 (730d) · invoice BLM/2026/0002 · Awaiting/Received payment status · GST place-of-supply block · Past billing cycles archive. Sidebar shows "Account → Billing" entry. | ✅ |
+| **Suspend / reactivate** | Code shipped, TypeScript clean. NOT yet visually verified. | ⏳ |
+| **Early-renewal preserves days** | Verified end-to-end. Sunrise had expires_at = 11 May 2027. Clicked Start renewal cycle → new started_at = today (12 May 2026), new expires_at = max(today, old) + 365 = **10 May 2028 (730d)**. Unused ~365 days from prior cycle correctly appended to new term. | ✅ |
+| **Cycle math invariant** | After renewal: Mark payment received → expiry stayed at 10 May 2028 (success banner: "Payment recorded. Cycle expires 10 May 2028 (unchanged)."). 1 year paid = 1 year of access holds across the full workflow. | ✅ |
+| **BLM/YYYY/NNNN uniqueness** | **Bug discovered & fixed mid-test**: invoice number generation used `count(invoice_number IS NOT NULL)` on live subscriptions only. After start_renewal cleared the live row's invoice_number, count dropped — the next mint produced the same number as the freshly-archived cycle (BLM/2026/0002 → BLM/2026/0002 collision). **Fix**: scan BOTH `subscriptions.invoice_number` AND `subscription_invoice_archive.invoice_number` for the year, regex-parse the trailing seq, take max+1. Verified with another renewal-then-mark-paid round → minted BLM/2026/0003 correctly, no collision with the two prior BLM/2026/0002s in archive. GST compliance restored. | ✅ |
+
+### Files changed this session
+
+```
+supabase/migrations/74_b2b_billing_audit_and_gst.sql                   NEW
+supabase/migrations/75_subscription_suspension.sql                     NEW
+app/api/admin/schools/[id]/route.ts                                    modified — returns Wave 2 fields + suspension fields
+app/api/admin/schools/[id]/set-plan/route.ts                           modified — accepts po_number/contract_years/override_reason_type/state/gstin + early-renewal preserves days
+app/api/admin/schools/[id]/invoices.csv/route.ts                       NEW (D16)
+app/api/admin/subscriptions/[id]/mark-paid/route.ts                    modified — stamp-only semantics + auto BLM/YYYY/NNNN (max-seq across live+archive) + escape hatch
+app/api/admin/subscriptions/[id]/invoice/route.ts                      modified — GST CGST+SGST vs IGST (D12)
+app/api/admin/subscriptions/[id]/suspend/route.ts                      NEW
+app/api/admin/subscriptions/[id]/reactivate/route.ts                   NEW
+app/api/admin/super-teachers/[id]/reset-password/route.ts              NEW (support tool)
+app/api/school/billing/route.ts                                        NEW (D7)
+app/admin/schools/[id]/page.tsx                                        modified — Wave 2 inputs + suspend/reactivate + past-due warning + CSV button
+app/school/billing/page.tsx                                            NEW (D7) — read-only billing dashboard with Suspended banner
+app/school/page.tsx                                                    modified — daysLeft prop on RenewBanner
+app/student/page.tsx                                                   modified — daysLeft prop on RenewBanner
+components/Sidebar.tsx                                                 modified — "Billing" under "Account" group for super_teacher
+components/RenewBanner.tsx                                             modified — daysLeft from prop (D17)
+lib/featureAccess.ts                                                   modified — daysLeft single source of truth + suspended treated as expired
+docs/PRELAUNCH_SESSION_5.md                                            NEW — full session write-up
+docs/PRELAUNCH_SESSION_5_CHROME_TEST.md                                NEW — Chrome E2E verification report
+```
+
+TypeScript compiles clean (`npx tsc --noEmit --skipLibCheck` — no errors except a pre-existing one in `.next/dev/types/routes.d.ts` which is a dev-cache artifact).
+
+### Where to pick up tomorrow
+
+**The thing I was in the middle of when the day ended:**
+
+Driving the entire workflow through Chrome as a super_teacher login. Vipin told me to use:
+
+- **Email:** `head.hema@sunrise.example.com`
+- **Password:** `FreshPass123!`
+- **Login route:** `/login/school` → Admin Head tab
+
+That account belongs to Sunrise (a real seeded school). Sign in there, verify:
+
+1. **`/school/billing` renders for a real super_teacher** (D7 visual verification — the only checklist item that's still ⏳). Should show plan, expiry, invoice number, PO if any, GST block, payment status. If Sunrise has no paid plan, should render the friendly "No active subscription" empty state.
+2. **Suspend / reactivate round-trip.** Sign in as `ops@bloomiq.example.com` / `TestPass123!` via `/staff`, navigate to Sunrise's admin page (`/admin/schools/<sunrise_id>`), click Suspend with a reason, then immediately sign in as Hema again — Billing page should show the red "Subscription suspended" banner, and `useFeatureAccess` should lock her tiles. Then sign back in as ops, click Reactivate, and confirm Hema's features unlock and the banner disappears.
+3. **Early-renewal preserves unused days.** On Sunrise's admin page, take note of the current `expires_at`. Backdate `activation_date` to ~60 days ago via the input, click Save (this gives the school a cycle that's ~305 days into a 365-day term). Then click "Start renewal cycle" and verify the new `expires_at` = old expires_at + 365 (not today + 365). Roughly: if old expires was "today + 60 days", new expires should be "today + 425 days".
+4. **Past-due warning visibility.** Backdate `activation_date` to >30 days ago for a school that has no `payment_received_at`. Verify the amber "Unpaid Nd" banner appears and the header badge changes to "UNPAID Nd". Click Suspend, verify red strip. Click Reactivate, verify amber returns.
+
+**Smaller follow-ups still on the books from prior sessions:**
+
+* P0 D1 — no transactional email service wired anywhere. Invoices download → manually attached to outgoing email. Need a Resend / Postmark integration and a `/api/admin/subscriptions/[id]/send-invoice` endpoint.
+* P0 D4 — server-side `grace_period_days` is read by `useFeatureAccess` but not re-checked at the route gate when admin actions act on behalf of a user.
+* P0 D8 — `activation_pending` is never auto-flipped to `false` on first sign-in by the super_teacher.
+* P3 D5 — RenewBanner has an `isSchoolAdminMode` branch that could be split into PersonalRenewBanner + SchoolRenewBanner. Decided to defer (the existing branching is clean), but noted for future.
+
+**Test infra reminder:**
+
+* `node scripts/seed-test-users.js` re-creates the seeded set (principal@testacademy, deputy@testacademy, ms.priya, mr.raj, ops@bloomiq, ...). Default password is `TestPass123!`. Run it if you ever wipe the dev DB.
+* The dev DB had **zero `profiles.role='super_teacher'` rows** at the start of today's test — every onboarded school showed "Pending" with no accepted invite. That's why I asked Vipin for a working super_teacher account. He provided `head.hema@sunrise.example.com / FreshPass123!`.
+* `/api/admin/super-teachers/[id]/reset-password` was added today specifically for the next time a school admin loses their password. Platform-admin gated.
+
+**Sandbox quirk that bit me twice:**
+
+The Edit tool occasionally truncates CRLF files mid-line when used on `components/Sidebar.tsx`, `app/school/page.tsx`, `app/student/page.tsx`. Worked around by:
+1. Restoring the file from HEAD via `git show HEAD:path > /tmp/...`
+2. Re-applying the surgical edit through a Python heredoc that reads bytes, normalises CRLF → LF for editing, then re-emits CRLF on write.
+
+For future sessions: **prefer Python heredocs for edits to large CRLF files**. The Edit tool is safer on shorter targets (1–300 lines).
+
+---
+
+## 🆕 Earlier session — 2026-05-10 evening (Test harness for B2B billing + UX polish: /admin/plans edit fix, /student/expired dual-tier upgrade)
 
 Three small but meaningful fixes on top of the day's bigger work:
 

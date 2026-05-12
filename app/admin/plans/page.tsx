@@ -113,7 +113,18 @@ export default function PlansPage() {
 
   return (
     <div className="fade-in">
-      <FreeTrialSettings />
+      <div className="mb-4 rounded-xl border border-indigo-200 bg-indigo-50/60 px-4 py-3 flex items-center justify-between gap-3 flex-wrap">
+        <div className="text-sm">
+          <strong className="text-indigo-900">Free-tier caps</strong>
+          <span className="text-slate-700"> — daily quotas and lifetime-once tastes are now editable.</span>
+        </div>
+        <a
+          href="/admin/free-tier-limits"
+          className="text-sm font-semibold rounded-md bg-indigo-600 text-white px-3 py-1.5 hover:bg-indigo-700"
+        >
+          Edit free-tier limits →
+        </a>
+      </div>
 
       <div className="flex items-start justify-between gap-3 flex-wrap mb-1">
         <h1 className="h1 flex items-center gap-2"><Layers size={28} /> Plan catalogue</h1>
@@ -323,105 +334,3 @@ export default function PlansPage() {
   );
 }
 
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Free trial duration setting — small admin-only control.
-// Reads/writes subscription_limits.free_trial_days via /api/admin/free-trial-
-// settings. Setting > 0 enables auto-granted Premium trials for every new
-// independent student on first sign-in.
-// ─────────────────────────────────────────────────────────────────────────────
-
-function FreeTrialSettings() {
-  const [days, setDays] = useState<number | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [msg, setMsg] = useState<string | null>(null);
-
-  useEffect(() => {
-    (async () => {
-      try {
-        const sb = supabaseBrowser();
-        const { data: { session } } = await sb.auth.getSession();
-        if (!session) return;
-        const r = await fetch("/api/admin/free-trial-settings", {
-          headers: { Authorization: `Bearer ${session.access_token}` },
-          cache: "no-store",
-        });
-        if (!r.ok) return;
-        const j = await r.json() as { ok?: boolean; free_trial_days?: number };
-        if (j?.ok) setDays(j.free_trial_days ?? 0);
-      } catch { /* silent — admin setting just stays hidden on failure */ }
-    })();
-  }, []);
-
-  async function save() {
-    if (days == null) return;
-    if (!Number.isFinite(days) || days < 0 || days > 90) {
-      setMsg("Must be an integer between 0 and 90.");
-      return;
-    }
-    setSaving(true);
-    setMsg(null);
-    try {
-      const sb = supabaseBrowser();
-      const { data: { session } } = await sb.auth.getSession();
-      if (!session) throw new Error("Not signed in");
-      const r = await fetch("/api/admin/free-trial-settings", {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${session.access_token}`,
-        },
-        body: JSON.stringify({ free_trial_days: days }),
-      });
-      const j = await r.json();
-      if (!r.ok || !j.ok) throw new Error(j.error || "Save failed");
-      setMsg(days === 0 ? "Saved — Free plan is now permanent (no expiry)" : `Saved — new students get Free for ${days} days, then locked out until upgrade`);
-    } catch (e) {
-      setMsg(e instanceof Error ? e.message : "Save failed");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  if (days == null) return null;
-
-  return (
-    <div className="card mb-6 p-5"
-         style={{ background: "rgba(99,102,241,0.04)", borderColor: "rgba(99,102,241,0.25)" }}>
-      <div className="flex items-start justify-between gap-3 flex-wrap">
-        <div>
-          <div className="text-xs uppercase tracking-wider font-semibold mb-1"
-               style={{ color: "#6366f1" }}>
-            Free plan validity — new student sign-ups
-          </div>
-          <h3 className="text-base font-bold">Auto-expire Free plan after N days</h3>
-          <p className="text-xs opacity-80 mt-1 max-w-lg leading-relaxed">
-            Every new independent student gets the Free plan (3 drills/day) for N days,
-            then is locked out and prompted to upgrade. Set to 0 for permanent Free. Capped at 90 days.
-          </p>
-        </div>
-        <div className="flex items-center gap-2 flex-shrink-0">
-          <input
-            type="number"
-            min={0}
-            max={90}
-            value={days}
-            onChange={(e) => setDays(Math.max(0, Math.min(90, parseInt(e.target.value || "0", 10) || 0)))}
-            className="input w-24 text-center"
-          />
-          <span className="text-xs opacity-70">days</span>
-          <button
-            onClick={save}
-            disabled={saving}
-            className="btn btn-primary disabled:opacity-50"
-          >
-            {saving ? "Saving…" : "Save"}
-          </button>
-        </div>
-      </div>
-      {msg ? (
-        <p className="text-xs mt-2 opacity-80">{msg}</p>
-      ) : null}
-    </div>
-  );
-}

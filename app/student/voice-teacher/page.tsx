@@ -131,6 +131,21 @@ export default function VoiceTeacherPage() {
       const sb = supabaseBrowser();
       const { data: { session } } = await sb.auth.getSession();
       if (!session) throw new Error("Your session expired — please sign in again.");
+
+      // Free-tier lifetime-once gate on Voice AI Teacher: claim the touch on
+      // the FIRST message of this page session. Paid users always succeed.
+      if (history.length === 0) {
+        const tr = await fetch("/api/feature/touch", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+          body: JSON.stringify({ key: "voice_teacher" }),
+        });
+        if (!tr.ok) {
+          const tj = await tr.json().catch(() => ({}));
+          throw new Error(tj?.error || "Voice AI Teacher is a Premium feature.");
+        }
+      }
+
       const r = await fetch("/api/tutor/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },

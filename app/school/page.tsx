@@ -456,6 +456,7 @@ export default function SchoolHome() {
           isExpired={access.isExpired}
           isInGrace={access.isInGrace}
           graceRemainingDays={access.graceRemainingDays}
+          daysLeft={access.daysLeft}
           planSlug={access.planSlug}
           source={access.source}
           schoolName={school?.name || null}

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { groqJSON } from "@/lib/groq";
 import { BLOOM_LEVELS, type BloomLevel } from "@/lib/bloom";
 import { getBearer, supabaseServer } from "@/lib/supabase/server";
+import { checkDailyQuota, recordDailyUse } from "@/lib/freeQuota";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -112,6 +113,14 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Explanation is too long (max 4000 characters)." }, { status: 400 });
     }
 
+    const gate = await checkDailyQuota(user.id, "teach_back");
+    if (!gate.allowed) {
+      return NextResponse.json(
+        { error: gate.reason, code: "free_daily_cap", cap: gate.cap, used: gate.used },
+        { status: 402 },
+      );
+    }
+
     const userPrompt = `Topic: ${topic}\n\nStudent's explanation:\n"""\n${explanation}\n"""\n\nGrade it strictly per the rubric and return JSON only.`;
     const raw = await groqJSON(SYSTEM, userPrompt);
     const grade = normalizeGrade(raw);
@@ -132,6 +141,8 @@ export async function POST(req: Request) {
       .select("id, created_at")
       .single();
     if (insErr) return NextResponse.json({ error: insErr.message }, { status: 500 });
+
+    await recordDailyUse(user.id, "teach_back");
 
     return NextResponse.json({
       ok: true,

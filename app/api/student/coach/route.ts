@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { groqText } from "@/lib/groq";
 import { getBearer, supabaseServer } from "@/lib/supabase/server";
 import { buildStudentContext } from "@/lib/studentContext";
+import { checkDailyQuota, recordDailyUse } from "@/lib/freeQuota";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -84,6 +85,14 @@ export async function POST(req: Request) {
       );
     }
 
+    const gate = await checkDailyQuota(user.id, "student_coach");
+    if (!gate.allowed) {
+      return NextResponse.json(
+        { error: gate.reason, code: "free_daily_cap", cap: gate.cap, used: gate.used },
+        { status: 402 }
+      );
+    }
+
     const body = await req.json().catch(() => ({}));
     const message = safeString(body.message, 1000);
     const history = normaliseHistory(body.history);
@@ -100,6 +109,8 @@ export async function POST(req: Request) {
       : `You: ${message}\n\nCoach:`;
 
     const reply = await groqText(system, userPrompt);
+
+    await recordDailyUse(user.id, "student_coach");
 
     return NextResponse.json({
       reply,

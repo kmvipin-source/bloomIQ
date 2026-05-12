@@ -29,7 +29,10 @@ export async function GET(req: Request, ctx: Ctx) {
 
     const { data: school } = await admin
       .from("schools")
-      .select("id, name, super_teacher_id, join_code")
+      // D12: also select state + gstin so the bill-to block and the
+      // CGST/SGST-vs-IGST decision have the data they need without an
+      // extra round-trip.
+      .select("id, name, super_teacher_id, join_code, state, gstin")
       .eq("id", id)
       .maybeSingle();
     if (!school) return NextResponse.json({ error: "School not found" }, { status: 404 });
@@ -43,22 +46,34 @@ export async function GET(req: Request, ctx: Ctx) {
       expires_at: string | null;
       override_price_paise: number | null;
       override_reason: string | null;
+      override_reason_type: string | null;  // D18
       override_set_by: string | null;
       override_set_at: string | null;
       invoice_number: string | null;
       payment_method: string | null;
       payment_received_at: string | null;
+      payment_recorded_at: string | null;   // D3
+      payment_recorded_by: string | null;   // D3
+      po_number: string | null;             // D11
       contracted_students: number | null;
+      contract_years: number | null;        // D15
       activation_pending: boolean | null;
       grace_period_days: number | null;
+      suspended_at: string | null;          // Migration 75
+      suspended_by: string | null;
+      suspended_reason: string | null;
     };
     const { data: subRaw } = await admin
       .from("subscriptions")
       .select(
         "id, plan_id, tier, status, started_at, expires_at, " +
-        "override_price_paise, override_reason, override_set_by, override_set_at, " +
-        "invoice_number, payment_method, payment_received_at, contracted_students, " +
-        "activation_pending, grace_period_days"
+        "override_price_paise, override_reason, override_reason_type, " +
+        "override_set_by, override_set_at, " +
+        "invoice_number, payment_method, payment_received_at, " +
+        "payment_recorded_at, payment_recorded_by, po_number, " +
+        "contracted_students, contract_years, " +
+        "activation_pending, grace_period_days, " +
+        "suspended_at, suspended_by, suspended_reason"
       )
       .eq("school_id", id)
       .maybeSingle();

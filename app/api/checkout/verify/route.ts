@@ -192,6 +192,9 @@ export async function POST(req: Request) {
           started_at: new Date().toISOString(),
           expires_at: expiresAt,
           school_id: null,
+          is_trial: false,  // D6: explicit clear on Free→Paid upgrade so the
+                            // expired-Free-trial check in /api/auth/me cannot
+                            // ever mis-fire against a paying user.
         })
         .eq("id", existing.id);
       if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 });
@@ -207,6 +210,7 @@ export async function POST(req: Request) {
           status: "active",
           started_at: new Date().toISOString(),
           expires_at: expiresAt,
+          is_trial: false,  // D6: a fresh paid subscription is never a trial.
         });
       if (insErr) return NextResponse.json({ error: insErr.message }, { status: 500 });
     }
