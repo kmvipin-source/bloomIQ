@@ -24,7 +24,7 @@
     "katex": "^0.16.45",
     "lucide-react": "^0.453.0",
     "motion": "^12.38.0",
-    "next": "16.2.4",
+    "next": "16.2.6",
     "nodemailer": "^8.0.7",
     "posthog-js": "^1.372.10",
     "qrcode": "^1.5.4",
