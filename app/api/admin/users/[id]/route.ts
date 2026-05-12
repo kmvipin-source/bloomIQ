@@ -141,13 +141,18 @@ export async function DELETE(
       );
     }
 
-    // Profiles row is wiped first so the FK cascades on app tables
-    // (class_members, class_teachers, quizzes, etc.) fire before we
-    // remove the auth user. Then drop auth.users itself.
-    const { error: pErr } = await admin.from("profiles").delete().eq("id", id);
-    if (pErr) return NextResponse.json({ error: pErr.message }, { status: 500 });
+    // Delete the auth.users row first so the on-cascade FK from
+    // profiles wipes the profile row in the same transaction. The
+    // previous order (profiles first, then auth) left an orphan
+    // auth.users entry if the second delete failed — no profile to
+    // join against, but the email/UUID was still consumed and could
+    // not be reused. Switching the order makes the operation
+    // effectively atomic at the DB level.
     const { error: aErr } = await admin.auth.admin.deleteUser(id);
     if (aErr) return NextResponse.json({ error: aErr.message }, { status: 500 });
+    // Belt + suspenders: if for any reason the cascade didn't wipe
+    // the profile row, do it now. Best-effort — ignore errors.
+    await admin.from("profiles").delete().eq("id", id);
     return NextResponse.json({ ok: true });
   } catch (e) {
     return NextResponse.json(

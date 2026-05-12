@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { groqJSON } from "@/lib/groq";
 import { BLOOM_LEVELS, type BloomLevel } from "@/lib/bloom";
 import { getBearer, supabaseServer } from "@/lib/supabase/server";
-import { checkLifetimeUse, recordLifetimeUse } from "@/lib/freeQuota";
+import { checkRateLimit } from "@/lib/rateLimit";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -115,14 +115,8 @@ export async function POST(req: Request) {
     const sb = supabaseServer(token);
     const { data: { user } } = await sb.auth.getUser();
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-    const gate = await checkLifetimeUse(user.id, "rank");
-    if (!gate.allowed) {
-      return NextResponse.json(
-        { error: gate.reason, code: "free_lifetime_used" },
-        { status: 402 }
-      );
-    }
+    const rate = checkRateLimit(user.id, "rank.predict", { capacity: 10, refillPerHour: 20 });
+    if (!rate.allowed) return NextResponse.json({ error: "Too many requests.", code: "rate_limited" }, { status: 429, headers: { "Retry-After": String(rate.retryAfterSec) } });
 
     const body = await req.json().catch(() => ({}));
     const examTypeRaw = String(body.exam_type || "JEE_MAIN");
@@ -233,8 +227,6 @@ Return the 3-recommendation JSON.`;
         warning: insErr.message,
       });
     }
-
-    await recordLifetimeUse(user.id, "rank");
 
     return NextResponse.json({
       ok: true,

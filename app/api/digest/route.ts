@@ -25,7 +25,16 @@ export async function POST(req: Request) {
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const { quizId } = await req.json();
-    const { data: quiz } = await sb.from("quizzes").select("*").eq("id", quizId).maybeSingle();
+    // Restrict to the caller's own quiz. Without the owner_id filter
+    // an authenticated user could request a digest of any quiz they
+    // could read through RLS — and any RLS gap would leak attempt
+    // rows belonging to another teacher's students.
+    const { data: quiz } = await sb
+      .from("quizzes")
+      .select("*")
+      .eq("id", quizId)
+      .eq("owner_id", user.id)
+      .maybeSingle();
     if (!quiz) return NextResponse.json({ error: "Quiz not found" }, { status: 404 });
 
     const { data: atts } = await sb

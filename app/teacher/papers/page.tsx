@@ -13,12 +13,18 @@ export default function PapersListPage() {
 
   async function load() {
     setLoading(true);
-    const sb = supabaseBrowser();
-    const { data: { user } } = await sb.auth.getUser();
-    if (!user) return;
-    const { data } = await sb.from("exam_papers").select("*").eq("owner_id", user.id).order("created_at", { ascending: false });
-    setPapers((data as ExamPaper[]) || []);
-    setLoading(false);
+    try {
+      const sb = supabaseBrowser();
+      const { data: { user } } = await sb.auth.getUser();
+      if (!user) return;
+      const { data } = await sb.from("exam_papers").select("*").eq("owner_id", user.id).order("created_at", { ascending: false });
+      setPapers((data as ExamPaper[]) || []);
+    } finally {
+      // Always clear the spinner so a missing user / RLS error doesn't
+      // leave the page stuck on the loader (was a silent dead-end if
+      // auth.getUser returned null).
+      setLoading(false);
+    }
   }
   useEffect(() => { load(); }, []);
 
@@ -46,14 +52,22 @@ export default function PapersListPage() {
       ) : (
         <div className="grid gap-3 mt-6">
           {papers.map((p) => (
-            <Link
+            // Card is a plain div — title is the explicit Link, Print is
+            // a real <button> sibling. Previously the whole card was an
+            // <a> with a <span onClick> inside, which was not keyboard-
+            // reachable and produced invalid HTML.
+            <div
               key={p.id}
-              href={`/teacher/papers/${p.id}`}
               className="card card-hover flex items-start justify-between gap-4 flex-wrap"
             >
               <div className="min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className="font-semibold">{p.name}</span>
+                  <Link
+                    href={`/teacher/papers/${p.id}`}
+                    className="font-semibold hover:underline"
+                  >
+                    {p.name}
+                  </Link>
                   {p.status === "finalized" ? (
                     <span className="text-[10px] uppercase tracking-wide font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5 inline-flex items-center gap-1">
                       <CheckCircle2 size={10} /> Finalized
@@ -73,13 +87,14 @@ export default function PapersListPage() {
                   <span>Created {new Date(p.created_at).toLocaleDateString()}</span>
                 </div>
               </div>
-              <span
+              <button
+                type="button"
                 className="btn btn-secondary text-xs"
-                onClick={(e) => { e.preventDefault(); e.stopPropagation(); window.open(`/teacher/papers/${p.id}/print`, "_blank"); }}
+                onClick={() => window.open(`/teacher/papers/${p.id}/print`, "_blank")}
               >
                 <Printer size={14} /> Print
-              </span>
-            </Link>
+              </button>
+            </div>
           ))}
         </div>
       )}

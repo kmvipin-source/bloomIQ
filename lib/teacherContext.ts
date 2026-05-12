@@ -26,7 +26,7 @@ export type TeacherContext = {
   classes: Array<{
     id: string;
     name: string;
-    role: "primary" | "co";
+    role: "primary" | "co" | "acting";
     students: number;
     attempts_30d: number;
     avg_score_30d: number | null;
@@ -138,11 +138,20 @@ export async function buildTeacherContext(teacherId: string): Promise<TeacherCon
     .eq("teacher_id", teacherId);
   const classTeachers: ClassTeacherRow[] = (ctRaw as ClassTeacherRow[] | null) || [];
 
-  const roleByClass = new Map<string, "primary" | "co">();
+  // Acting cover teachers are surfaced distinctly from co-teachers —
+  // class-context normalises acting → primary for permissions, but the
+  // LLM snapshot keeps the distinction so the digest copy can reflect
+  // "Acting Primary on Class 9-B" accurately. Primary wins ties, then
+  // acting, then co.
+  const roleByClass = new Map<string, "primary" | "co" | "acting">();
+  const rank = { primary: 3, acting: 2, co: 1 } as const;
   for (const ct of classTeachers) {
-    const role: "primary" | "co" = ct.role === "primary" ? "primary" : "co";
-    // If they're listed both ways, primary wins.
-    if (roleByClass.get(ct.class_id) === "primary") continue;
+    const role: "primary" | "co" | "acting" =
+      ct.role === "primary" ? "primary"
+      : ct.role === "acting" ? "acting"
+      : "co";
+    const existing = roleByClass.get(ct.class_id);
+    if (existing && rank[existing] >= rank[role]) continue;
     roleByClass.set(ct.class_id, role);
   }
   const classIds = Array.from(roleByClass.keys());

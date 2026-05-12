@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { groqJSON, groqJSONVision } from "@/lib/groq";
 import { BLOOM_LEVELS, isBloomLevel, type BloomLevel } from "@/lib/bloom";
 import { getBearer, supabaseServer } from "@/lib/supabase/server";
-import { checkLifetimeUse, recordLifetimeUse } from "@/lib/freeQuota";
+import { checkRateLimit, checkDailyCap } from "@/lib/rateLimit";
 
 export const runtime = "nodejs";
 export const maxDuration = 90;
@@ -88,13 +88,11 @@ export async function POST(req: Request) {
     const { data: { user } } = await sb.auth.getUser();
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-    const gate = await checkLifetimeUse(user.id, "xray");
-    if (!gate.allowed) {
-      return NextResponse.json(
-        { error: gate.reason, code: "free_lifetime_used" },
-        { status: 402 }
-      );
-    }
+    // Vision endpoint — expensive. Burst 5, refill 10/hr, hard daily cap 20.
+    const rate = checkRateLimit(user.id, "xray.analyze", { capacity: 5, refillPerHour: 10 });
+    if (!rate.allowed) return NextResponse.json({ error: "Too many requests.", code: "rate_limited" }, { status: 429, headers: { "Retry-After": String(rate.retryAfterSec) } });
+    const daily = checkDailyCap(user.id, "xray.analyze", 20);
+    if (!daily.allowed) return NextResponse.json({ error: `Daily limit reached (${daily.limit}).`, code: "daily_cap" }, { status: 429 });
 
     const body = await req.json().catch(() => ({}));
     const kind: string = String(body.kind || "");
@@ -155,8 +153,6 @@ export async function POST(req: Request) {
       .select("id")
       .single();
     if (xrErr || !xray) return NextResponse.json({ error: xrErr?.message || "Failed to save xray" }, { status: 500 });
-
-    await recordLifetimeUse(user.id, "xray");
 
     // Persist per-question rows. answer + explanation come from migration 17.
     // If that migration hasn't been applied to the deployed DB yet, retry

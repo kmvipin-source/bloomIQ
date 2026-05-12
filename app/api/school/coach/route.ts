@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { groqText } from "@/lib/groq";
-import { getBearer, supabaseServer } from "@/lib/supabase/server";
+import { getBearer, supabaseServer, supabaseAdmin } from "@/lib/supabase/server";
 import { buildSchoolContext } from "@/lib/schoolContext";
 import { checkCoachQuota, logCoachCall } from "@/lib/coachQuota";
 
@@ -72,12 +72,15 @@ export async function POST(req: Request) {
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     // Role + school check. We only let super_teachers in — they're the only
-    // role that's supposed to see school-wide aggregates.
-    const { data: prof } = await sb
+    // role that's supposed to see school-wide aggregates. Use service-role
+    // for the lookup so an RLS race on the first request after sign-in
+    // doesn't 403 a legitimate Head.
+    const adminClient = supabaseAdmin();
+    const { data: prof } = await adminClient
       .from("profiles")
       .select("role, school_id")
       .eq("id", user.id)
-      .single();
+      .maybeSingle();
     if (!prof || prof.role !== "super_teacher") {
       return NextResponse.json(
         { error: "Only school admins can use the coach." },

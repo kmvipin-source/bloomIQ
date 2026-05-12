@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { groqJSON } from "@/lib/groq";
 import { getBearer, supabaseServer } from "@/lib/supabase/server";
+import { checkRateLimit } from "@/lib/rateLimit";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -52,6 +53,8 @@ export async function POST(req: Request) {
     const sb = supabaseServer(token);
     const { data: { user } } = await sb.auth.getUser();
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const rate = checkRateLimit(user.id, "misconception.diagnose", { capacity: 10, refillPerHour: 20 });
+    if (!rate.allowed) return NextResponse.json({ error: "Too many requests.", code: "rate_limited" }, { status: 429, headers: { "Retry-After": String(rate.retryAfterSec) } });
 
     const body = await req.json().catch(() => ({}));
     const attempt_id: string = String(body.attempt_id || "");

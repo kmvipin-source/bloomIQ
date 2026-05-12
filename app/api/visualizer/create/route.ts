@@ -3,7 +3,8 @@ import { groqJSON } from "@/lib/groq";
 import { geminiJSON, geminiText, isGeminiConfigured } from "@/lib/gemini";
 import { fixFrameLayout, type LayoutElement } from "@/lib/visualizerLayout";
 import { getBearer, supabaseServer } from "@/lib/supabase/server";
-import { checkLifetimeUse, recordLifetimeUse } from "@/lib/freeQuota";
+import { requireFeature } from "@/lib/featureAccess.server";
+import { checkRateLimit, checkDailyCap } from "@/lib/rateLimit";
 
 export const runtime = "nodejs";
 export const maxDuration = 90;
@@ -409,13 +410,23 @@ export async function POST(req: Request) {
     const sb = supabaseServer(token);
     const { data: { user } } = await sb.auth.getUser();
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    // Visualizer is expensive (two Gemini calls per request). Burst 3,
+    // refill 6/hr, hard daily cap 15.
+    const rate = checkRateLimit(user.id, "visualizer.create", { capacity: 3, refillPerHour: 6 });
+    if (!rate.allowed) return NextResponse.json({ error: "Too many requests.", code: "rate_limited" }, { status: 429, headers: { "Retry-After": String(rate.retryAfterSec) } });
+    const daily = checkDailyCap(user.id, "visualizer.create", 15);
+    if (!daily.allowed) return NextResponse.json({ error: `Daily limit reached (${daily.limit}).`, code: "daily_cap" }, { status: 429 });
 
-    // Free-tier lifetime-once gate (admin-configurable). Paid users uncapped.
-    const gate = await checkLifetimeUse(user.id, "visualizer");
+    // Server-side feature gate. Concept Visualizer is gated to top-tier
+    // plans (Premium Plus / School Plus). The client-side dashboard tile
+    // already locks-and-paywalls non-eligible users, but a determined user
+    // could POST to this endpoint directly — so we enforce on the server
+    // too. Returns a structured 403 the UI can show as an upgrade CTA.
+    const gate = await requireFeature(user.id, "concept_visualizer");
     if (!gate.allowed) {
       return NextResponse.json(
-        { error: gate.reason, code: "free_lifetime_used" },
-        { status: 402 },
+        { error: (gate as unknown as { reason: string }).reason, code: "feature_locked", required_tier: (gate as unknown as { requiredTier: string | null }).requiredTier },
+        { status: 403 },
       );
     }
 
@@ -550,8 +561,6 @@ Stay under 350 words. No JSON. No backticks.`;
       .select("id, created_at")
       .single();
     if (insErr) return NextResponse.json({ error: insErr.message }, { status: 500 });
-
-    await recordLifetimeUse(user.id, "visualizer");
 
     return NextResponse.json({
       ok: true,

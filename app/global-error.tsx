@@ -1,16 +1,18 @@
 "use client";
 
-import * as Sentry from "@sentry/nextjs";
 import { useEffect } from "react";
 
 /**
  * Top-level React error boundary. Triggered when a server-component render,
  * a route layout, or any unhandled exception bubbles up past every page-level
- * boundary. We forward the error to Sentry and show the user a brief recovery
- * affordance instead of a white screen.
+ * boundary. Shows a brief recovery affordance instead of a white screen.
  *
  * Per Next.js App Router contract this MUST live at app/global-error.tsx,
  * MUST render <html><body>, and MUST be a client component.
+ *
+ * Reporting: forwards the error to PostHog when initialised, and always
+ * console.errors with digest + message so it's visible in Vercel runtime
+ * logs / DevTools without a remote service.
  */
 export default function GlobalError({
   error,
@@ -20,7 +22,19 @@ export default function GlobalError({
   reset: () => void;
 }) {
   useEffect(() => {
-    Sentry.captureException(error);
+    // Vercel runtime + DevTools console is the cheapest signal.
+    // eslint-disable-next-line no-console
+    console.error("[global-error]", error.digest || "no-digest", error.message, error.stack);
+    // Best-effort PostHog hook — silent no-op when the SDK isn't on
+    // the page (logged-out or page-error rendered before init).
+    try {
+      const ph = (globalThis as { posthog?: { capture?: (e: string, p?: Record<string, unknown>) => void } }).posthog;
+      ph?.capture?.("$exception", {
+        $exception_message: error.message,
+        $exception_type: error.name,
+        digest: error.digest || null,
+      });
+    } catch { /* swallow */ }
   }, [error]);
 
   return (
@@ -40,8 +54,7 @@ export default function GlobalError({
             <div style={{ fontSize: 48, marginBottom: 12 }}>⚠️</div>
             <h1 style={{ margin: 0, fontSize: 22, color: "#0f172a" }}>Something went wrong</h1>
             <p style={{ margin: "12px 0 0", fontSize: 14, color: "#475569" }}>
-              We've logged this error and our team will investigate. You can try again or
-              head back to the homepage.
+              An unexpected error occurred. You can try again or head back to the homepage.
             </p>
             {error.digest && (
               <p style={{ margin: "8px 0 0", fontSize: 11, color: "#94a3b8", fontFamily: "monospace" }}>

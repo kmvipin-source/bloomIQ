@@ -121,6 +121,24 @@ export default function OnboardSchoolPage() {
 
   async function setSchoolPlan(schoolId: string, planId: string) {
     setPlanErr(null);
+    // Plan changes affect billing. Confirm before firing the API
+    // call — a stray click on the dropdown shouldn't silently
+    // re-bill or shift a school onto a different tier. Operators who
+    // need bulk speed can still use the per-school admin console.
+    const school = list.find((s) => s.id === schoolId);
+    const fromLabel = school?.current_plan_label || "no plan";
+    const toLabel = planId
+      ? (planOptions.find((p) => p.id === planId)?.label || "selected plan")
+      : "no plan";
+    if (fromLabel !== toLabel) {
+      const ok = window.confirm(
+        `Change plan for "${school?.name || schoolId}" from "${fromLabel}" to "${toLabel}"?`
+      );
+      if (!ok) {
+        await loadList(); // reset dropdown to current value
+        return;
+      }
+    }
     setPlanBusy((prev) => ({ ...prev, [schoolId]: true }));
     try {
       const sb = supabaseBrowser();

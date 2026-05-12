@@ -90,8 +90,15 @@ export default function PaperDetailPage() {
     const a = questions[idx];
     const b = questions[target];
     const sb = supabaseBrowser();
-    await sb.from("exam_paper_questions").update({ position: b.position }).eq("id", a.id);
+    // Three-step swap via a sentinel position. Two direct UPDATEs
+    // (a.position = b.position; b.position = a.position) would
+    // either collide on a unique (paper_id, position) constraint or
+    // leave both rows briefly at the same position. The sentinel (-1)
+    // sits outside the valid 0..N range, so it's safe to park `a` on
+    // it while `b` moves into a's slot.
+    await sb.from("exam_paper_questions").update({ position: -1 }).eq("id", a.id);
     await sb.from("exam_paper_questions").update({ position: a.position }).eq("id", b.id);
+    await sb.from("exam_paper_questions").update({ position: b.position }).eq("id", a.id);
     await load();
   }
 
@@ -171,7 +178,23 @@ export default function PaperDetailPage() {
           </div>
           <div>
             <label className="label">Duration (min)</label>
-            <input type="number" className="input" value={paper.duration_minutes ?? ""} onChange={(e) => setPaper({ ...paper, duration_minutes: +e.target.value || null })} onBlur={() => savePaperMeta({ duration_minutes: paper.duration_minutes })} />
+            <input
+              type="number"
+              className="input"
+              value={paper.duration_minutes ?? ""}
+              onChange={(e) => {
+                // `+"" || null` collapses 0 and "" both to null, so a
+                // user explicitly typing 0 saw the field blank itself.
+                // Treat "" as null (cleared), but keep the typed number
+                // (including 0) so it round-trips correctly.
+                const raw = e.target.value;
+                setPaper({
+                  ...paper,
+                  duration_minutes: raw === "" ? null : Number(raw),
+                });
+              }}
+              onBlur={() => savePaperMeta({ duration_minutes: paper.duration_minutes })}
+            />
           </div>
         </div>
         <div className="mt-3">

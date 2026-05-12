@@ -69,7 +69,7 @@ type SchoolDetail = {
     activation_pending: boolean | null;
     grace_period_days: number | null;
   };
-  plan: null | { id: string; slug: string | null; label: string | null; per_student_price_paise: number | null };
+  plan: null | { id: string; slug: string | null; label: string | null; per_student_price_paise: number | null; period_days: number | null };
   student_count: number;
   school_plans: Array<{ id: string; slug: string | null; label: string | null; per_student_price_paise: number | null }>;
   // Past billing cycles archived by "Start renewal cycle". Most-recent first.

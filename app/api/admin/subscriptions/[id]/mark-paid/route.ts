@@ -114,6 +114,17 @@ export async function POST(req: Request, ctx: RouteContext) {
       .eq("id", subscriptionId)
       .maybeSingle();
     if (!sub) return NextResponse.json({ error: "Subscription not found" }, { status: 404 });
+    // Refuse to mark an independent-student row paid through the B2B
+    // surface. This endpoint is the school-finance workflow (NEFT,
+    // cheque, manual override against an invoice). Student rows reach
+    // 'active' through /api/checkout/verify after Razorpay; routing
+    // them through mark-paid would skip Razorpay signature verification.
+    if (!sub.school_id) {
+      return NextResponse.json(
+        { error: "This subscription is not school-bound. Use the checkout flow instead." },
+        { status: 400 }
+      );
+    }
 
     // D13 — auto-generate invoice_number atomically at payment time so no
     // two simultaneous PDF downloads can mint the same sequence. We only

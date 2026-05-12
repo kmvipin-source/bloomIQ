@@ -16,6 +16,16 @@ export const dynamic = "force-dynamic";
  * the client because the user only hurts themselves by tampering, and
  * the simpler stateless flow avoids a DB round-trip per question.
  *
+ * KNOWN GAP — calibration cheat resistance:
+ *   Because correct_index is returned to the client, a tampered submit
+ *   body could declare all answers correct and inflate bloomiq_scores
+ *   up to 900. The BloomIQ Score is a self-narrative metric — it drives
+ *   the badge, /student/future copy, and Premium upsell narratives, but
+ *   nothing monetary. The honest-actor flow is unaffected. The proper
+ *   fix is a server-side calibration_sessions table that stores the
+ *   issued questions keyed by session_id so /submit can re-score against
+ *   server-trusted correct_indexes — tracked for a follow-up PR.
+ *
  * The client renders the quiz, then POSTs to /submit with the answers.
  * No DB rows are written here — calibrations + calibration_responses
  * land on submit, which is the right semantic boundary (an abandoned

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { groqText } from "@/lib/groq";
 import { getBearer, supabaseServer } from "@/lib/supabase/server";
+import { checkRateLimit } from "@/lib/rateLimit";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -32,7 +33,27 @@ const SYSTEM = `You are a patient teacher writing a clear, step-by-step worked s
 Format: short title line, then a markdown bullet list (5–10 bullets max). Show the reasoning, not just the answer. End with one short reflection sentence ("Watch out for…" or "Common confusion…").
 Do NOT include "Answer:" lines — assume the reader already knows the correct option. Plain text + simple markdown only.`;
 
+// Bounded LRU. Unbounded Map leaked memory in long-running Node
+// instances as users browsed an ever-growing question set. The Map
+// iteration order doubles as the recency list — re-set on read to
+// promote to most-recent.
+const CACHE_MAX = 500;
 const cache = new Map<string, { solution: string; generated_at: string }>();
+function cacheGet(id: string): { solution: string; generated_at: string } | undefined {
+  const hit = cache.get(id);
+  if (!hit) return undefined;
+  // Re-insert to bump LRU position.
+  cache.delete(id);
+  cache.set(id, hit);
+  return hit;
+}
+function cacheSet(id: string, val: { solution: string; generated_at: string }): void {
+  cache.set(id, val);
+  if (cache.size > CACHE_MAX) {
+    const oldest = cache.keys().next().value;
+    if (oldest) cache.delete(oldest);
+  }
+}
 
 function asOptions(x: unknown): string[] | null {
   if (!Array.isArray(x)) return null;
@@ -49,8 +70,10 @@ export async function GET(req: Request, ctx: RouteCtx) {
     const sb = supabaseServer(token);
     const { data: { user } } = await sb.auth.getUser();
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const rate = checkRateLimit(user.id, "qbank.solution", { capacity: 20, refillPerHour: 60 });
+    if (!rate.allowed) return NextResponse.json({ error: "Too many requests.", code: "rate_limited" }, { status: 429, headers: { "Retry-After": String(rate.retryAfterSec) } });
 
-    const cached = cache.get(id);
+    const cached = cacheGet(id);
     if (cached) return NextResponse.json(cached);
 
     const { data: q } = await sb
@@ -89,7 +112,7 @@ Write a step-by-step worked solution that walks the student through the reasonin
     }
 
     const out = { solution, generated_at: new Date().toISOString() };
-    cache.set(id, out);
+    cacheSet(id, out);
     return NextResponse.json(out);
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : "Solution failed" }, { status: 500 });

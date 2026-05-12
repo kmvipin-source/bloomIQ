@@ -95,10 +95,25 @@ export async function POST(req: Request, ctx: RouteContext) {
     //       How many days past expires_at the school still has full
     //       feature access (renew banner turns red but features keep
     //       working). Default 14, can be 0 for hard cutoff.
-    const startedAtIso: string | null =
-      typeof body.started_at === "string" && !Number.isNaN(Date.parse(body.started_at))
-        ? new Date(body.started_at).toISOString()
-        : null;
+    // Parse started_at. A YYYY-MM-DD string from a <input type="date">
+    // parses as UTC midnight in JS — an IST operator entering "1 Jun"
+    // would see "31 May 18:30 UTC" stored, then formatted back as
+    // "31 May" in some renderings. If the user sent a date-only string,
+    // anchor it to IST midnight (+05:30) instead so the wall-clock date
+    // round-trips correctly.
+    let startedAtIso: string | null = null;
+    if (typeof body.started_at === "string" && body.started_at.trim()) {
+      const raw = body.started_at.trim();
+      const isDateOnly = /^\d{4}-\d{2}-\d{2}$/.test(raw);
+      const ts = Date.parse(isDateOnly ? `${raw}T00:00:00+05:30` : raw);
+      if (!Number.isNaN(ts)) startedAtIso = new Date(ts).toISOString();
+    }
+    // Track whether the caller explicitly included activation_pending in
+    // the body. The flag is meant to be one-shot (set at onboarding,
+    // cleared by /api/auth/me first sign-in). Silently re-writing it
+    // from form state on every routine plan save was re-arming a flag
+    // that should have stayed cleared.
+    const activationPendingProvided = Object.prototype.hasOwnProperty.call(body, "activation_pending");
     const activationPending: boolean = body.activation_pending === true;
     const gracePeriodDays: number | null =
       typeof body.grace_period_days === "number" && body.grace_period_days >= 0
@@ -244,6 +259,19 @@ export async function POST(req: Request, ctx: RouteContext) {
     //       picker changed.
     //
     //   (D) Plan removed (planId is null). Free the row of dates.
+    // The previous logic silently reset expires_at on every routine
+    // save when the existing row had no plan_id yet (stub bind), or
+    // recomputed dates to now()+period whenever started_at wasn't
+    // provided. That cost schools paid days. Updated rule: only
+    // recompute dates when the caller has explicitly opted in to a
+    // date change. Two opt-in paths:
+    //
+    //   1. body.start_renewal === true — fresh cycle, archive previous.
+    //   2. startedAtIso !== null      — operator picked an explicit date.
+    //
+    // In every other case where the row already has dates, preserve
+    // them. First-time bind with no dates AND no explicit anchor still
+    // defaults to now()+period (the only sensible behaviour).
     let writeStartedAt: string | null = null;
     let writeExpiresAt: string | null = null;
     if (!plan) {
@@ -252,20 +280,14 @@ export async function POST(req: Request, ctx: RouteContext) {
       writeExpiresAt = null;
     } else {
       const isRenewal     = body.start_renewal === true;
-      const isMidCycle    =
-        !isRenewal &&
-        existing?.expires_at &&
-        existing?.plan_id; // had a plan, has an expiry, just changing the plan_id
-      if (isMidCycle && !startedAtIso) {
-        // Case C — preserve cycle anchors.
-        writeStartedAt = existing!.started_at ?? new Date().toISOString();
-        writeExpiresAt = existing!.expires_at!;
-      } else if (isRenewal && existing?.expires_at && !startedAtIso) {
-        // Case A — renewal cycle. Vipin asked for early-renewal to NOT
-        // throw away the school's unused days from the closing cycle.
-        // Math: new term anchors on max(today, old expires_at), then adds
-        // a full period_days. So a school whose old cycle still has 60
-        // days left, paying for a renewal today, gets:
+      const explicitStart = startedAtIso !== null;
+      const hasExistingDates = !!(existing?.started_at || existing?.expires_at);
+      if (isRenewal && existing?.expires_at && !startedAtIso) {
+        // Case A (early-renewal) — Vipin's rule: don't throw away unused
+        // days from the closing cycle. Math: new term anchors on
+        // max(today, old expires_at), then adds a full period_days. So a
+        // school whose old cycle still has 60 days left, paying for a
+        // renewal today, gets:
         //
         //   anchor = today + 60        (old expires_at, since it's future)
         //   new_expires_at = anchor + 365 = today + 425
@@ -281,14 +303,21 @@ export async function POST(req: Request, ctx: RouteContext) {
           : nowMs;
         writeStartedAt = new Date(nowMs).toISOString();
         writeExpiresAt = new Date(anchorMs + plan.period_days * 24 * 60 * 60 * 1000).toISOString();
-      } else {
-        // Cases A (no prior expiry) + B — fresh period. Honour explicit
-        // started_at when given, otherwise anchor to now().
-        // activation_pending uses now() as a placeholder; first sign-in
-        // will overwrite it.
+      } else if (isRenewal || explicitStart) {
+        // Cases A (no prior expiry) + B — fresh period with an explicit anchor.
         const anchor = startedAtIso ? Date.parse(startedAtIso) : Date.now();
         writeStartedAt = new Date(anchor).toISOString();
         writeExpiresAt = new Date(anchor + plan.period_days * 24 * 60 * 60 * 1000).toISOString();
+      } else if (hasExistingDates) {
+        // Case C — preserve cycle anchors (mid-cycle plan change OR a
+        // routine save that doesn't touch dates).
+        writeStartedAt = existing!.started_at ?? new Date().toISOString();
+        writeExpiresAt = existing!.expires_at;
+      } else {
+        // First-time bind with no existing dates AND no explicit anchor.
+        const now = Date.now();
+        writeStartedAt = new Date(now).toISOString();
+        writeExpiresAt = new Date(now + plan.period_days * 24 * 60 * 60 * 1000).toISOString();
       }
     }
     // Legacy alias for the response field below.
@@ -316,17 +345,19 @@ export async function POST(req: Request, ctx: RouteContext) {
     if (body.clear_contracted_students === true) overrideUpdate.contracted_students = null;
     // Modern-expiry knobs flow through the same overrideUpdate so they
     // get written atomically with the plan change.
-    // D10: per-call > per-plan > global default (14). The DB column has a
-    // default of 14; we set it explicitly when caller passes a value OR when
-    // the bound plan declares one. This means changing a plan's default
-    // propagates to NEW subscriptions on that plan, but doesn't retroactively
-    // override existing rows that were explicitly set.
+    // D10 — grace_period_days fallback: per-call > per-plan > DB default (14).
+    // We set it explicitly when caller passes a value OR when the bound plan
+    // declares one. Changing a plan's default propagates to NEW subscriptions
+    // on that plan, but doesn't retroactively override existing rows.
     if (gracePeriodDays != null) {
       overrideUpdate.grace_period_days = gracePeriodDays;
     } else if (plan && typeof plan.grace_period_days === "number") {
       overrideUpdate.grace_period_days = plan.grace_period_days;
     }
-    overrideUpdate.activation_pending = activationPending;
+    // Only write activation_pending when the caller explicitly included
+    // the field — see activationPendingProvided derivation above. Stops
+    // routine plan-page saves from silently re-arming the flag.
+    if (activationPendingProvided) overrideUpdate.activation_pending = activationPending;
 
     // D11/D15/D18 — write the new finance fields only when the caller
     // actually supplied them, so a routine plan-change doesn't blank out
@@ -346,8 +377,14 @@ export async function POST(req: Request, ctx: RouteContext) {
     // next invoice generation creates a fresh BLM/YYYY/NNNN number and
     // the mark-paid button reads "Mark payment received" again instead
     // of "Re-record". Required for GST-compliant year-on-year billing.
+    // Archive id captured so the subsequent subscription update can roll
+    // back the archive row on failure. Without this rollback, an update
+    // error would leave the cycle in BOTH the archive and the live row
+    // — invoice numbering would then see a phantom cycle and skip a
+    // sequence value.
+    let archivedRowId: string | null = null;
     if (body.start_renewal === true && existing?.id) {
-      const { error: archiveErr } = await admin
+      const { data: archived, error: archiveErr } = await admin
         .from("subscription_invoice_archive")
         .insert({
           subscription_id: existing.id,
@@ -362,13 +399,16 @@ export async function POST(req: Request, ctx: RouteContext) {
           cycle_started_at: existing.started_at,
           cycle_expires_at: existing.expires_at,
           archived_by: user.id,
-        });
+        })
+        .select("id")
+        .single();
       if (archiveErr) {
         return NextResponse.json(
           { error: `Could not archive previous cycle: ${archiveErr.message}` },
           { status: 500 }
         );
       }
+      archivedRowId = (archived as { id?: string } | null)?.id ?? null;
       overrideUpdate.invoice_number      = null;
       overrideUpdate.payment_received_at = null;
     }
@@ -388,7 +428,16 @@ export async function POST(req: Request, ctx: RouteContext) {
           ...overrideUpdate,
         })
         .eq("id", existing.id);
-      if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 });
+      if (updErr) {
+        // Compensating rollback: if a renewal archive insert succeeded
+        // but the live update failed, the cycle now lives in two
+        // places. Delete the archive row before bubbling the error so
+        // numbering and audit history stay consistent.
+        if (archivedRowId) {
+          await admin.from("subscription_invoice_archive").delete().eq("id", archivedRowId);
+        }
+        return NextResponse.json({ error: updErr.message }, { status: 500 });
+      }
     } else {
       const { data: inserted, error: insErr } = await admin
         .from("subscriptions")

@@ -3,6 +3,27 @@ import { getBearer, supabaseServer, supabaseAdmin } from "@/lib/supabase/server"
 
 export const runtime = "nodejs";
 
+// Simple in-memory rate limiter for /api/school/join POST. A 6-char
+// join code is brute-forceable in seconds without a throttle. We allow
+// 8 attempts per user per 10 minutes; further attempts return 429.
+// Lives for the lifetime of the Vercel function instance — adequate
+// for the threat model (deter a single noisy session). Distributed
+// rate-limiting (Redis / Upstash) is a follow-up if abuse appears.
+const RATE_WINDOW_MS = 10 * 60 * 1000;
+const RATE_LIMIT = 8;
+const attemptsByUser = new Map<string, number[]>();
+function shouldThrottle(userId: string): boolean {
+  const now = Date.now();
+  const recent = (attemptsByUser.get(userId) || []).filter((t) => now - t < RATE_WINDOW_MS);
+  if (recent.length >= RATE_LIMIT) {
+    attemptsByUser.set(userId, recent);
+    return true;
+  }
+  recent.push(now);
+  attemptsByUser.set(userId, recent);
+  return false;
+}
+
 /**
  * POST /api/school/join
  * Body: { code: string }
@@ -16,7 +37,15 @@ export async function POST(req: Request) {
     const { data: { user } } = await sb.auth.getUser();
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-    const { data: prof } = await sb.from("profiles").select("role, school_id").eq("id", user.id).single();
+    if (shouldThrottle(user.id)) {
+      return NextResponse.json(
+        { error: "Too many join attempts. Wait a few minutes and try again." },
+        { status: 429 }
+      );
+    }
+
+    const admin = supabaseAdmin();
+    const { data: prof } = await admin.from("profiles").select("role, school_id").eq("id", user.id).maybeSingle();
     if (!prof || prof.role !== "teacher") {
       return NextResponse.json({ error: "Only teachers can join a school." }, { status: 403 });
     }
@@ -28,7 +57,6 @@ export async function POST(req: Request) {
     const code = String(body.code || "").trim().toUpperCase();
     if (!code) return NextResponse.json({ error: "Enter the school code." }, { status: 400 });
 
-    const admin = supabaseAdmin();
     const { data: school } = await admin
       .from("schools")
       .select("id, name")

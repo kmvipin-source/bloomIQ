@@ -185,10 +185,10 @@ function DigestView({ digest }: { digest: Digest }) {
         title="Issues to address"
         icon={<AlertTriangle size={18} className="text-red-600" />}
       >
-        {digest.issues.length === 0 ? (
+        {(digest.issues ?? []).length === 0 ? (
           <EmptyRow text="No issues flagged this week." />
         ) : (
-          digest.issues.map((it, i) => (
+          (digest.issues ?? []).map((it, i) => (
             <div key={i} className="card-hover card flex items-start gap-3">
               <PriorityChip priority={it.priority} />
               <div className="flex-1">
@@ -205,10 +205,10 @@ function DigestView({ digest }: { digest: Digest }) {
         title="Wins to celebrate"
         icon={<Sparkles size={18} className="text-emerald-600" />}
       >
-        {digest.wins.length === 0 ? (
+        {(digest.wins ?? []).length === 0 ? (
           <EmptyRow text="No wins highlighted this week." />
         ) : (
-          digest.wins.map((w, i) => (
+          (digest.wins ?? []).map((w, i) => (
             <div key={i} className="card-hover card flex items-start gap-3">
               <div className="w-2 h-2 rounded-full bg-emerald-500 mt-2 flex-shrink-0" />
               <div className="flex-1">
@@ -225,10 +225,10 @@ function DigestView({ digest }: { digest: Digest }) {
         title="Suggested actions"
         icon={<CheckCircle2 size={18} className="text-sky-600" />}
       >
-        {digest.actions.length === 0 ? (
+        {(digest.actions ?? []).length === 0 ? (
           <EmptyRow text="No specific actions suggested this week." />
         ) : (
-          digest.actions.map((a, i) => (
+          (digest.actions ?? []).map((a, i) => (
             <div key={i} className="card-hover card flex items-start gap-3">
               <WhenChip when={a.when} />
               <div className="flex-1">

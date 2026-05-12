@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { groqJSON, groqJSONVision } from "@/lib/groq";
 import { BLOOM_LEVELS, BLOOM_META, type BloomLevel, isBloomLevel, blankBloomCounts } from "@/lib/bloom";
 import { getBearer, supabaseServer } from "@/lib/supabase/server";
+import { checkRateLimit, checkDailyCap } from "@/lib/rateLimit";
 import {
   findMisconceptionDistractors,
   formatDistractorSeedsForPrompt,
@@ -363,6 +364,12 @@ export async function POST(req: Request) {
     const sb = supabaseServer(token);
     const { data: { user } } = await sb.auth.getUser();
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    // /api/generate fires multiple LLM calls per request (one per Bloom
+    // level + verifier + refinement). Tight burst limit; hard daily cap.
+    const rate = checkRateLimit(user.id, "generate", { capacity: 5, refillPerHour: 10 });
+    if (!rate.allowed) return NextResponse.json({ error: "Too many requests.", code: "rate_limited" }, { status: 429, headers: { "Retry-After": String(rate.retryAfterSec) } });
+    const daily = checkDailyCap(user.id, "generate", 30);
+    if (!daily.allowed) return NextResponse.json({ error: `Daily limit reached (${daily.limit}).`, code: "daily_cap" }, { status: 429 });
 
     const body = await req.json();
     const source: Source = (body.source as Source) || "notes";

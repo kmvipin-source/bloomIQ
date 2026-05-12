@@ -71,166 +71,44 @@ export default function SchoolHome() {
   const [transferErr, setTransferErr] = useState<string | null>(null);
   const [transferOk, setTransferOk] = useState<string | null>(null);
 
+  // Bundled load via the service-role /api/school/dashboard endpoint.
+  // The previous implementation pulled schools / profiles / class_teachers
+  // / class_members / quiz_attempts via the user-token client which raced
+  // RLS on first paint, and counted attempts against every student in
+  // the school for every class (inflating per-class attemptCount with
+  // cross-class data). The endpoint owns both correctness fixes.
   async function load() {
     setLoading(true);
     const sb = supabaseBrowser();
-    // Read identity + school_id via the service-role /api/auth/me endpoint.
-    // Reading profiles directly with the user-token client races RLS on the
-    // edge (same root cause that broke the teacher misroute) — the read
-    // sometimes returns null on the first paint after login, which made
-    // the page show "Set up your school" to a school admin who already has
-    // one. Hard refresh "fixed" it because the second request's RLS check
-    // ran with a warmed-up auth context. Going through the API route makes
-    // the lookup deterministic.
     const { data: { session } } = await sb.auth.getSession();
     const token = session?.access_token;
     if (!token) { setLoading(false); return; }
-    const meRes = await fetch("/api/auth/me", {
-      headers: { Authorization: `Bearer ${token}` },
-      cache: "no-store",
-    });
-    if (!meRes.ok) { setLoading(false); return; }
-    const me = await meRes.json() as { uid: string; school_id: string | null };
-    const userId = me.uid;
-    if (!me.school_id) {
-      setNeedsSetup(true);
-      setLoading(false);
-      return;
-    }
-    const prof = { school_id: me.school_id };
-    const user = { id: userId };
-    let { data: sch } = await sb.from("schools").select("*").eq("id", prof.school_id).single();
-    if (sch && !sch.join_code) {
-      let code = generateQuizCode();
-      for (let i = 0; i < 4; i++) {
-        const { data: existing } = await sb.from("schools").select("id").eq("join_code", code).maybeSingle();
-        if (!existing) break;
-        code = generateQuizCode();
+    try {
+      const res = await fetch("/api/school/dashboard", {
+        headers: { Authorization: `Bearer ${token}` },
+        cache: "no-store",
+      });
+      if (!res.ok) { setLoading(false); return; }
+      const j = await res.json() as {
+        ok: boolean;
+        needs_setup?: boolean;
+        caller_is_head?: boolean;
+        school?: School | null;
+        teachers?: TeacherRow[];
+        classes?: ClassRow[];
+        stats?: Stats;
+      };
+      if (j.needs_setup) {
+        setNeedsSetup(true);
+        setLoading(false);
+        return;
       }
-      const { data: updated } = await sb.from("schools").update({ join_code: code }).eq("id", sch.id).select().single();
-      if (updated) sch = updated;
-    }
-    setSchool(sch as School);
-    setCallerIsHead((sch as School)?.super_teacher_id === user.id);
-
-    const { data: members } = await sb
-      .from("profiles")
-      .select("id, role, full_name")
-      .eq("school_id", prof.school_id);
-    type Member = { id: string; role: string; full_name: string | null };
-    const memberList = (members as Member[]) || [];
-    // Include super_teacher in the "teacher" pool so deputy admins
-    // count themselves on the Teachers tile and see their own owned
-    // tests on the Tests-made tile + Teacher activity table.
-    // Migration 47 made deputies share role='super_teacher' with the
-    // canonical Head; until this fix, a deputy viewing /school would
-    // see the school count drop by one (themselves) and any tests
-    // they owned silently disappear from the rollup.
-    const teacherMembers = memberList.filter(
-      (m) => m.role === "teacher" || m.role === "super_teacher"
-    );
-    const studentMembers = memberList.filter((m) => m.role === "student");
-
-    const teacherStats: TeacherRow[] = await Promise.all(
-      teacherMembers.map(async (t) => {
-        const [{ count: classCt }, { count: quizCt }, quizIds] = await Promise.all([
-          sb.from("class_teachers").select("class_id", { count: "exact", head: true }).eq("teacher_id", t.id),
-          sb.from("quizzes").select("id", { count: "exact", head: true }).eq("owner_id", t.id),
-          sb.from("quizzes").select("id").eq("owner_id", t.id),
-        ]);
-        const ids = ((quizIds.data || []) as Array<{ id: string }>).map((x) => x.id);
-        let asgCt = 0;
-        if (ids.length > 0) {
-          const { count } = await sb.from("quiz_assignments").select("id", { count: "exact", head: true }).in("quiz_id", ids);
-          asgCt = count || 0;
-        }
-        return {
-          id: t.id,
-          full_name: t.full_name,
-          classCount: classCt || 0,
-          quizCount: quizCt || 0,
-          assignmentCount: asgCt,
-        };
-      })
-    );
-    teacherStats.sort((a, b) => (b.quizCount + b.classCount) - (a.quizCount + a.classCount));
-    setTeachers(teacherStats);
-
-    let classRows: ClassRow[] = [];
-    {
-      const { data: cs } = await sb
-        .from("classes")
-        .select("id, name, owner_id")
-        .eq("school_id", prof.school_id);
-      type Cs = { id: string; name: string; owner_id: string | null };
-      const list = (cs as Cs[]) || [];
-      classRows = await Promise.all(
-        list.map(async (c) => {
-          const owner = c.owner_id ? teacherMembers.find((t) => t.id === c.owner_id) : null;
-          const classAssignedQuizIds = await loadClassQuizIdsForClasses(sb, [c.id]);
-          const assignedIdsArr = Array.from(classAssignedQuizIds);
-
-          const [{ count: mCt }, { data: ct }, { data: atts }] = await Promise.all([
-            sb.from("class_members").select("student_id", { count: "exact", head: true }).eq("class_id", c.id),
-            sb.from("class_teachers").select("teacher_id, profile:profiles!class_teachers_teacher_id_fkey(full_name)").eq("class_id", c.id).eq("role", "primary").maybeSingle(),
-            assignedIdsArr.length === 0
-              ? Promise.resolve({ data: [] as Array<{ score: number; total: number }> })
-              : sb.from("quiz_attempts")
-                  .select("score, total")
-                  .in("student_id", studentMembers.map((s) => s.id).concat(["00000000-0000-0000-0000-000000000000"]))
-                  .in("quiz_id", assignedIdsArr)
-                  .not("submitted_at", "is", null),
-          ]);
-          type CtRow = { teacher_id: string; profile: { full_name: string | null } | null };
-          const primaryName = (ct as unknown as CtRow | null)?.profile?.full_name || owner?.full_name || null;
-          const scoreAtts = (atts as Array<{ score: number; total: number }> | null) || [];
-          const ratios = scoreAtts.filter((a) => a.total > 0).map((a) => (a.score / a.total) * 100);
-          const avg = ratios.length ? Math.round(ratios.reduce((s, x) => s + x, 0) / ratios.length) : null;
-          return {
-            id: c.id,
-            name: c.name,
-            primaryName,
-            memberCount: mCt || 0,
-            attemptCount: ratios.length,
-            avgScore: avg,
-          };
-        })
-      );
-      classRows.sort((a, b) => b.memberCount - a.memberCount);
-    }
-    setClasses(classRows);
-
-    const studentIds = studentMembers.map((s) => s.id);
-    let attCount = 0, avgScore = 0;
-    if (studentIds.length > 0) {
-      const schoolClassIds = classRows.map((c) => c.id);
-      const schoolClassQuizIds = await loadClassQuizIdsForClasses(sb, schoolClassIds);
-      const quizIdArr = Array.from(schoolClassQuizIds);
-      if (quizIdArr.length > 0) {
-        const { data: att, count } = await sb
-          .from("quiz_attempts")
-          .select("score, total", { count: "exact" })
-          .in("student_id", studentIds)
-          .in("quiz_id", quizIdArr)
-          .not("submitted_at", "is", null);
-        const arr = (att as Array<{ score: number; total: number }> | null) || [];
-        attCount = count || 0;
-        const ratios = arr.filter((a) => a.total > 0).map((a) => (a.score / a.total) * 100);
-        avgScore = ratios.length ? Math.round(ratios.reduce((s, x) => s + x, 0) / ratios.length) : 0;
-      }
-    }
-
-    const totalQuizzes = teacherStats.reduce((s, t) => s + t.quizCount, 0);
-
-    setStats({
-      teachers: teacherMembers.length,
-      classes: classRows.length,
-      students: studentMembers.length,
-      quizzes: totalQuizzes,
-      attempts: attCount,
-      avgScore,
-    });
-
+      if (j.school) setSchool(j.school);
+      setCallerIsHead(!!j.caller_is_head);
+      setTeachers(j.teachers || []);
+      setClasses(j.classes || []);
+      if (j.stats) setStats(j.stats);
+    } catch { /* fall through to spinner clear */ }
     setLoading(false);
   }
 
@@ -288,11 +166,18 @@ export default function SchoolHome() {
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json?.error || "Transfer failed.");
       setTransferOk(
-        `Done. ${email} is now Admin Head. You'll be redirected to the teacher dashboard.`
+        `Done. ${email} is now Admin Head. Redirecting…`
       );
       setTransferEmail("");
       setTransferOpen(false);
-      setTimeout(() => { window.location.href = "/teacher"; }, 2000);
+      // Refresh the Supabase session before navigating so the next page
+      // load picks up the new role (caller is now a regular teacher).
+      // window.location.replace avoids leaving an in-memory super_teacher
+      // identity behind, which would otherwise let the caller click
+      // "Transfer" again during the 2s gap and surface confusing errors.
+      try { await sb.auth.refreshSession(); } catch { /* ignore */ }
+      window.location.replace("/teacher");
+      return;
     } catch (e) {
       setTransferErr(e instanceof Error ? e.message : "Transfer failed.");
     } finally {
@@ -305,31 +190,29 @@ export default function SchoolHome() {
     if (!schoolName.trim()) return setSetupErr("Give the school a name.");
     setCreating(true);
     try {
+      // Route through /api/school/create so the schools insert +
+      // profiles bind happen in a single service-role transaction. The
+      // previous client-side flow ignored profile-update errors and
+      // could leave the admin staring at "Set up your school" with an
+      // orphan schools row already created.
       const sb = supabaseBrowser();
-      const { data: { user } } = await sb.auth.getUser();
-      if (!user) throw new Error("Not signed in.");
-      let join_code = generateQuizCode();
-      for (let i = 0; i < 4; i++) {
-        const { data: existing } = await sb.from("schools").select("id").eq("join_code", join_code).maybeSingle();
-        if (!existing) break;
-        join_code = generateQuizCode();
-      }
-      const { data: sch, error } = await sb.from("schools").insert({
-        name: schoolName.trim(),
-        super_teacher_id: user.id,
-        join_code,
-      }).select().single();
-      if (error) throw error;
-      await sb.from("profiles").update({ school_id: sch.id }).eq("id", user.id);
+      const { data: { session } } = await sb.auth.getSession();
+      if (!session) throw new Error("Not signed in.");
+      const res = await fetch("/api/school/create", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ name: schoolName.trim() }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.error || "Could not create school.");
       setNeedsSetup(false);
       await load();
     } catch (e) {
-      const err = e as { message?: string; code?: string; details?: string };
-      const msg = err?.message || "Could not create school.";
-      const hint = err?.code === "PGRST204" || /column .* (does not exist|join_code)/i.test(msg)
-        ? " — looks like migration 07 hasn't run yet. Run supabase/migrations/07_school_join_code.sql in the SQL Editor, then run `notify pgrst, 'reload schema';`"
-        : "";
-      setSetupErr(msg + hint);
+      const err = e as { message?: string };
+      setSetupErr(err?.message || "Could not create school.");
     } finally {
       setCreating(false);
     }

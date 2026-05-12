@@ -122,7 +122,22 @@ export function useFeatureAccess(): FeatureAccessState {
   const [state, setState] = useState<FeatureAccessState>(EMPTY);
 
   useEffect(() => {
-    (async () => {
+    let cancelled = false;
+    // Subscribe to auth state so SIGNED_IN, SIGNED_OUT, and
+    // TOKEN_REFRESHED re-fetch the plan. Previously the hook loaded
+    // once on mount and never refreshed — a school-id change or a
+    // sign-out/in in the same tab kept stale plan rights for the
+    // life of the session.
+    const sb = supabaseBrowser();
+    const { data: authSub } = sb.auth.onAuthStateChange((event) => {
+      if (event === "SIGNED_OUT") {
+        if (!cancelled) setState({ ...EMPTY, isLoading: false });
+      } else if (event === "SIGNED_IN" || event === "TOKEN_REFRESHED") {
+        if (!cancelled) setState((s) => ({ ...s, isLoading: true }));
+        void run();
+      }
+    });
+    async function run() {
       const sb = supabaseBrowser();
       const { data: { session } } = await sb.auth.getSession();
       if (!session) { setState({ ...EMPTY, isLoading: false }); return; }
@@ -259,11 +274,16 @@ export function useFeatureAccess(): FeatureAccessState {
         ? Math.ceil((expiresAtMs - now) / DAY)
         : null;
 
-      const tier = (planRow.tier as PlanTier | undefined) || "free";
+      // Validate the DB-supplied tier against TIER_RANK keys before
+      // casting. An unknown tier (e.g. a future rename) silently
+      // coerces to "free" via the fallback instead of misclassifying.
+      const rawTier = (planRow.tier ?? "") as string;
+      const tier: PlanTier = (rawTier in TIER_RANK ? rawTier as PlanTier : "free");
       const features: string[] = Array.isArray(planRow.features)
         ? (planRow.features as string[])
         : [];
 
+      if (cancelled) return;
       setState({
         planTier: isExpired ? "free" : tier,
         planLabel: isExpired ? "Free (expired)" : (planRow.label || tierLabel(tier)),
@@ -278,7 +298,12 @@ export function useFeatureAccess(): FeatureAccessState {
         graceRemainingDays,
         daysLeft,
       });
-    })();
+    }
+    void run();
+    return () => {
+      cancelled = true;
+      authSub?.subscription?.unsubscribe?.();
+    };
   }, []);
 
   return state;

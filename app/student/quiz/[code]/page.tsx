@@ -9,6 +9,7 @@ import BloomBadge from "@/components/BloomBadge";
 import { formatSeconds } from "@/lib/utils";
 import { ChevronLeft, ChevronRight, AlarmClock, Clock, Play, AlertCircle } from "lucide-react";
 import { track } from "@/lib/posthog";
+import { triggerScoreRecompute } from "@/lib/scoreRecompute";
 
 export default function TakeQuiz() {
   const router = useRouter();
@@ -246,6 +247,9 @@ export default function TakeQuiz() {
       total: questions.length,
       time_taken_seconds: seconds,
     });
+    // Recompute the BloomIQ score so the badge + Future You reflect
+    // the new attempt. Fire-and-forget — see lib/scoreRecompute.
+    void triggerScoreRecompute("quiz", attemptId);
     toast.success("Quiz submitted successfully.");
     router.replace(`/student/results/${attemptId}`);
   }, [answers, attemptId, questions, quiz, router, flushCurrentQuestionTime, trackTime]);

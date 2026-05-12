@@ -54,37 +54,51 @@ export default function ReviewPage() {
     setSelected(allSelected ? new Set() : new Set(items.map((i) => i.id)));
   }
 
+  // Route every write through the service-role PATCH endpoint instead
+  // of hitting question_bank with the user-token client. The page's
+  // read path was already moved to /api/teacher/question-bank to dodge
+  // an RLS race; writes have the same race and have to use the same
+  // service-role escape hatch.
+  async function patchRow(id: string, patch: Record<string, unknown>): Promise<boolean> {
+    const sb = supabaseBrowser();
+    const { data: { session } } = await sb.auth.getSession();
+    if (!session) { alert("Not signed in."); return false; }
+    const r = await fetch(`/api/teacher/question-bank/${id}`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${session.access_token}`,
+      },
+      body: JSON.stringify(patch),
+    });
+    if (!r.ok) {
+      const j = await r.json().catch(() => ({} as { error?: string }));
+      alert(`Update failed: ${j.error || `HTTP ${r.status}`}`);
+      return false;
+    }
+    return true;
+  }
+
   async function bulkSetStatus(status: "approved" | "rejected") {
     if (!selected.size) return;
     const verb = status === "approved" ? "Approve" : "Reject";
     if (!confirm(`${verb} ${selected.size} selected question${selected.size === 1 ? "" : "s"}?`)) return;
-    const sb = supabaseBrowser();
     const ids = Array.from(selected);
-    // Apply pending edits one-by-one, then batch the rest in a single update
-    const dirty = ids.filter((id) => edits[id]);
-    for (const id of dirty) {
-      await sb.from("question_bank").update({ ...edits[id], status }).eq("id", id);
-    }
-    const clean = ids.filter((id) => !edits[id]);
-    if (clean.length) {
-      await sb.from("question_bank").update({ status }).in("id", clean);
-    }
+    await Promise.all(ids.map((id) => patchRow(id, { ...(edits[id] || {}), status })));
     setEdits({});
     await load();
   }
 
   async function save(q: Question) {
-    const sb = supabaseBrowser();
     const patch = edits[q.id] || {};
-    await sb.from("question_bank").update(patch).eq("id", q.id);
+    if (!(await patchRow(q.id, patch))) return;
     setEdits((e) => { const { [q.id]: _, ...rest } = e; return rest; });
     await load();
   }
 
   async function setStatus(q: Question, status: "approved" | "rejected") {
-    const sb = supabaseBrowser();
     const patch = { ...(edits[q.id] || {}), status };
-    await sb.from("question_bank").update(patch).eq("id", q.id);
+    if (!(await patchRow(q.id, patch))) return;
     setEdits((e) => { const { [q.id]: _, ...rest } = e; return rest; });
     await load();
   }
@@ -92,8 +106,7 @@ export default function ReviewPage() {
   async function approveAll() {
     if (!items.length) return;
     if (!confirm(`Approve all ${items.length} pending questions?`)) return;
-    const sb = supabaseBrowser();
-    await sb.from("question_bank").update({ status: "approved" }).in("id", items.map((i) => i.id));
+    await Promise.all(items.map((q) => patchRow(q.id, { status: "approved" })));
     await load();
   }
 

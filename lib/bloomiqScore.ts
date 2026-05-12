@@ -307,7 +307,7 @@ export function predictRankAndColleges(
   };
 }
 
-function normalizeExamGoal(raw: string | null): "neet" | "jee" | "boards" | "cat" | "primary_middle" | "other" {
+export function normalizeExamGoal(raw: string | null): "neet" | "jee" | "boards" | "cat" | "primary_middle" | "other" {
   if (!raw) return "other";
   const s = raw.toLowerCase();
   if (s.includes("neet")) return "neet";

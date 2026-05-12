@@ -22,6 +22,26 @@ export const runtime = "nodejs";
  * session, which Supabase already validated by issuing the access token,
  * so admin-side update is safe for our threat model.
  */
+// Decode the AMR claim from a Supabase access token without verifying
+// the signature — we already trust the token via sb.auth.getUser() which
+// hits Supabase's auth server. AMR is informational: tells us whether
+// this session was minted by a recovery / invite flow (safe to rotate)
+// vs an ordinary password session (must NOT be allowed to rotate
+// without re-auth, otherwise an XSS payload can rotate the victim's
+// password silently).
+function decodeAmr(token: string): string[] {
+  try {
+    const [, payload] = token.split(".");
+    if (!payload) return [];
+    const json = Buffer.from(payload.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8");
+    const obj = JSON.parse(json) as { amr?: Array<{ method?: string } | string> };
+    if (!Array.isArray(obj.amr)) return [];
+    return obj.amr.map((m) => typeof m === "string" ? m : String((m && m.method) || ""));
+  } catch {
+    return [];
+  }
+}
+
 export async function POST(req: Request) {
   try {
     const token = getBearer(req);
@@ -30,10 +50,42 @@ export async function POST(req: Request) {
     const { data: { user }, error: userErr } = await sb.auth.getUser();
     if (userErr || !user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
+    // Refuse to set a password on an ordinary password session. The
+    // valid entry points are:
+    //   1. A recovery / invite session (AMR contains "recovery" or
+    //      "magiclink") — the user clicked the email link.
+    //   2. A first-time invitee whose tos_version isn't set yet —
+    //      meaning they were just invited and the email link minted
+    //      this session.
+    // Anything else (plain password sign-in) must go through the
+    // Supabase AAL2 flow, not this admin-side override.
+    const amr = decodeAmr(token);
+    const isRecoveryFlow = amr.some((m) =>
+      m === "recovery" || m === "magiclink" || m === "otp" || m === "email/recovery" || m === "email/signup"
+    );
+    const isFirstTimeInvitee = !(user.user_metadata as { tos_version?: string } | undefined)?.tos_version;
+    if (!isRecoveryFlow && !isFirstTimeInvitee) {
+      return NextResponse.json(
+        { error: "Use Supabase's normal password-reset flow to rotate your password." },
+        { status: 403 }
+      );
+    }
+
     const body = await req.json().catch(() => ({}));
     const password = String(body.password || "");
     if (password.length < 8) {
       return NextResponse.json({ error: "Password must be at least 8 characters." }, { status: 400 });
+    }
+    // Mirror the client-side strength rule so a direct API hit can't
+    // create a weak password the UI would have rejected.
+    const hasLower = /[a-z]/.test(password);
+    const hasUpper = /[A-Z]/.test(password);
+    const hasDigit = /\d/.test(password);
+    if (!hasLower || !hasUpper || !hasDigit) {
+      return NextResponse.json(
+        { error: "Password must contain a lowercase letter, uppercase letter, and a digit." },
+        { status: 400 }
+      );
     }
     const tosVersion = String(body.tos_version || "2026-04-30");
 

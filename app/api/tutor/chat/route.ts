@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { groqText } from "@/lib/groq";
-import { getBearer, supabaseServer } from "@/lib/supabase/server";
-import { checkDailyQuota, recordDailyUse } from "@/lib/freeQuota";
+import { aiGate } from "@/lib/aiGate";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -56,24 +55,18 @@ function clean(turns: unknown): Turn[] {
 
 export async function POST(req: Request) {
   try {
-    const token = getBearer(req);
-    if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    const sb = supabaseServer(token);
-    const { data: { user } } = await sb.auth.getUser();
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    // aiGate: auth + per-user rate limit. Tutor chat is high-volume so
+    // capacity is generous (40 burst, ~120/hr steady state).
+    const gate = await aiGate(req, {
+      route: "tutor.chat",
+      rateLimit: { capacity: 40, refillPerHour: 120 },
+    });
+    if (!gate.ok) return gate.response;
 
     const body = await req.json().catch(() => ({}));
     const message: string = String(body.message || "").trim();
     if (!message) return NextResponse.json({ error: "Empty message" }, { status: 400 });
     if (message.length > 2000) return NextResponse.json({ error: "Message too long (max 2000 chars)." }, { status: 400 });
-
-    const gate = await checkDailyQuota(user.id, "tutor_chat");
-    if (!gate.allowed) {
-      return NextResponse.json(
-        { error: gate.reason, code: "free_daily_cap", cap: gate.cap, used: gate.used },
-        { status: 402 },
-      );
-    }
 
     const history = clean(body.history);
     const ctx = (body.context || {}) as Record<string, unknown>;
@@ -111,7 +104,6 @@ TEACHER:`;
       return NextResponse.json({ error: "AI did not return a reply; please retry." }, { status: 502 });
     }
 
-    await recordDailyUse(user.id, "tutor_chat");
     return NextResponse.json({ ok: true, reply });
   } catch (e) {
     return NextResponse.json(

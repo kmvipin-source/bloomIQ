@@ -155,16 +155,45 @@ export async function GET(req: Request, ctx: RouteContext) {
     // Generate or reuse invoice number. If one isn't on the row yet,
     // create a stable BLM/YYYY/NNNN number and persist it so re-fetches
     // show the same number.
+    //
+    // Numbering correctness:
+    //   - Counts BOTH live subscriptions AND archived invoices for the
+    //     year. start_renewal nulls the live invoice_number after
+    //     copying the cycle into subscription_invoice_archive, so a
+    //     count of the live table alone would reset to 1 and produce
+    //     a duplicate (GST-illegal).
+    //   - Wrapped in a retry loop that catches Postgres unique-violation
+    //     (code 23505 on subscriptions_invoice_number_key from
+    //     migration 62) for the case where two admins generate invoices
+    //     in the same second.
     let invoiceNumber = sub.invoice_number;
     if (!invoiceNumber) {
       const year = new Date().getFullYear();
-      const { count: priorCount } = await admin
-        .from("subscriptions")
-        .select("id", { count: "exact", head: true })
-        .like("invoice_number", `BLM/${year}/%`);
-      const seq = String((priorCount ?? 0) + 1).padStart(4, "0");
-      invoiceNumber = `BLM/${year}/${seq}`;
-      await admin.from("subscriptions").update({ invoice_number: invoiceNumber }).eq("id", subscriptionId);
+      const pattern = `BLM/${year}/%`;
+      const [liveRes, archiveRes] = await Promise.all([
+        admin.from("subscriptions").select("id", { count: "exact", head: true }).like("invoice_number", pattern),
+        admin.from("subscription_invoice_archive").select("id", { count: "exact", head: true }).like("invoice_number", pattern),
+      ]);
+      let nextSeq = (liveRes.count ?? 0) + (archiveRes.count ?? 0) + 1;
+      let assigned: string | null = null;
+      for (let attempt = 0; attempt < 10; attempt++) {
+        const candidate = `BLM/${year}/${String(nextSeq).padStart(4, "0")}`;
+        const { error: updErr } = await admin
+          .from("subscriptions")
+          .update({ invoice_number: candidate })
+          .eq("id", subscriptionId);
+        if (!updErr) { assigned = candidate; break; }
+        // Postgres unique-violation. Bump and retry.
+        const code = (updErr as { code?: string }).code;
+        if (code !== "23505") {
+          return NextResponse.json({ error: `Could not allocate invoice number: ${updErr.message}` }, { status: 500 });
+        }
+        nextSeq += 1;
+      }
+      if (!assigned) {
+        return NextResponse.json({ error: "Could not allocate a unique invoice number after 10 attempts." }, { status: 500 });
+      }
+      invoiceNumber = assigned;
     }
 
     const issuedOn = new Date().toLocaleDateString("en-IN", { year: "numeric", month: "short", day: "numeric" });
@@ -231,12 +260,18 @@ export async function GET(req: Request, ctx: RouteContext) {
     }
 
     // Line item table — uses jspdf-autotable for a clean grid.
-    const seatLabel = sub.contracted_students != null
-      ? `${seatCount} contracted seats`
-      : `${seatCount} students`;
+    // Skip the seat tail when there's no real seat number to print —
+    // either a brand-new school with no contracted seats and no signups
+    // yet, or an override-only deal where the seat count isn't part of
+    // the line item.
+    const hasSeatNumber = seatCount > 0;
+    const seatLabel = hasSeatNumber
+      ? (sub.contracted_students != null ? `${seatCount} contracted seats` : `${seatCount} students`)
+      : null;
+    const planLabel = plan?.label || "BloomIQ subscription";
     const lineDescription = sub.override_price_paise
-      ? `${plan?.label || "BloomIQ subscription"} — annual subscription, ${seatLabel} (negotiated rate)`
-      : `${plan?.label || "BloomIQ subscription"} — ${seatLabel} × ₹${rs((plan?.per_student_price_paise ?? 0))}`;
+      ? (seatLabel ? `${planLabel} — annual subscription, ${seatLabel} (negotiated rate)` : `${planLabel} — annual subscription (negotiated rate)`)
+      : (seatLabel ? `${planLabel} — ${seatLabel} × ₹${rs((plan?.per_student_price_paise ?? 0))}` : `${planLabel} — annual subscription`);
 
     autoTable(doc, {
       startY: y + 38,

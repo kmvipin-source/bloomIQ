@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { groqJSON } from "@/lib/groq";
 import { BLOOM_LEVELS, type BloomLevel } from "@/lib/bloom";
-import { getBearer, supabaseServer } from "@/lib/supabase/server";
-import { checkDailyQuota, recordDailyUse } from "@/lib/freeQuota";
+import { aiGate } from "@/lib/aiGate";
+import { supabaseAdmin } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -93,11 +93,12 @@ function compositeOverall(scores: Record<BloomLevel, number>): number {
 
 export async function POST(req: Request) {
   try {
-    const token = getBearer(req);
-    if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    const sb = supabaseServer(token);
-    const { data: { user } } = await sb.auth.getUser();
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const gate = await aiGate(req, {
+      route: "teach-back.grade",
+      rateLimit: { capacity: 20, refillPerHour: 30 },
+    });
+    if (!gate.ok) return gate.response;
+    const user = { id: gate.userId };
 
     const body = await req.json().catch(() => ({}));
     const topic: string = String(body.topic || "").trim();
@@ -111,14 +112,6 @@ export async function POST(req: Request) {
     }
     if (explanation.length > 4000) {
       return NextResponse.json({ error: "Explanation is too long (max 4000 characters)." }, { status: 400 });
-    }
-
-    const gate = await checkDailyQuota(user.id, "teach_back");
-    if (!gate.allowed) {
-      return NextResponse.json(
-        { error: gate.reason, code: "free_daily_cap", cap: gate.cap, used: gate.used },
-        { status: 402 },
-      );
     }
 
     const userPrompt = `Topic: ${topic}\n\nStudent's explanation:\n"""\n${explanation}\n"""\n\nGrade it strictly per the rubric and return JSON only.`;
@@ -141,8 +134,6 @@ export async function POST(req: Request) {
       .select("id, created_at")
       .single();
     if (insErr) return NextResponse.json({ error: insErr.message }, { status: 500 });
-
-    await recordDailyUse(user.id, "teach_back");
 
     return NextResponse.json({
       ok: true,

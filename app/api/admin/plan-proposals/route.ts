@@ -37,11 +37,14 @@ export async function requireAdmin(req: Request) {
   if (!user) {
     return { err: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) };
   }
-  const { data: me } = await sb
+  // Service-role read avoids the RLS race that 403'd legit platform
+  // admins on the Vercel edge.
+  const adminCli = supabaseAdmin();
+  const { data: me } = await adminCli
     .from("profiles")
     .select("platform_admin")
     .eq("id", user.id)
-    .single();
+    .maybeSingle();
   if (!me?.platform_admin) {
     return { err: NextResponse.json({ error: "Forbidden" }, { status: 403 }) };
   }

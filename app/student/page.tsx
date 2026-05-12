@@ -58,6 +58,7 @@ export default function StudentHome() {
   const [assigned, setAssigned] = useState<AssignedRow[]>([]);
   const [bloomMastery, setBloomMastery] = useState<BloomBreakdown>({});
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   // Free-tier daily attempt tracking (independent students only).
   // freeRemaining = null means "not capped" (school student or paid tier).
@@ -79,22 +80,11 @@ export default function StudentHome() {
   // true = user has calibrated (the BloomIQScoreBadge in the layout
   // already shows their score, so the discovery hero hides).
   const [hasBloomIQ, setHasBloomIQ] = useState<boolean | null>(null);
-  useEffect(() => {
-    (async () => {
-      try {
-        const sb = supabaseBrowser();
-        const { data: { session } } = await sb.auth.getSession();
-        if (!session) return;
-        const r = await fetch("/api/student/score", {
-          headers: { Authorization: `Bearer ${session.access_token}` },
-          cache: "no-store",
-        });
-        if (!r.ok) return;
-        const j = await r.json() as { ok?: boolean; has_calibration?: boolean };
-        if (j?.ok) setHasBloomIQ(!!j.has_calibration);
-      } catch { /* silent — discovery hero just stays hidden on failure */ }
-    })();
-  }, []);
+  // BloomIQ calibration status is read from /api/auth/me below (which
+  // already returns has_calibration). Avoiding a duplicate
+  // /api/student/score fetch here saves a round-trip per home-page mount
+  // and keeps school students out of the BloomIQ funnel by default —
+  // they never see the discovery hero.
 
   // Feature gating. `allowed` is the set of feature keys the user's plan
   // grants. Tiles whose featureKey is missing from this set render in the
@@ -137,17 +127,31 @@ export default function StudentHome() {
         headers: { Authorization: `Bearer ${session.access_token}` },
         cache: "no-store",
       });
-      if (!meRes.ok) return;
+      if (!meRes.ok) {
+        // Without this guard the page sat on the loading spinner forever
+        // if /api/auth/me blipped. Surface an actionable error so the
+        // user (or PostHog session replay) can see something happened.
+        setLoadError("Could not load your dashboard. Refresh to try again.");
+        setLoading(false);
+        return;
+      }
       const me = await meRes.json() as {
         uid: string;
         full_name: string | null;
         is_school_student: boolean;
         exam_goal: string | null;
+        has_calibration?: boolean;
       };
       const user = { id: me.uid };
       setName(me.full_name || "");
       setIsSchool(!!me.is_school_student);
       setExamGoal(me.exam_goal || null);
+      // Only individual students see the BloomIQ discovery hero. School
+      // students don't go through calibration so leave hasBloomIQ at
+      // null (hero stays hidden).
+      if (!me.is_school_student) {
+        setHasBloomIQ(!!me.has_calibration);
+      }
 
       if (!me.is_school_student) {
         try {
@@ -169,9 +173,17 @@ export default function StudentHome() {
             .maybeSingle();
           if (sprintRow) {
             const row = sprintRow as { exam_type: string; exam_label: string | null; exam_date: string };
-            const todayMs = new Date(new Date().toISOString().slice(0, 10) + "T00:00:00Z").getTime();
-            const examMs = new Date(row.exam_date + "T00:00:00Z").getTime();
-            const days = Math.round((examMs - todayMs) / 86400000);
+            // Compute days-remaining against LOCAL midnight on both ends.
+            // The previous code anchored on `T00:00:00Z` for both
+            // "today" and "exam date", which in IST (UTC+5:30) drifted
+            // half a day and could show "1 day" when the local calendar
+            // was already on exam day. Local midnight stays in sync
+            // with the user's calendar regardless of timezone.
+            const now = new Date();
+            const localTodayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+            const [y, m, d] = row.exam_date.split("-").map((n) => parseInt(n, 10));
+            const examLocalMidnight = new Date(y, (m || 1) - 1, d || 1);
+            const days = Math.round((examLocalMidnight.getTime() - localTodayMidnight.getTime()) / 86400000);
             const labelMap: Record<string, string> = { JEE_MAIN: "JEE Main", NEET: "NEET", CAT: "CAT" };
             const exam_name = row.exam_type === "CUSTOM" ? (row.exam_label || "your exam") : (labelMap[row.exam_type] || row.exam_type);
             setSprint({ exam_name, exam_date: row.exam_date, days_remaining: days });
@@ -314,6 +326,18 @@ export default function StudentHome() {
     })();
   }, []);
 
+  if (loadError) {
+    return (
+      <div className="max-w-md mx-auto mt-20 card text-center">
+        <div className="text-3xl mb-2">⚠️</div>
+        <div className="font-semibold mb-1">Couldn&apos;t load your dashboard</div>
+        <div className="text-sm muted mb-4">{loadError}</div>
+        <button type="button" className="btn btn-primary" onClick={() => window.location.reload()}>
+          Refresh
+        </button>
+      </div>
+    );
+  }
   if (loading || isSchool === null) {
     return <div className="grid place-items-center py-20"><div className="spinner" /></div>;
   }

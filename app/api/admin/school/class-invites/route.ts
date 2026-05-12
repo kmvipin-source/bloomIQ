@@ -44,6 +44,10 @@ export async function GET(req: Request) {
       return NextResponse.json({ ok: true, invitesByClass: {} });
     }
 
+    // Pull every class_teachers row in the school (primary + acting +
+    // co) so the same endpoint can return co-teacher counts. Previously
+    // the /school/classes page fetched coCount with the user-token
+    // client, which raced RLS the same way the primary lookup did.
     const [{ data: invites }, { data: cts }] = await Promise.all([
       admin
         .from("class_teacher_invites")
@@ -54,8 +58,7 @@ export async function GET(req: Request) {
       admin
         .from("class_teachers")
         .select("class_id, teacher_id, role")
-        .in("class_id", classIds)
-        .in("role", ["primary", "acting"]),
+        .in("class_id", classIds),
     ]);
 
     type Row = { class_id: string; email: string; status: string; invited_at: string; responded_at: string | null };
@@ -69,12 +72,14 @@ export async function GET(req: Request) {
     // these via the user-token client raced RLS and made the
     // /school/classes status column show 'Unassigned' even after an
     // invite was accepted — the page never saw the class_teachers row.
-    type CtRow = { class_id: string; teacher_id: string; role: "primary" | "acting" };
+    type CtRow = { class_id: string; teacher_id: string; role: "primary" | "acting" | "co" };
     const primaryByClass: Record<string, { teacher_id: string }> = {};
     const actingByClass: Record<string, { teacher_id: string }> = {};
+    const coCountByClass: Record<string, number> = {};
     ((cts as CtRow[] | null) || []).forEach((r) => {
       if (r.role === "primary" && !primaryByClass[r.class_id]) primaryByClass[r.class_id] = { teacher_id: r.teacher_id };
-      if (r.role === "acting" && !actingByClass[r.class_id])  actingByClass[r.class_id]  = { teacher_id: r.teacher_id };
+      else if (r.role === "acting" && !actingByClass[r.class_id]) actingByClass[r.class_id] = { teacher_id: r.teacher_id };
+      else if (r.role === "co") coCountByClass[r.class_id] = (coCountByClass[r.class_id] || 0) + 1;
     });
 
     // Resolve names for surfaced teacher_ids in one shot.
@@ -103,6 +108,7 @@ export async function GET(req: Request) {
       invitesByClass: out,
       primaryByClass: primaryByClassNamed,
       actingByClass:  actingByClassNamed,
+      coCountByClass,
     });
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : "Failed" }, { status: 500 });

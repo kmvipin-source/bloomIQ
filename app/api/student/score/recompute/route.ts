@@ -59,7 +59,7 @@ export async function POST(req: Request) {
     // — the user has to do calibration first.
     const { data: cal } = await admin
       .from("calibrations")
-      .select("exam_goal")
+      .select("exam_goal, completed_at")
       .eq("user_id", user.id)
       .maybeSingle();
     if (!cal) {
@@ -69,11 +69,23 @@ export async function POST(req: Request) {
       );
     }
 
-    // Pull calibration responses (the anchor signal).
-    const { data: calResp } = await admin
+    // Pull calibration responses (the anchor signal). Filter to the
+    // CURRENT calibration session: re-calibration UPSERTs the
+    // calibrations row but appends new rows to calibration_responses,
+    // so without this filter every past session would weight the
+    // anchor equally and the student couldn't actually replace stale
+    // calibration with a fresh one. completed_at is set to the moment
+    // the last submit landed, so anything answered within a window
+    // around it belongs to the active session.
+    const calStart = cal.completed_at
+      ? new Date(new Date(cal.completed_at).getTime() - 60 * 60 * 1000).toISOString()
+      : null;
+    let calRespQuery = admin
       .from("calibration_responses")
-      .select("bloom_level, is_correct, benchmark_seconds, time_taken_seconds")
+      .select("bloom_level, is_correct, benchmark_seconds, time_taken_seconds, answered_at")
       .eq("user_id", user.id);
+    if (calStart) calRespQuery = calRespQuery.gte("answered_at", calStart);
+    const { data: calResp } = await calRespQuery;
 
     const calibrationAnswers: ScorableAnswer[] = (calResp || [])
       .filter((r) => r.is_correct !== null && BLOOM_LEVELS.includes(r.bloom_level as BloomLevel))
@@ -86,13 +98,34 @@ export async function POST(req: Request) {
 
     // Pull recent attempt answers — these capture how the student is
     // doing on real quizzes since calibration.
-    const { data: recent } = await admin
-      .from("attempt_answers")
-      .select("is_correct, bloom_level")
+    //
+    // attempt_answers has no student_id column (only attempt_id) — the
+    // owner is the joined quiz_attempts.student_id. The previous query
+    // .eq("student_id", user.id) silently returned zero rows OR raised
+    // a "column does not exist" error against the service role, leaving
+    // the score stuck at the calibration anchor forever. Fix: fetch the
+    // student's recent quiz_attempts.id values first, then pull
+    // attempt_answers for that set.
+    const { data: recentAttempts } = await admin
+      .from("quiz_attempts")
+      .select("id")
       .eq("student_id", user.id)
-      .not("bloom_level", "is", null)
-      .order("id", { ascending: false })
-      .limit(RECENT_ANSWER_LIMIT);
+      .not("submitted_at", "is", null)
+      .order("submitted_at", { ascending: false })
+      .limit(20);
+    const recentAttemptIds = (recentAttempts || [])
+      .map((a) => (a as { id?: string }).id)
+      .filter((x): x is string => !!x);
+
+    const { data: recent } = recentAttemptIds.length
+      ? await admin
+          .from("attempt_answers")
+          .select("is_correct, bloom_level")
+          .in("attempt_id", recentAttemptIds)
+          .not("bloom_level", "is", null)
+          .order("id", { ascending: false })
+          .limit(RECENT_ANSWER_LIMIT)
+      : { data: [] as Array<{ is_correct: boolean | null; bloom_level: string | null }> };
 
     const recentAnswers: ScorableAnswer[] = (recent || [])
       .filter((r) => BLOOM_LEVELS.includes((r as { bloom_level?: string }).bloom_level as BloomLevel))
@@ -103,9 +136,18 @@ export async function POST(req: Request) {
 
     // Apply recency weighting by duplicating recent rows. Crude but
     // transparent — easy to reason about and easy to tune later.
+    //
+    // Handles fractional weights properly: a RECENT_WEIGHT of 1.5
+    // pushes one full copy of the recent set plus the first half of
+    // it again, yielding a true 1.5x weighting rather than rounding
+    // up to 2x (the previous Math.round had silently turned this into
+    // a 2x weight, which didn't match the constant's documentation).
     const weightedRecent: ScorableAnswer[] = [];
-    const recentMultiplier = Math.max(1, Math.round(RECENT_WEIGHT));
-    for (let i = 0; i < recentMultiplier; i += 1) weightedRecent.push(...recentAnswers);
+    const intPart = Math.max(1, Math.floor(RECENT_WEIGHT));
+    for (let i = 0; i < intPart; i += 1) weightedRecent.push(...recentAnswers);
+    const fracPart = Math.max(0, RECENT_WEIGHT - intPart);
+    const fracTake = Math.round(fracPart * recentAnswers.length);
+    if (fracTake > 0) weightedRecent.push(...recentAnswers.slice(0, fracTake));
 
     const combined = [...calibrationAnswers, ...weightedRecent];
     if (combined.length === 0) {

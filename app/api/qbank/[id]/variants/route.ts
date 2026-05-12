@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { groqJSON } from "@/lib/groq";
 import { getBearer, supabaseServer } from "@/lib/supabase/server";
+import { checkRateLimit } from "@/lib/rateLimit";
 import { isBloomLevel, type BloomLevel, BLOOM_META } from "@/lib/bloom";
 import { verifyAnswerKeys, type VerifiableQuestion } from "@/lib/qgen";
 
@@ -61,6 +62,8 @@ export async function POST(req: Request, ctx: RouteCtx) {
     const sb = supabaseServer(token);
     const { data: { user } } = await sb.auth.getUser();
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const rate = checkRateLimit(user.id, "qbank.variants", { capacity: 10, refillPerHour: 20 });
+    if (!rate.allowed) return NextResponse.json({ error: "Too many requests.", code: "rate_limited" }, { status: 429, headers: { "Retry-After": String(rate.retryAfterSec) } });
 
     const { data: src, error: srcErr } = await sb
       .from("question_bank")

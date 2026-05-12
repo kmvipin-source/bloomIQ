@@ -7,7 +7,10 @@ import type { Class } from "@/lib/types";
 import { Users } from "lucide-react";
 import Empty from "@/components/Empty";
 
-type ClassRow = Class & { memberCount?: number; myRole: "primary" | "co"; mySubject: string | null };
+// "acting" is the cover-teacher role used when a co-teacher is filling in
+// for an absent primary. Class-context normalises it to primary for
+// permissions; mirror that here so the badge + sort match.
+type ClassRow = Class & { memberCount?: number; myRole: "primary" | "co" | "acting"; mySubject: string | null };
 
 export default function ClassesPage() {
   const [classes, setClasses] = useState<ClassRow[]>([]);
@@ -79,9 +82,9 @@ export default function ClassesPage() {
                 <div className="min-w-0">
                   <div className="font-semibold truncate">{c.name}</div>
                   <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                    {c.myRole === "primary" ? (
+                    {c.myRole === "primary" || c.myRole === "acting" ? (
                       <span className="text-[10px] uppercase tracking-wide font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5">
-                        Primary
+                        {c.myRole === "acting" ? "Acting Primary" : "Primary"}
                       </span>
                     ) : (
                       <span className="text-[10px] uppercase tracking-wide font-bold text-sky-700 bg-sky-50 border border-sky-200 rounded-full px-2 py-0.5">

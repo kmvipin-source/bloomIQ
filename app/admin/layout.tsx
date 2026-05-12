@@ -26,7 +26,12 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     (async () => {
       const sb = supabaseBrowser();
       const { data: { session } } = await sb.auth.getSession();
-      if (!session) { router.replace("/login?next=/admin/onboard-school"); return; }
+      // Bounce signed-out platform admins to the dedicated /staff
+      // sign-in page (the public /login flow is for teachers/students
+      // and doesn't expose the platform-admin tab). Drop the
+      // next=onboard-school param so post-login lands on the canonical
+      // /admin/dashboard rollup rather than the onboarding form.
+      if (!session) { router.replace("/staff"); return; }
 
       // /api/auth/me uses the service-role client, so RLS lag on the
       // edge can't accidentally redirect a real platform admin to /.

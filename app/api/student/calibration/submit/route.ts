@@ -4,6 +4,7 @@ import {
   computeScore,
   computeBestYou,
   predictRankAndColleges,
+  normalizeExamGoal,
   type ScorableAnswer,
 } from "@/lib/bloomiqScore";
 import { BLOOM_LEVELS, type BloomLevel } from "@/lib/bloom";
@@ -80,7 +81,7 @@ export async function POST(req: Request) {
       time_taken_seconds: number | null;
     }> = [];
 
-    body.responses.forEach((r, i) => {
+    body.responses.forEach((r) => {
       const q = r.question;
       if (!q || typeof q.stem !== "string" || !Array.isArray(q.options) || q.options.length !== 4) return;
       if (typeof q.correct_index !== "number" || q.correct_index < 0 || q.correct_index > 3) return;
@@ -102,10 +103,14 @@ export async function POST(req: Request) {
         time_taken_seconds: taken ?? undefined,
       });
 
+      // Use the running length of accepted rows as the question_index.
+      // Using the loop index of body.responses instead would leave gaps
+      // when an entry fails validation above, which breaks any analytics
+      // keyed on (session_id, question_index) needing a dense sequence.
       responseRows.push({
         user_id: user.id,
         session_id: body.session_id!,
-        question_index: i,
+        question_index: responseRows.length,
         question_stem: q.stem,
         options: q.options as string[],
         correct_index: q.correct_index,
@@ -124,7 +129,14 @@ export async function POST(req: Request) {
 
     // Score it.
     const computed = computeScore(scorable);
-    const examGoal = body.exam_goal ?? null;
+    // Normalize the exam goal to a canonical bucket before persistence.
+    // The "Re-calibrate" banner in /api/student/score does a literal
+    // string compare between profiles.exam_goal and calibrations.exam_goal,
+    // so storing a raw client-supplied display label (e.g. "JEE Main
+    // 2026 — Phase 1") would make the banner fire on every load. The
+    // normaliser collapses any variant to one of the known buckets;
+    // free-text goals fall through to "other".
+    const examGoal = normalizeExamGoal(body.exam_goal ?? null);
     const prediction = predictRankAndColleges(computed.score, examGoal);
     const bestYou = computeBestYou(computed, examGoal);
 
@@ -155,14 +167,20 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: `calibration save failed: ${calErr.message}` }, { status: 500 });
     }
 
-    // Per-question log (append-only).
+    // Per-question log (append-only). The calibration row is the
+    // source of truth for the reveal, but the response log is what
+    // /api/student/score/recompute uses as its anchor — losing it
+    // silently degrades v1 calibration accuracy. Surface the warning
+    // on the response so the UI can fall back / retry.
+    let responsesPersisted = true;
+    let responsesError: string | null = null;
     if (responseRows.length > 0) {
       const { error: respErr } = await admin
         .from("calibration_responses")
         .insert(responseRows);
       if (respErr) {
-        // Non-fatal: the calibration row is the source of truth. Log
-        // and continue so the user gets their reveal.
+        responsesPersisted = false;
+        responsesError = respErr.message;
         console.warn("calibration_responses insert failed:", respErr.message);
       }
     }
@@ -190,6 +208,11 @@ export async function POST(req: Request) {
       weakest_bloom_levels: computed.weakest_bloom_levels,
       prediction,
       best_you: bestYou,
+      // Surface response-log warning to UI. The reveal still works
+      // (calibration row + score row succeeded) but recompute will
+      // have less signal. Reveal page can prompt a re-do if needed.
+      responses_persisted: responsesPersisted,
+      responses_error: responsesError,
     });
   } catch (e) {
     return NextResponse.json(

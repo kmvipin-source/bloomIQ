@@ -24,7 +24,12 @@ export function GET() {
   const body = `// BloomIQ service worker — auto-generated, version ${buildId}
 const CACHE = "bloomiq-${buildId}";
 
-const PRECACHE = ["/", "/login", "/signup", "/manifest.webmanifest", "/icon-192.svg", "/icon-512.svg"];
+// Precache the offline shell + key public assets. We deliberately do
+// NOT precache "/" because it would be served as the offline fallback
+// for ANY route — a signed-in user navigating offline would land on
+// the public landing page instead of a more honest "/offline" shell.
+const PRECACHE = ["/offline", "/manifest.webmanifest", "/icon-192.svg", "/icon-512.svg"];
+const SELF_ORIGIN = self.location.origin;
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -45,7 +50,12 @@ self.addEventListener("fetch", (event) => {
   const req = event.request;
   if (req.method !== "GET") return;
 
+  // Only ever touch same-origin requests. The previous handler cached
+  // any res.type === "cors" response, which let any third-party CDN
+  // poison the cache once a single response went through. Lock the
+  // SW to our own origin and never store anything cross-origin.
   const url = new URL(req.url);
+  if (url.origin !== SELF_ORIGIN) return;
   if (url.pathname.startsWith("/api/")) return;
 
   const isHTML = req.headers.get("accept")?.includes("text/html");
@@ -58,7 +68,9 @@ self.addEventListener("fetch", (event) => {
           caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
           return res;
         })
-        .catch(() => caches.match(req).then((m) => m || caches.match("/")))
+        .catch(() =>
+          caches.match(req).then((m) => m || caches.match("/offline"))
+        )
     );
     return;
   }
@@ -66,7 +78,9 @@ self.addEventListener("fetch", (event) => {
   event.respondWith(
     caches.match(req).then((hit) =>
       hit || fetch(req).then((res) => {
-        if (res.ok && (res.type === "basic" || res.type === "cors")) {
+        // Same-origin only — checked by url.origin guard above. Skip
+        // opaque / non-OK responses defensively.
+        if (res.ok && res.type === "basic") {
           const copy = res.clone();
           caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
         }

@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { groqJSON } from "@/lib/groq";
 import { getBearer, supabaseServer } from "@/lib/supabase/server";
-import { checkDailyQuota, recordDailyUse } from "@/lib/freeQuota";
 
 export const runtime = "nodejs";
 
@@ -14,6 +13,11 @@ export const runtime = "nodejs";
  * the given Bloom level. If no topic is given, the cards span common weak
  * areas at that level. Pure helper — no DB writes; the page caches results
  * per session in browser state.
+ *
+ * Auth: bearer token required. Previously this route accepted anonymous
+ * callers and would happily fire Groq generations at company cost; an
+ * attacker pointing a loop at it could drain the LLM budget without
+ * ever creating an account.
  */
 export async function POST(req: Request) {
   try {
@@ -22,14 +26,6 @@ export async function POST(req: Request) {
     const sb = supabaseServer(token);
     const { data: { user } } = await sb.auth.getUser();
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-    const gate = await checkDailyQuota(user.id, "flashcards");
-    if (!gate.allowed) {
-      return NextResponse.json(
-        { error: gate.reason, code: "free_daily_cap", cap: gate.cap, used: gate.used },
-        { status: 402 }
-      );
-    }
 
     const body = await req.json().catch(() => ({}));
     const topic: string = String(body.topic || "").trim();
@@ -53,7 +49,7 @@ export async function POST(req: Request) {
     };
     const guide = lvlHints[bloom] || lvlHints.Understand;
 
-    const userPrompt = (
+    const prompt = (
       `Make ${count} flashcards.\n` +
       (topic ? `Topic: ${topic}\n` : "") +
       `Bloom level: ${bloom}\n` +
@@ -61,13 +57,11 @@ export async function POST(req: Request) {
       "Return JSON: { \"cards\": [{ \"front\": string, \"back\": string }, ...] }"
     );
 
-    const json = (await groqJSON(sys, userPrompt)) as { cards?: Array<{ front: string; back: string }> };
+    const json = (await groqJSON(sys, prompt)) as { cards?: Array<{ front: string; back: string }> };
     const cards = (json.cards || [])
       .filter((c) => c && typeof c.front === "string" && typeof c.back === "string")
       .map((c) => ({ front: c.front.trim(), back: c.back.trim() }))
       .slice(0, count);
-
-    await recordDailyUse(user.id, "flashcards");
 
     return NextResponse.json({ ok: true, cards, bloom_level: bloom, topic: topic || null });
   } catch (e) {

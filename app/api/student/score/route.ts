@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getBearer, supabaseServer, supabaseAdmin } from "@/lib/supabase/server";
-import { predictRankAndColleges } from "@/lib/bloomiqScore";
+import { predictRankAndColleges, normalizeExamGoal } from "@/lib/bloomiqScore";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -131,7 +131,16 @@ export async function GET(req: Request) {
         completed_at: cal.completed_at,
       },
       current_exam_goal: currentExamGoal,
-      is_stale: !!(currentExamGoal && cal.exam_goal && currentExamGoal !== cal.exam_goal),
+      // Compare normalised buckets, not raw strings. profiles.exam_goal
+      // is a goal id like "jee_main" while calibrations.exam_goal is
+      // stored as a normalised bucket from submit; both sides routed
+      // through normalizeExamGoal() yields a stable equality check
+      // and prevents a false-positive "Re-calibrate" banner.
+      is_stale: !!(
+        currentExamGoal &&
+        cal.exam_goal &&
+        normalizeExamGoal(currentExamGoal) !== normalizeExamGoal(cal.exam_goal)
+      ),
     });
   } catch (e) {
     return NextResponse.json(
