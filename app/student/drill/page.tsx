@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { supabaseBrowser } from "@/lib/supabase/client";
 import { Zap, ChevronRight, Check, X, ArrowLeft, RefreshCw } from "lucide-react";
+import CurrentGoalChip from "@/components/CurrentGoalChip";
 import BloomBadge from "@/components/BloomBadge";
 import type { BloomLevel } from "@/lib/bloom";
 import { triggerScoreRecompute } from "@/lib/scoreRecompute";
@@ -108,9 +109,12 @@ export default function DailyDrillPage() {
 
   return (
     <div className="max-w-3xl mx-auto fade-in">
-      <Link href="/student" className="text-sm text-slate-500 hover:text-slate-800 inline-flex items-center gap-1">
-        <ArrowLeft size={14} /> Back home
-      </Link>
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <Link href="/student" className="text-sm text-slate-500 hover:text-slate-800 inline-flex items-center gap-1">
+          <ArrowLeft size={14} /> Back home
+        </Link>
+        <CurrentGoalChip />
+      </div>
       <div className="flex items-center gap-3 mt-2">
         <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-amber-400 to-orange-500 text-white grid place-items-center">
           <Zap size={20} />

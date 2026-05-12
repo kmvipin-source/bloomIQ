@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { groqJSON } from "@/lib/groq";
-import { getBearer, supabaseServer } from "@/lib/supabase/server";
+import { getBearer, supabaseServer, supabaseAdmin } from "@/lib/supabase/server";
+import {
+  loadLearningContext,
+  prependLearningContext,
+  buildExamAwareTopic,
+} from "@/lib/learningContext";
 
 export const runtime = "nodejs";
 
@@ -49,15 +54,24 @@ export async function POST(req: Request) {
     };
     const guide = lvlHints[bloom] || lvlHints.Understand;
 
+    // Learning-context inheritance — flashcards must match the student's
+    // exam register. A CAT student studying "Newton's laws" should get
+    // cards pitched at CAT difficulty, not Class-10. User can always
+    // change their exam_goal from the master settings page.
+    const admin = supabaseAdmin();
+    const ctx = await loadLearningContext(admin, user.id);
+    const contextAwareTopic = buildExamAwareTopic(topic, ctx);
+    const contextAwareSys = prependLearningContext(sys, ctx);
+
     const prompt = (
       `Make ${count} flashcards.\n` +
-      (topic ? `Topic: ${topic}\n` : "") +
+      (topic ? `Topic: ${contextAwareTopic}\n` : "") +
       `Bloom level: ${bloom}\n` +
       `Cards should drill ${bloom}. Guideline: ${guide}\n` +
       "Return JSON: { \"cards\": [{ \"front\": string, \"back\": string }, ...] }"
     );
 
-    const json = (await groqJSON(sys, prompt)) as { cards?: Array<{ front: string; back: string }> };
+    const json = (await groqJSON(contextAwareSys, prompt)) as { cards?: Array<{ front: string; back: string }> };
     const cards = (json.cards || [])
       .filter((c) => c && typeof c.front === "string" && typeof c.back === "string")
       .map((c) => ({ front: c.front.trim(), back: c.back.trim() }))

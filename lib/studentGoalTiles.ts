@@ -212,11 +212,17 @@ export const TILE_META: Record<StudentTileKey, TileMeta> = {
   calibration: {
     href: "/student/calibration",
     iconName: "Gauge",
-    label: "Confidence Calibration",
-    description: "When you say “Sure”, are you actually right? Train the metacognitive skill that beats negative marking.",
+    // Renamed 2026-05-13: "Confidence Calibration" → "Confidence Insights"
+    // and moved from "train" → "diagnose". The page is a read-only chart
+    // of stated-vs-actual confidence by band; it doesn't TRAIN anything —
+    // it diagnoses over/underconfidence patterns. Pairing it with
+    // Speed-Accuracy Trainer in nav was the source of the "two names,
+    // one feature" confusion (Vipin, 2026-05-13).
+    label: "Confidence Insights",
+    description: "Are your hunches right? Read-only dashboard of stated-vs-actual confidence per band. Fills from your Speed Trainer ratings — the metric that beats negative marking.",
     color: { bg: "bg-teal-100", fg: "text-teal-700" },
     featureKey: "calibration",
-    category: "train",
+    category: "diagnose",
   },
   voice_teacher: {
     href: "/student/voice-teacher",

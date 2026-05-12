@@ -1,7 +1,11 @@
 import { NextResponse } from "next/server";
 import { groqJSON } from "@/lib/groq";
-import { getBearer, supabaseServer } from "@/lib/supabase/server";
+import { getBearer, supabaseServer, supabaseAdmin } from "@/lib/supabase/server";
 import { checkRateLimit } from "@/lib/rateLimit";
+import {
+  loadLearningContext,
+  prependLearningContext,
+} from "@/lib/learningContext";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -67,6 +71,15 @@ export async function POST(req: Request) {
     if (session.user_id !== user.id) return NextResponse.json({ error: "Not yours" }, { status: 403 });
     if (!session.follow_up_q) return NextResponse.json({ error: "No follow-up question to answer." }, { status: 400 });
 
+    // Learning-context inheritance — Vipin flagged on 2026-05-12 that
+    // the verdict prose was reaching for Photosynthesis examples for
+    // a corporate-training learner. Even though this route only grades
+    // an existing reply (not new questions), the verdict text and the
+    // "what to study next" nudge need to match the user's register.
+    const admin = supabaseAdmin();
+    const ctx = await loadLearningContext(admin, user.id);
+    const contextAwareSystem = prependLearningContext(SYSTEM, ctx);
+
     const userPrompt = `Topic: ${session.topic}
 
 Original explanation:
@@ -83,7 +96,7 @@ ${answer}
 """
 
 Write the JSON verdict.`;
-    const raw = await groqJSON(SYSTEM, userPrompt);
+    const raw = await groqJSON(contextAwareSystem, userPrompt);
     const verdict = String((raw as { verdict?: unknown }).verdict || "").trim();
     if (!verdict) {
       return NextResponse.json({ error: "AI did not return a verdict; please try again." }, { status: 502 });

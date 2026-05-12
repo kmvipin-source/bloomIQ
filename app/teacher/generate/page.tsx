@@ -6,7 +6,15 @@ import { supabaseBrowser } from "@/lib/supabase/client";
 import { toast } from "@/lib/toast";
 import { BLOOM_LEVELS, BLOOM_META, type BloomLevel } from "@/lib/bloom";
 import { Sparkles, FileText, Image as ImageIcon, GraduationCap, Tag, Zap, BookOpenCheck, ScanSearch, Trophy, BookMarked, LifeBuoy, Wand2, Users, Briefcase, Cpu, Cloud, ServerCog } from "lucide-react";
-import LearnerProfilePrompt, { type LearnerProfile } from "@/components/LearnerProfilePrompt";
+// LearnerProfilePrompt (the inline "K-12 / Competitive exam / Professional"
+// pill that used to live on this page) has been removed. learner_profile
+// is now sourced from the teacher's own profile.learner_profile, which
+// is auto-derived from their exam_goal at goal-pick time (single capture
+// in StudentGoalPicker). We still need the LearnerProfile TYPE here for
+// the topic-placeholder + skill-detection logic, so we import the type
+// only (no component import).
+import { type LearnerProfile } from "@/components/LearnerProfilePrompt";
+import { placeholderTopic } from "@/lib/topicSuggestions";
 import { detectSkillFromTopic } from "@/lib/skillDetectors";
 
 type Source = "notes" | "image" | "topic_syllabus" | "topic_only";
@@ -201,7 +209,37 @@ export default function GeneratePage() {
   // ---- Q2: Learner profile (drives intent set + skill detector) --
   // Declared BEFORE activeIntent useMemo because that useMemo reads
   // `intents` — TDZ would fire if this came later.
+  //
+  // Previously sourced from the inline LearnerProfilePrompt pill on
+  // this page. That pill was removed when we consolidated learning-
+  // context capture into StudentGoalPicker. learner_profile is now
+  // read once from profiles.learner_profile (auto-derived from the
+  // teacher's exam_goal at pick time). Also pulling exam_goal so the
+  // topic-placeholder helper can disambiguate CAT vs NEET vs JEE
+  // (was previously hardcoded to "NEET Biology" for everyone in the
+  // competitive_exam bucket — bug Vipin caught 2026-05-12).
   const [learnerProfile, setLearnerProfile] = useState<LearnerProfile | null>(null);
+  const [examGoal, setExamGoal] = useState<string | null>(null);
+  useEffect(() => {
+    (async () => {
+      try {
+        const sb = supabaseBrowser();
+        const { data: { user } } = await sb.auth.getUser();
+        if (!user) return;
+        const { data: prof } = await sb
+          .from("profiles")
+          .select("learner_profile, exam_goal")
+          .eq("id", user.id)
+          .maybeSingle();
+        const row = prof as { learner_profile: string | null; exam_goal: string | null } | null;
+        const lp = row?.learner_profile;
+        if (lp === "k12" || lp === "competitive_exam" || lp === "corporate") {
+          setLearnerProfile(lp);
+        }
+        if (row?.exam_goal) setExamGoal(row.exam_goal);
+      } catch { /* non-fatal — placeholders fall back to defaults */ }
+    })();
+  }, []);
   const intents = useMemo(() => intentsForProfile(learnerProfile), [learnerProfile]);
   const skillDefault = useMemo(
     () => (learnerProfile === "corporate" ? detectSkillFromTopic(topic) : null),
@@ -214,24 +252,18 @@ export default function GeneratePage() {
     [activeIntentId, intents],
   );
 
-  // ---- Profile-aware topic placeholders -------------------------
-  // Corporate users see "Java Streams" / "AWS Lambda"; competitive-
-  // exam users see "CAT Quant" / "JEE Mechanics"; everyone else
-  // sees the existing K-12 examples.
+  // Goal-aware topic placeholders. All three now key off exam_goal (granular)
+  // first and fall back to learner_profile, so a CAT teacher sees CAT
+  // examples and a JEE teacher sees JEE examples — previously both saw
+  // whichever happened to be hardcoded in the competitive_exam branch.
   function topicPlaceholder(): string {
-    if (learnerProfile === "corporate") return "e.g. Java Streams";
-    if (learnerProfile === "competitive_exam") return "e.g. CAT Quantitative Aptitude";
-    return "e.g. Photosynthesis";
+    return placeholderTopic(examGoal, learnerProfile);
   }
   function syllabusTopicPlaceholder(): string {
-    if (learnerProfile === "corporate") return "e.g. Spring Boot security";
-    if (learnerProfile === "competitive_exam") return "e.g. JEE Mechanics";
-    return "e.g. Newton's Laws of Motion";
+    return placeholderTopic(examGoal, learnerProfile);
   }
   function topicOnlyPlaceholder(): string {
-    if (learnerProfile === "corporate") return "e.g. Kubernetes pod scheduling";
-    if (learnerProfile === "competitive_exam") return "e.g. NEET Biology";
-    return "e.g. Mitochondria";
+    return placeholderTopic(examGoal, learnerProfile);
   }
 
   function applyIntent(intent: Intent) {
@@ -383,8 +415,10 @@ export default function GeneratePage() {
         AI writes new multiple-choice questions for you. They land in <strong>Review Pending</strong> first; once you approve them they&apos;re available to <strong>Build &amp; Assign Tests</strong>.
       </p>
 
-      {/* ---------- Q2: First-time learner-profile prompt ---------- */}
-      <LearnerProfilePrompt onChange={(p) => setLearnerProfile(p)} />
+      {/* LearnerProfilePrompt removed (2026-05-12) — see top of file.
+          learner_profile is now sourced via useEffect above from
+          profiles.learner_profile, auto-derived from the teacher's
+          exam_goal at pick time. */}
 
       {/* ---------- Q1 V1: Class scope (optional) ---------- */}
       {teacherClasses.length > 0 && (

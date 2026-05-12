@@ -6,8 +6,19 @@ import { supabaseBrowser } from "@/lib/supabase/client";
 import { toast } from "@/lib/toast";
 import { BLOOM_LEVELS, BLOOM_META, recommendedQuizMinutes, type BloomLevel } from "@/lib/bloom";
 import { Sparkles, FileText, Image as ImageIcon, GraduationCap, Tag, Play, ScrollText } from "lucide-react";
-import LearnerProfilePrompt, { type LearnerProfile } from "@/components/LearnerProfilePrompt";
+// LearnerProfilePrompt (the inline "K-12 / Competitive exam / Professional"
+// pill that used to live on this page) has been removed. learner_profile is
+// now auto-derived from profile.exam_goal at goal-pick time — single capture
+// point in StudentGoalPicker. We still need the LearnerProfile TYPE here for
+// the topic-placeholder + skill-detection logic below, so we import the type
+// only (no component import).
+import { type LearnerProfile } from "@/components/LearnerProfilePrompt";
+import CurrentGoalChip from "@/components/CurrentGoalChip";
 import { detectSkillFromTopic } from "@/lib/skillDetectors";
+import MarkingSchemePicker from "@/components/MarkingSchemePicker";
+import type { MarkingScheme } from "@/lib/scoring";
+import { suggestPresetForGoal, type ScoringPresetKey } from "@/lib/scoringPresets";
+import { suggestedTopics, placeholderTopic } from "@/lib/topicSuggestions";
 
 type Source = "topic_only" | "topic_syllabus" | "notes" | "image" | "past_paper";
 
@@ -108,6 +119,15 @@ export default function StudentGeneratePage() {
   // recommendation so their explicit choice isn't quietly overwritten.
   const [timeManuallySet, setTimeManuallySet] = useState(false);
   const [numericalPercent, setNumericalPercent] = useState(0);
+  // Per-test marking scheme (migration 76). NULL = legacy +1/0/0 default.
+  // Picker emits a new value on every change. We send it to the
+  // /api/student/quick-test endpoint, which persists onto the quiz.
+  const [markingScheme, setMarkingScheme] = useState<MarkingScheme | null>(null);
+  // Auto-suggestion based on the student's profile.exam_goal. When the
+  // student has goal "jee_main", the picker shows a one-line "Switch to
+  // JEE Main" banner with a one-click apply button. Default PRACTICE
+  // until the student manually picks.
+  const [suggestedPreset, setSuggestedPreset] = useState<ScoringPresetKey>("PRACTICE");
   // Same pattern for numerical %: app-suggested when topic matches an exam,
   // but stop overriding the moment the user drags the slider.
   const [numericalManuallySet, setNumericalManuallySet] = useState(false);
@@ -139,6 +159,53 @@ export default function StudentGeneratePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [recommendedMinutes]);
 
+  // Fetch the student's exam_goal once to auto-suggest a marking-scheme
+  // preset. e.g. exam_goal === "jee_main" → suggestPresetForGoal returns
+  // "JEE_MAIN" → the picker renders a one-line "Switch to JEE Main"
+  // banner. The student still has to click to apply — we don't change
+  // their default behind their back.
+  useEffect(() => {
+    (async () => {
+      try {
+        const sb = supabaseBrowser();
+        const { data: { user } } = await sb.auth.getUser();
+        if (!user) return;
+        // Fetch both fields in one round-trip. exam_goal drives the
+        // marking-scheme suggestion banner; learner_profile drives the
+        // topic-placeholder / skill-detection branches further down.
+        // learner_profile is auto-derived from exam_goal at goal-pick
+        // time (see StudentGoalPicker) so for users who picked their
+        // goal post-consolidation, the two are guaranteed in sync.
+        // For legacy users who chose K-12/competitive/corporate before
+        // consolidation, the stored value is honoured as-is.
+        const { data: prof } = await sb
+          .from("profiles")
+          .select("exam_goal, learner_profile, last_marking_scheme")
+          .eq("id", user.id)
+          .maybeSingle();
+        const row = prof as {
+          exam_goal: string | null;
+          learner_profile: string | null;
+          last_marking_scheme: unknown | null;
+        } | null;
+        setSuggestedPreset(suggestPresetForGoal(row?.exam_goal ?? null));
+        if (row?.exam_goal) setExamGoal(row.exam_goal);
+        const lp = row?.learner_profile;
+        if (lp === "k12" || lp === "competitive_exam" || lp === "corporate") {
+          setLearnerProfile(lp);
+        }
+        // Sticky marking scheme — if the user has picked a scheme on any
+        // surface before, pre-fill this picker with it. NULL means
+        // they've never picked → picker falls back to PRACTICE + the
+        // goal-suggested banner ("Switch to CAT", etc.). See
+        // migration 77 + lib/markingSchemeMemory.ts.
+        if (row?.last_marking_scheme && typeof row.last_marking_scheme === "object") {
+          setMarkingScheme(row.last_marking_scheme as MarkingScheme);
+        }
+      } catch { /* non-fatal — picker just shows no banner */ }
+    })();
+  }, []);
+
   // Detect competitive exam from topic and auto-suggest numerical %. Only
   // fires while numericalManuallySet is false — the student can always
   // override and we'll respect their choice from then on.
@@ -155,6 +222,12 @@ export default function StudentGeneratePage() {
   // Corporate students additionally get tech-skill detection for
   // topics like "Java", "AWS", "JCL", "Kubernetes" etc.
   const [learnerProfile, setLearnerProfile] = useState<LearnerProfile | null>(null);
+  // exam_goal (granular). Powers the goal-aware topic placeholders +
+  // chips. Populated from profile in the useEffect above. Defaulting to
+  // null means the placeholderTopic helper falls back to learner_profile,
+  // which itself falls back to K-12 — same as before the goal-aware
+  // pass on 2026-05-12, so legacy users see no regression.
+  const [examGoal, setExamGoal] = useState<string | null>(null);
   const skillDefault = useMemo(
     () => (learnerProfile === "corporate" ? detectSkillFromTopic(topic) : null),
     [topic, learnerProfile],
@@ -165,24 +238,30 @@ export default function StudentGeneratePage() {
   // is_school_student is INTENTIONALLY not consulted here — a
   // corporate trainee enrolled by their L&D logs in as a school
   // student in our schema, but their learner_profile is "corporate".
+  // Goal-aware placeholders (2026-05-12 fix). Previously these three
+  // functions only branched on learner_profile (3 buckets), which
+  // collapses CAT, NEET, JEE, UPSC, Bank exams into the same
+  // "competitive_exam" string — a CAT student would see "NEET Biology"
+  // and vice versa. Now all three pull from suggestedTopics keyed off
+  // the granular exam_goal, falling back to learner_profile, falling
+  // back to K-12 generic. See lib/topicSuggestions.ts.
   function topicPlaceholder(): string {
-    if (learnerProfile === "corporate") return "e.g. Java Streams";
-    if (learnerProfile === "competitive_exam") return "e.g. CAT Quantitative Aptitude";
-    return "e.g. Photosynthesis";
+    return placeholderTopic(examGoal, learnerProfile);
   }
   function syllabusTopicPlaceholder(): string {
-    if (learnerProfile === "corporate") return "e.g. Spring Boot security";
-    if (learnerProfile === "competitive_exam") return "e.g. JEE Mechanics";
-    return "e.g. Newton's Laws of Motion";
+    return placeholderTopic(examGoal, learnerProfile);
   }
   function topicOnlyPlaceholder(): string {
-    if (learnerProfile === "corporate") return "e.g. Kubernetes pod scheduling";
-    if (learnerProfile === "competitive_exam") return "e.g. NEET Biology";
-    return "e.g. Mitochondria";
+    return placeholderTopic(examGoal, learnerProfile);
   }
   function subjectPlaceholder(): string {
-    if (learnerProfile === "corporate") return "e.g. AWS, Java, Mainframe";
-    return "e.g. Algebra, World History";
+    // Subject-list placeholder — a comma-separated example. Use the
+    // first three goal-aware topic suggestions for every learner type.
+    // (Previously corporate users were hardcoded to "AWS, Java, Mainframe"
+    // regardless of their actual role; suggestedTopics now disambiguates
+    // by exam_goal first, learner_profile second.)
+    const tops = suggestedTopics(examGoal, learnerProfile).slice(0, 3);
+    return `e.g. ${tops.join(", ").slice(0, 80)}`;
   }
 
   // "Pick how long" mode — derive a NON-UNIFORM per-level question count
@@ -276,6 +355,10 @@ export default function StudentGeneratePage() {
         perLevel: effectivePerLevel,
         timeLimit: effectiveTimeLimit,
         numericalPercent,
+        // Per-test marking scheme — picked by the student via the
+        // MarkingSchemePicker. NULL means "use legacy +1/0/0 default."
+        // /api/student/quick-test persists this into quizzes.marking_scheme.
+        markingScheme,
       };
       // by_time mode produces non-uniform counts (Remember gets more than
       // Create for the same time). Send the full map; the API will use it
@@ -334,10 +417,12 @@ export default function StudentGeneratePage() {
 
   return (
     <div className="max-w-4xl mx-auto fade-in">
-      <h1 className="h1">New practice test</h1>
-
-      {/* ---------- Q2: First-time learner-profile prompt ---------- */}
-      <LearnerProfilePrompt onChange={(p) => setLearnerProfile(p)} />
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <h1 className="h1">New practice test</h1>
+        {/* CurrentGoalChip — replaces the old inline LearnerProfilePrompt.
+            Tap → /student/settings/goal (master change screen). */}
+        <CurrentGoalChip />
+      </div>
 
       <p className="muted mt-1">
         Pick a source, choose Bloom levels, generate. You&apos;ll start the test immediately after.
@@ -707,6 +792,23 @@ export default function StudentGeneratePage() {
               Target % of questions involving calculation or numbers. Auto-ignored for non-numerical topics (history, literature, etc.).
             </p>
           )}
+        </div>
+
+        {/* Marking scheme picker (migration 76). Default PRACTICE
+            (+1 correct / 0 wrong) keeps practice tests friendly. Students
+            preparing for JEE / NEET / CAT pick the matching preset to get
+            negative-marks-aware scoring on raw_score / max_score; the
+            separate negative-marks toggle lets them run "JEE-weighted but
+            no penalty" diagnostics. suggestedPreset comes from the
+            student's profile.exam_goal — picker shows a one-tap
+            "Switch to <preset>" banner when goal-aware. */}
+        <div>
+          <label className="label">Marking scheme</label>
+          <MarkingSchemePicker
+            value={markingScheme}
+            onChange={setMarkingScheme}
+            suggested={suggestedPreset}
+          />
         </div>
 
         {err && <div className="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{err}</div>}

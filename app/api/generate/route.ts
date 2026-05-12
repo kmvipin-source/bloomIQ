@@ -1,14 +1,21 @@
 import { NextResponse } from "next/server";
 import { groqJSON, groqJSONVision } from "@/lib/groq";
 import { BLOOM_LEVELS, BLOOM_META, type BloomLevel, isBloomLevel, blankBloomCounts } from "@/lib/bloom";
-import { getBearer, supabaseServer } from "@/lib/supabase/server";
+import { getBearer, supabaseServer, supabaseAdmin } from "@/lib/supabase/server";
 import { checkRateLimit, checkDailyCap } from "@/lib/rateLimit";
 import {
   findMisconceptionDistractors,
   formatDistractorSeedsForPrompt,
   verifyAnswerKeys,
+  filterQuestionBatch,
   type VerifiableQuestion,
 } from "@/lib/qgen";
+import {
+  loadLearningContext,
+  prependLearningContext,
+  buildExamAwareTopic,
+} from "@/lib/learningContext";
+import { getRecentStemsForExclusion } from "@/lib/recentStemsExclusion";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -23,6 +30,25 @@ mapped precisely to Bloom's Taxonomy levels. Each question must:
 - include a brief explanation of why it's correct
 - match the requested Bloom level's cognitive demand
 - be unambiguous, grammatically correct, and free of trick wording
+
+HARD CONSTRAINTS — questions violating any of these will be rejected:
+1. The correct answer's key terms must NEVER appear inside the stem. If the
+   correct option is "Photosynthesis is the process …", the stem must NOT
+   contain the word "photosynthesis". Re-word the stem or pick a different
+   right answer — never let the question telegraph itself.
+2. Within a single batch, do NOT generate paraphrases of the same question.
+   Each item must test a DISTINCT sub-concept or skill — different formula,
+   different scenario, different angle. Multiple questions meaning the
+   same thing are duplicates even if the wording differs.
+3. For Apply / Analyze / Evaluate level questions, VARY the scenario domain
+   across the batch. Do NOT use the same template with a swapped noun
+   (e.g., "hospital" vs "bank" vs "school" in otherwise identical stems).
+   Each scenario should bring genuinely different context, constraints,
+   or quantities.
+4. Return EXACTLY the requested number of questions — no more, no fewer.
+   If asked for 20, return 20. Generating extras wastes the user's quota
+   and time.
+
 Return STRICT JSON only.`;
 
 function jsonShape() {
@@ -378,7 +404,13 @@ export async function POST(req: Request) {
     const className: string = body.className || "";
     const syllabus: string = body.syllabus || "";
     const imageDataUrl: string = body.imageDataUrl || "";
-    const perLevel: number = Math.max(1, Math.min(10, Number(body.perLevel) || 2));
+    // Raised the upper bound from 10 → 25 on 2026-05-12 — Vipin caught a
+    // silent clamp where teachers asking for 20 questions/level were
+    // getting their request truncated to 10 with no UI indication. The
+    // post-generation filterQuestionBatch() handles the hard slice to
+    // exactly the requested count, so larger asks just mean "give me
+    // more on this Bloom level". 25 caps the prompt-token spend.
+    const perLevel: number = Math.max(1, Math.min(25, Number(body.perLevel) || 2));
     const numericalPercent: number = Math.max(0, Math.min(100, Number(body.numericalPercent) || 0));
     const requested: string[] = Array.isArray(body.levels) ? body.levels : BLOOM_LEVELS;
     const levels: BloomLevel[] = requested.filter(isBloomLevel);
@@ -418,6 +450,18 @@ export async function POST(req: Request) {
       }
     }
 
+    // Learning-context inheritance — same pattern as student endpoints.
+    // Plus cross-test non-repetition: a teacher building a fresh quiz
+    // on the same topic shouldn't get the same questions they generated
+    // last week. Exclusion list = stems the TEACHER themselves have
+    // seen via past attempts (mostly captured when they preview-take
+    // their own quizzes); this is best-effort for teacher-side.
+    const adminForCtx = supabaseAdmin();
+    const ctx = await loadLearningContext(adminForCtx, user.id);
+    const contextAwareTopic = buildExamAwareTopic(topic, ctx);
+    const exclusion = await getRecentStemsForExclusion(adminForCtx, user.id, topic, null, 20);
+    const contextAwareSystem = prependLearningContext(SYSTEM, ctx) + exclusion.promptBlock;
+
     const summary = blankBloomCounts();
     type RowWithQuality = {
       owner_id: string; topic: string | null; bloom_level: BloomLevel;
@@ -454,17 +498,17 @@ export async function POST(req: Request) {
       try {
         switch (source) {
           case "image":
-            json = await groqJSONVision(SYSTEM, imagePrompt(topic, lvl, perLevel, numericalPercent, seedBlock), imageDataUrl);
+            json = await groqJSONVision(contextAwareSystem, imagePrompt(contextAwareTopic, lvl, perLevel, numericalPercent, seedBlock), imageDataUrl);
             break;
           case "topic_syllabus":
-            json = await groqJSON(SYSTEM, syllabusPrompt(topic, className, syllabus, lvl, perLevel, numericalPercent, seedBlock));
+            json = await groqJSON(contextAwareSystem, syllabusPrompt(contextAwareTopic, className, syllabus, lvl, perLevel, numericalPercent, seedBlock));
             break;
           case "topic_only":
-            json = await groqJSON(SYSTEM, topicOnlyPrompt(topic, lvl, perLevel, numericalPercent, seedBlock));
+            json = await groqJSON(contextAwareSystem, topicOnlyPrompt(contextAwareTopic, lvl, perLevel, numericalPercent, seedBlock));
             break;
           case "notes":
           default:
-            json = await groqJSON(SYSTEM, notesPrompt(content, topic, lvl, perLevel, numericalPercent, seedBlock));
+            json = await groqJSON(contextAwareSystem, notesPrompt(content, contextAwareTopic, lvl, perLevel, numericalPercent, seedBlock));
         }
       } catch (e) {
         // eslint-disable-next-line no-console
@@ -476,13 +520,29 @@ export async function POST(req: Request) {
         : [];
       // eslint-disable-next-line no-console
       console.log(`[generate] level=${lvl}: model returned ${arr.length} raw question(s)`);
-      const passed = arr
+      const structurallyValid = arr
         .filter((q) => q && q.stem && Array.isArray(q.options) && q.options.length === 4
                       && Number.isInteger(q.correct_index) && q.correct_index >= 0 && q.correct_index <= 3);
-      if (passed.length < arr.length) {
-        // eslint-disable-next-line no-console
-        console.warn(`[generate] level=${lvl}: ${arr.length - passed.length} question(s) rejected by validation`);
-      }
+
+      // Quality + cross-test filters (Vipin 2026-05-12):
+      //   1. drop questions whose correct answer is echoed in the stem
+      //   2. drop near-duplicate paraphrases inside this batch
+      //   3. drop questions ≥70% similar to stems already seen recently
+      //   4. hard-slice to the user's requested per-level count
+      const { kept: passed, droppedLeak, droppedDup, droppedHistory, trimmed } = filterQuestionBatch(
+        structurallyValid as Array<{ stem: string; options: string[]; correct_index: number; explanation?: string }>,
+        {
+          maxCount: perLevel,
+          similarityThreshold: 0.7,
+          historyStems: exclusion.stems,
+        },
+      );
+      // eslint-disable-next-line no-console
+      console.log(
+        `[generate] level=${lvl}: kept=${passed.length}/${structurallyValid.length} ` +
+        `(target=${perLevel}, dropped: leak=${droppedLeak.length} dup=${droppedDup.length} ` +
+        `history=${droppedHistory.length} trimmed=${trimmed.length})`
+      );
 
       // Self-verifying answer keys: re-solve every passed question; if the
       // re-solve disagrees, try ONE refinement; if that still disagrees,

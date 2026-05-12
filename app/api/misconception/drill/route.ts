@@ -1,7 +1,12 @@
 import { NextResponse } from "next/server";
 import { groqJSON } from "@/lib/groq";
-import { getBearer, supabaseServer } from "@/lib/supabase/server";
+import { getBearer, supabaseServer, supabaseAdmin } from "@/lib/supabase/server";
 import { checkRateLimit } from "@/lib/rateLimit";
+import {
+  loadLearningContext,
+  prependLearningContext,
+  buildExamAwareTopic,
+} from "@/lib/learningContext";
 
 export const runtime = "nodejs";
 export const maxDuration = 45;
@@ -71,13 +76,21 @@ export async function POST(req: Request) {
     if (mErr || !misc) return NextResponse.json({ error: "Misconception not found" }, { status: 404 });
     if (misc.user_id !== user.id) return NextResponse.json({ error: "Not yours" }, { status: 403 });
 
+    // Learning-context inheritance — drill MCQs must pitch at the student's
+    // exam difficulty. A CAT student's misconception drill should be at
+    // CAT discrimination level, not Class-10. See lib/learningContext.ts.
+    const admin = supabaseAdmin();
+    const ctx = await loadLearningContext(admin, user.id);
+    const contextAwareTopic = buildExamAwareTopic(misc.topic || "general", ctx);
+    const contextAwareSystem = prependLearningContext(SYSTEM, ctx);
+
     const userPrompt = `Misconception label: ${misc.label}
 Misconception detail: ${misc.detail}
-Topic: ${misc.topic || "general"}
+Topic: ${contextAwareTopic}
 Bloom level: ${misc.bloom_level || "apply"}
 
 Generate the 3-question micro-drill JSON now.`;
-    const raw = await groqJSON(SYSTEM, userPrompt);
+    const raw = await groqJSON(contextAwareSystem, userPrompt);
     const arr = (raw as { questions?: unknown }).questions;
     if (!Array.isArray(arr)) {
       return NextResponse.json({ error: "AI did not return drill questions; please retry." }, { status: 502 });

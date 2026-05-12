@@ -3,6 +3,11 @@ import { groqJSON } from "@/lib/groq";
 import { BLOOM_LEVELS, type BloomLevel } from "@/lib/bloom";
 import { aiGate } from "@/lib/aiGate";
 import { supabaseAdmin } from "@/lib/supabase/server";
+import {
+  loadLearningContext,
+  prependLearningContext,
+  buildExamAwareTopic,
+} from "@/lib/learningContext";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -114,8 +119,23 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Explanation is too long (max 4000 characters)." }, { status: 400 });
     }
 
-    const userPrompt = `Topic: ${topic}\n\nStudent's explanation:\n"""\n${explanation}\n"""\n\nGrade it strictly per the rubric and return JSON only.`;
-    const raw = await groqJSON(SYSTEM, userPrompt);
+    // Service-role client. Previously this route referenced an undeclared
+    // `sb` further down — never caught because the AI-gate happy path
+    // also threw before reaching the insert in dev. Renamed + declared
+    // explicitly. Doubles as the source for loadLearningContext below.
+    const sb = supabaseAdmin();
+
+    // Learning-context inheritance — the Socratic follow-up question is
+    // NEW content (Vipin caught teach-back as a gap on 2026-05-12). A CAT
+    // student explaining "elasticity" should get a CAT-flavoured probe,
+    // not a Class-10 physics one. Same pattern as every other generation
+    // endpoint; the user can change exam_goal from the master settings.
+    const ctx = await loadLearningContext(sb, user.id);
+    const contextAwareTopic = buildExamAwareTopic(topic, ctx);
+    const contextAwareSystem = prependLearningContext(SYSTEM, ctx);
+
+    const userPrompt = `Topic: ${contextAwareTopic}\n\nStudent's explanation:\n"""\n${explanation}\n"""\n\nGrade it strictly per the rubric and return JSON only.`;
+    const raw = await groqJSON(contextAwareSystem, userPrompt);
     const grade = normalizeGrade(raw);
     const overall_score = compositeOverall(grade.bloom_scores);
 

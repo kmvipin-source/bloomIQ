@@ -1,8 +1,15 @@
 import { NextResponse } from "next/server";
 import { groqJSON } from "@/lib/groq";
 import { BLOOM_LEVELS, type BloomLevel } from "@/lib/bloom";
-import { getBearer, supabaseServer } from "@/lib/supabase/server";
+import { getBearer, supabaseServer, supabaseAdmin } from "@/lib/supabase/server";
 import { checkDailyQuota, recordDailyUse } from "@/lib/freeQuota";
+import {
+  loadLearningContext,
+  prependLearningContext,
+  buildExamAwareTopic,
+} from "@/lib/learningContext";
+import { getRecentStemsForExclusion } from "@/lib/recentStemsExclusion";
+import { filterQuestionBatch } from "@/lib/qgen";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -112,21 +119,37 @@ export async function POST(req: Request) {
       topic = t?.topic || "General Knowledge";
     }
 
+    // Learning-context inheritance — Vipin caught this on 2026-05-12 when
+    // typing "CAT" returned a vocabulary question asking what the
+    // acronym stood for. The fix: read the student's exam_goal from
+    // profile, prepend an exam-aware fragment to the SYSTEM prompt, and
+    // wrap the topic so the AI cannot mistake "CAT" the exam for "CAT"
+    // the animal. Single source via lib/learningContext.ts so every
+    // question-generation endpoint inherits the same fix.
+    const admin = supabaseAdmin();
+    const ctx = await loadLearningContext(admin, user.id);
+    const examAwareTopic = buildExamAwareTopic(topic, ctx);
+    // Cross-test non-repetition. Speed Trainer mixes Bloom levels, so
+    // pass null for bloomLevel — exclusion considers any level the
+    // student has seen on this topic recently.
+    const exclusion = await getRecentStemsForExclusion(admin, user.id, topic, null, 20);
+    const systemPrompt = prependLearningContext(SYSTEM, ctx) + exclusion.promptBlock;
+
     const mix = levelMix(count);
-    const userPrompt = `Topic: ${topic}
+    const userPrompt = `Topic: ${examAwareTopic}
 Total questions: ${count}
 Distribution by Bloom level:
 ${BLOOM_LEVELS.map((l) => `- ${l}: ${mix[l]}`).join("\n")}
 
 Generate the JSON now.`;
 
-    const raw = await groqJSON(SYSTEM, userPrompt);
+    const raw = await groqJSON(systemPrompt, userPrompt);
     const arr = (raw as { questions?: unknown }).questions;
     if (!Array.isArray(arr)) {
       return NextResponse.json({ error: "AI did not return questions; please retry." }, { status: 502 });
     }
 
-    const valid: GenQ[] = (arr as unknown[])
+    const structurallyValid: GenQ[] = (arr as unknown[])
       .map((q) => {
         const obj = (q || {}) as Record<string, unknown>;
         const stem = String(obj.stem || "").trim();
@@ -138,8 +161,21 @@ Generate the JSON now.`;
         if (!(BLOOM_LEVELS as readonly string[]).includes(bl)) return null;
         return { stem, options, correct_index: ci, bloom_level: bl as BloomLevel, explanation: expl };
       })
-      .filter((q): q is GenQ => q !== null)
-      .slice(0, count);
+      .filter((q): q is GenQ => q !== null);
+
+    // Quality + cross-test filters (Vipin 2026-05-12): drop answer-key
+    // leaks, in-batch dupes, and stems similar to questions the student
+    // has already answered in recent Speed Trainer sessions on this
+    // topic. Then hard-slice to `count`.
+    const { kept: valid, droppedLeak, droppedDup, droppedHistory } = filterQuestionBatch(
+      structurallyValid,
+      { maxCount: count, similarityThreshold: 0.7, historyStems: exclusion.stems },
+    );
+    // eslint-disable-next-line no-console
+    console.log(
+      `[speed/start] kept=${valid.length}/${structurallyValid.length} ` +
+      `(dropped: leak=${droppedLeak.length} dup=${droppedDup.length} history=${droppedHistory.length})`
+    );
 
     if (valid.length === 0) {
       return NextResponse.json({ error: "No usable questions came back. Try a different topic." }, { status: 502 });
@@ -150,6 +186,16 @@ Generate the JSON now.`;
     const enriched = valid.map((q) => ({ ...q, target_ms: TARGET_MS[q.bloom_level] }));
 
     await recordDailyUse(user.id, "speed_session");
+
+    // Sticky marking-scheme persistence (migration 77). Speed Trainer is a
+    // transient session — it doesn't create a quizzes row — but we still
+    // honour the user's pick and remember it for the next surface. If the
+    // client sent a scheme, write it to profile.last_marking_scheme.
+    if (body && body.markingScheme && typeof body.markingScheme === "object") {
+      const { writeLastMarkingScheme } = await import("@/lib/markingSchemeMemory");
+      const { resolveScheme } = await import("@/lib/scoring");
+      await writeLastMarkingScheme(admin, user.id, resolveScheme(body.markingScheme));
+    }
 
     return NextResponse.json({ ok: true, topic, count: enriched.length, questions: enriched });
   } catch (e) {

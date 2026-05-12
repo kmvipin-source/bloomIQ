@@ -1213,6 +1213,28 @@ table, .tabular-nums { font-variant-numeric: tabular-nums; }
 .hover\:text-emerald-700:hover { color: var(--color-accent-strong) !important; }
 .hover\:bg-emerald-50:hover    { background-color: var(--color-accent-soft) !important; color: var(--color-on-accent-soft); }
 
+/* Indigo-keyed utilities — same retargeting as emerald above. Several
+ * admin / plans / teacher-reports / student-tutor components were authored
+ * with literal `bg-indigo-50`, `text-indigo-600`, etc. and never wired to
+ * the theme token system. Result: under the default emerald theme the rest
+ * of the app rendered green while these few surfaces stayed indigo,
+ * producing the "indigo & others showing in green" complaint from the
+ * Admin & Teacher review pass (Vipin, 2026-05-12). Mirroring the emerald
+ * block fixes it without touching every component. */
+.bg-indigo-50      { background-color: var(--color-accent-soft) !important; color: var(--color-on-accent-soft); }
+.bg-indigo-100     { background-color: var(--color-accent-soft) !important; color: var(--color-on-accent-soft); }
+.text-indigo-500   { color: var(--color-accent) !important; }
+.text-indigo-600   { color: var(--color-accent) !important; }
+.text-indigo-700   { color: var(--color-accent-strong) !important; }
+.text-indigo-800   { color: var(--color-accent-strong) !important; }
+.text-indigo-900   { color: var(--color-accent-strong) !important; }
+.border-indigo-100,
+.border-indigo-200,
+.border-indigo-300 { border-color: var(--brand-200) !important; }
+.hover\:text-indigo-700:hover { color: var(--color-accent-strong) !important; }
+.hover\:bg-indigo-50:hover    { background-color: var(--color-accent-soft) !important; color: var(--color-on-accent-soft); }
+.hover\:bg-indigo-100:hover   { background-color: var(--color-accent-soft) !important; color: var(--color-on-accent-soft); }
+
 /* Hover safety — when older code does hover:bg-slate-50 with text that's
  * already low-contrast against a similar bg, force the text to fg-soft so
  * it stays legible no matter what. This is the "sometimes text isn't visible"

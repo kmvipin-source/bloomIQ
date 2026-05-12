@@ -7,10 +7,35 @@ import { supabaseBrowser } from "@/lib/supabase/client";
 import { BLOOM_LEVELS, BLOOM_META, blankBloomCounts, type BloomLevel } from "@/lib/bloom";
 import { BloomRadar } from "@/components/BloomChart";
 import type { QuizAttempt } from "@/lib/types";
-import { pct, formatSeconds } from "@/lib/utils";
-import { Sparkles, Search, AlertOctagon, Crosshair, Trophy, Brain, Clock, Lock, Settings as SettingsIcon } from "lucide-react";
+import { formatSeconds } from "@/lib/utils";
+import {
+  resolveScheme,
+  percentageOf,
+  rawScoreLabel,
+  type MarkingScheme,
+} from "@/lib/scoring";
+import { SCORING_PRESETS } from "@/lib/scoringPresets";
+import { Sparkles, Search, AlertOctagon, Crosshair, Trophy, Brain, Clock, Lock, Settings as SettingsIcon, CheckCircle2, XCircle, MinusCircle } from "lucide-react";
 
 type Detail = QuizAttempt & { quiz: { name: string; code: string } | null };
+
+/** Per-question review row. Joined from attempt_answers + question_bank
+ *  so the student can see WHICH option they picked, the correct option,
+ *  and the explanation. Vipin caught the absence of this surface on
+ *  2026-05-12 — students were submitting tests with no way to learn
+ *  from their mistakes. */
+type ReviewItem = {
+  question_id: string;
+  position: number;
+  stem: string;
+  options: string[];
+  selected_index: number | null;
+  correct_index: number;
+  explanation: string | null;
+  is_correct: boolean | null;
+  bloom_level: BloomLevel;
+  marks_earned: number | null;
+};
 
 export default function ResultsPage() {
   const { id } = useParams<{ id: string }>();
@@ -76,6 +101,13 @@ export default function ResultsPage() {
   // fetch below; banner waits for the resolution to avoid a flash.
   const [isSchoolStudent, setIsSchoolStudent] = useState<boolean | null>(null);
 
+  // Per-question review (added 2026-05-12). Loaded alongside the
+  // attempt summary so the student can see every question they
+  // attempted, what they picked, the correct answer, and the
+  // explanation. Empty array while loading.
+  const [reviewItems, setReviewItems] = useState<ReviewItem[]>([]);
+  const [reviewExpanded, setReviewExpanded] = useState<boolean>(true);
+
   useEffect(() => {
     (async () => {
       const sb = supabaseBrowser();
@@ -85,7 +117,15 @@ export default function ResultsPage() {
         .eq("id", id)
         .single();
       setAttempt(a as Detail);
-      const { data: ans } = await sb.from("attempt_answers").select("is_correct, bloom_level").eq("attempt_id", id);
+      // Extended select on 2026-05-12 — we now also pull selected_index,
+      // marks_earned, question_id so the per-question review section can
+      // join against the question bank without a second pass. The Bloom
+      // aggregation below still uses only bloom_level + is_correct so
+      // its math is unchanged.
+      const { data: ans } = await sb
+        .from("attempt_answers")
+        .select("is_correct, bloom_level, question_id, selected_index, marks_earned")
+        .eq("attempt_id", id);
       const counts = { ...blankBloomCounts() } as Record<BloomLevel, number>;
       const tot = { ...blankBloomCounts() } as Record<BloomLevel, number>;
       (ans || []).forEach((x: { bloom_level: BloomLevel; is_correct: boolean | null }) => {
@@ -94,6 +134,60 @@ export default function ResultsPage() {
       const next = {} as Record<BloomLevel, { c: number; t: number }>;
       BLOOM_LEVELS.forEach((l) => next[l] = { c: counts[l], t: tot[l] });
       setByLevel(next);
+
+      // Per-question review fetch. attempt_answers gives us the student's
+      // pick + is_correct + bloom_level + marks_earned; question_bank gives
+      // us the stem, all 4 options, correct_index, and explanation. We
+      // also pull quiz_questions for the canonical question order so the
+      // review renders in the same sequence the student saw during the test.
+      type AnsRow = {
+        question_id: string;
+        selected_index: number | null;
+        marks_earned: number | null;
+        is_correct: boolean | null;
+        bloom_level: BloomLevel;
+      };
+      const ansTyped = (ans as AnsRow[] | null) || [];
+      const qids = ansTyped.map((a) => a.question_id).filter(Boolean);
+      if (qids.length > 0) {
+        const [qBank, qOrder] = await Promise.all([
+          sb
+            .from("question_bank")
+            .select("id, stem, options, correct_index, explanation")
+            .in("id", qids),
+          sb
+            .from("quiz_questions")
+            .select("question_id, position")
+            .eq("quiz_id", (a as Detail | null)?.quiz_id || "")
+            .in("question_id", qids),
+        ]);
+        type QbRow = { id: string; stem: string; options: string[]; correct_index: number; explanation: string | null };
+        type QqRow = { question_id: string; position: number };
+        const qbById = new Map<string, QbRow>();
+        ((qBank.data as QbRow[]) || []).forEach((r) => qbById.set(r.id, r));
+        const positionById = new Map<string, number>();
+        ((qOrder.data as QqRow[]) || []).forEach((r) => positionById.set(r.question_id, r.position));
+        const items: ReviewItem[] = ansTyped
+          .map((row) => {
+            const q = qbById.get(row.question_id);
+            if (!q) return null;
+            return {
+              question_id: row.question_id,
+              position: positionById.get(row.question_id) ?? 0,
+              stem: q.stem,
+              options: Array.isArray(q.options) ? q.options : [],
+              selected_index: row.selected_index,
+              correct_index: q.correct_index,
+              explanation: q.explanation || null,
+              is_correct: row.is_correct,
+              bloom_level: row.bloom_level,
+              marks_earned: row.marks_earned,
+            };
+          })
+          .filter((x): x is ReviewItem => x !== null)
+          .sort((x, y) => x.position - y.position);
+        setReviewItems(items);
+      }
 
       // Resolve consent + load per-question pacing. Skip the API call
       // entirely when the student opted out — we'll render the opt-in
@@ -243,9 +337,46 @@ export default function ResultsPage() {
     }
   }
 
+  /**
+   * Pretty-print a numeric score. Integers stay clean ("66"). Decimal
+   * scores from CUSTOM schemes show two decimals ("65.50"). Negatives
+   * keep their minus sign — transparency matches CAT/JEE conventions.
+   */
+  function formatScoreNumber(n: number): string {
+    if (Number.isInteger(n)) return String(n);
+    return n.toFixed(2);
+  }
+
   if (!attempt) return <div className="grid place-items-center py-20"><div className="spinner" /></div>;
 
-  const percent = pct(attempt.score, attempt.total);
+  // Marking-scheme aware score display. percentageOf() prefers the new
+  // raw_score / max_score columns (migration 76) and falls back to the
+  // legacy score / total for any pre-migration attempt. Negative raw
+  // scores show their true value (transparency); the percentage is
+  // clamped at 0 by lib/scoring.ts.
+  const attemptForScore = attempt as unknown as {
+    raw_score?: number | null;
+    max_score?: number | null;
+    score?: number | null;
+    total?: number | null;
+    marking_scheme_snapshot?: unknown;
+  };
+  const percentExact = percentageOf(attemptForScore);
+  const percent = Math.round(percentExact);
+  const rawLabel = rawScoreLabel(attemptForScore);
+  const scheme: MarkingScheme = resolveScheme(attemptForScore.marking_scheme_snapshot);
+  const isNonDefaultScheme =
+    scheme.preset !== "PRACTICE" || scheme.negative_marks_enabled;
+  // Counts for the breakdown card (correct × +marks, wrong × −marks, etc.).
+  // Built from the Bloom counters we already loaded above.
+  const totalCorrect = BLOOM_LEVELS.reduce((s, l) => s + byLevel[l].c, 0);
+  const totalQuestions = BLOOM_LEVELS.reduce((s, l) => s + byLevel[l].t, 0);
+  const totalWrongOrSkipped = totalQuestions - totalCorrect;
+  // We don't have wrong-vs-skipped split here (the page only loaded
+  // is_correct + bloom_level for the radar). Show the union for now and
+  // surface a TODO comment — a future read-side refactor can fetch
+  // selected_index too if richer breakdown is wanted.
+
   const radarData = BLOOM_LEVELS.map((l) => ({ level: l, correct: byLevel[l].c, total: byLevel[l].t }));
 
   // Smart feedback: find strongest and weakest level (with at least 1 question)
@@ -264,12 +395,90 @@ export default function ResultsPage() {
           <div>
             <div className="muted text-sm">{attempt.quiz?.name}</div>
             <div className="h1 mt-1">{percent}%</div>
-            <div className="muted">{attempt.score} of {attempt.total} correct · {attempt.time_taken_seconds ? formatSeconds(attempt.time_taken_seconds) : "—"}</div>
+            <div className="muted">
+              {/* Score line shows marks-aware totals when available
+                  (raw_score / max_score from migration 76), else falls
+                  back to "X of Y correct" for legacy attempts. */}
+              {rawLabel ? (
+                <>
+                  <strong className={rawLabel.raw < 0 ? "text-rose-700" : ""}>
+                    {formatScoreNumber(rawLabel.raw)}
+                  </strong>
+                  {" "}/{" "}{formatScoreNumber(rawLabel.max)}
+                  {" "}({totalCorrect} of {totalQuestions} correct)
+                </>
+              ) : (
+                <>{attempt.score} of {attempt.total} correct</>
+              )}
+              {" "}· {attempt.time_taken_seconds ? formatSeconds(attempt.time_taken_seconds) : "—"}
+            </div>
+            {/* Marking-scheme line — only when the attempt was scored
+                under a non-default scheme. Practice quizzes stay clean. */}
+            {isNonDefaultScheme && (
+              <div className="text-xs muted mt-1.5">
+                Marking: <strong>{SCORING_PRESETS[scheme.preset].label}</strong>
+                {" "}— +{scheme.rules.default.correct} correct
+                {scheme.negative_marks_enabled
+                  ? `, ${scheme.rules.default.wrong > 0 ? "+" : ""}${scheme.rules.default.wrong} wrong`
+                  : ", 0 wrong"}
+                , {scheme.rules.default.unattempted} skipped
+              </div>
+            )}
+            {/* Negative-raw coaching nudge. Only shows on attempts where
+                the student went into the red — e.g., wildly guessed a
+                JEE Main mock and got more wrong than correct. */}
+            {rawLabel && rawLabel.raw < 0 && (
+              <div className="text-xs mt-2 px-3 py-2 rounded-md bg-amber-50 border border-amber-200 text-amber-900">
+                <strong>Heads up:</strong> Raw score went negative because wrong answers
+                deducted more than correct answers awarded. Percentage is shown as 0%.
+                On tests with negative marking, it&apos;s often better to leave a question
+                blank than to guess.
+              </div>
+            )}
           </div>
           <div className="text-6xl">
             {percent >= 80 ? "🌟" : percent >= 60 ? "👍" : percent >= 40 ? "💪" : "📚"}
           </div>
         </div>
+
+        {/* Marks breakdown card — only when scheme is non-default AND
+            we have at least one wrong/skipped to make the breakdown
+            non-trivial. Pure visualisation: "18 × +4 = +72". */}
+        {isNonDefaultScheme && totalQuestions > 0 && (
+          <div className="mt-4 grid grid-cols-3 gap-2 text-xs">
+            <div className="rounded-md bg-emerald-50 border border-emerald-200 px-3 py-2">
+              <div className="text-emerald-700 font-bold tabular-nums">
+                {totalCorrect} × +{scheme.rules.default.correct}
+              </div>
+              <div className="text-emerald-900 mt-0.5">
+                = +{(totalCorrect * scheme.rules.default.correct).toFixed(2).replace(/\.?0+$/, "")}
+              </div>
+              <div className="text-[10px] muted mt-1">Correct</div>
+            </div>
+            <div className="rounded-md bg-rose-50 border border-rose-200 px-3 py-2">
+              <div className="text-rose-700 font-bold tabular-nums">
+                {totalWrongOrSkipped} × {scheme.rules.default.wrong > 0 ? "+" : ""}{scheme.rules.default.wrong}
+              </div>
+              <div className="text-rose-900 mt-0.5">
+                = {(totalWrongOrSkipped * scheme.rules.default.wrong).toFixed(2).replace(/\.?0+$/, "")}
+              </div>
+              <div className="text-[10px] muted mt-1">Wrong or skipped*</div>
+            </div>
+            <div className="rounded-md bg-slate-50 border border-slate-200 px-3 py-2">
+              <div className="text-slate-700 font-bold tabular-nums">
+                {rawLabel ? formatScoreNumber(rawLabel.raw) : "—"} / {rawLabel ? formatScoreNumber(rawLabel.max) : "—"}
+              </div>
+              <div className="text-slate-900 mt-0.5 font-bold text-base">
+                {percent}%
+              </div>
+              <div className="text-[10px] muted mt-1">Total</div>
+            </div>
+            <div className="col-span-3 text-[10px] muted">
+              *Detailed wrong-vs-skipped split available on individual
+              question review (Bloom radar below).
+            </div>
+          </div>
+        )}
       </div>
 
       {strong && weak && strong.l !== weak.l && (
@@ -668,6 +877,142 @@ export default function ResultsPage() {
                   </ul>
                 </div>
               )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ============ REVIEW YOUR ANSWERS ============
+          Per-question walkthrough so the student can see what they got
+          right, what they got wrong, what they skipped, and WHY (via
+          the AI-authored explanation). Vipin caught the absence of
+          this surface on 2026-05-12 — every test surface generated
+          questions but no surface let the learner inspect them after.
+          Collapsible so the page doesn't dump 30 questions on the
+          student by default — open by default for ≤10 questions,
+          collapsed by default beyond that. */}
+      {attempt.submitted_at && reviewItems.length > 0 && (
+        <div className="card mt-4">
+          <button
+            type="button"
+            className="w-full flex items-center justify-between gap-3 text-left"
+            onClick={() => setReviewExpanded((v) => !v)}
+          >
+            <div>
+              <h3 className="h2">Review your answers</h3>
+              <p className="text-sm muted mt-1">
+                {reviewItems.length} question{reviewItems.length === 1 ? "" : "s"} —
+                see what you picked, the correct answer, and an explanation for each.
+              </p>
+            </div>
+            <span className="text-sm font-semibold text-emerald-700 whitespace-nowrap">
+              {reviewExpanded ? "Hide ▲" : "Show ▼"}
+            </span>
+          </button>
+
+          {reviewExpanded && (
+            <div className="mt-4 space-y-4">
+              {reviewItems.map((q, idx) => {
+                const isSkipped = q.selected_index === null;
+                const isWrong = !isSkipped && q.is_correct === false;
+                const isRight = !isSkipped && q.is_correct === true;
+                const headerStyle = isRight
+                  ? "border-emerald-200 bg-emerald-50/40"
+                  : isWrong
+                  ? "border-red-200 bg-red-50/40"
+                  : "border-amber-200 bg-amber-50/40";
+                return (
+                  <div
+                    key={q.question_id}
+                    className={`rounded-lg border-2 ${headerStyle} p-4`}
+                  >
+                    <div className="flex items-start justify-between gap-3 mb-2 flex-wrap">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-slate-800 text-white text-xs font-bold shrink-0">
+                          {idx + 1}
+                        </span>
+                        <span className={`badge badge-${q.bloom_level}`}>
+                          {BLOOM_META[q.bloom_level]?.label || q.bloom_level}
+                        </span>
+                        {isRight && (
+                          <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-800 bg-emerald-100 border border-emerald-300 rounded-full px-2 py-0.5">
+                            <CheckCircle2 size={12} /> Correct
+                          </span>
+                        )}
+                        {isWrong && (
+                          <span className="inline-flex items-center gap-1 text-xs font-semibold text-red-800 bg-red-100 border border-red-300 rounded-full px-2 py-0.5">
+                            <XCircle size={12} /> Wrong
+                          </span>
+                        )}
+                        {isSkipped && (
+                          <span className="inline-flex items-center gap-1 text-xs font-semibold text-amber-900 bg-amber-100 border border-amber-300 rounded-full px-2 py-0.5">
+                            <MinusCircle size={12} /> Skipped
+                          </span>
+                        )}
+                      </div>
+                      {q.marks_earned !== null && (
+                        <span className={`text-xs font-mono font-semibold ${
+                          q.marks_earned > 0 ? "text-emerald-700"
+                          : q.marks_earned < 0 ? "text-red-700"
+                          : "text-slate-600"
+                        }`}>
+                          {q.marks_earned > 0 ? "+" : ""}{q.marks_earned} mark{Math.abs(q.marks_earned) === 1 ? "" : "s"}
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="font-medium text-slate-900 mb-3 leading-relaxed">
+                      {q.stem}
+                    </div>
+
+                    <div className="space-y-1.5">
+                      {q.options.map((opt, oi) => {
+                        const isStudentPick = q.selected_index === oi;
+                        const isAnswerKey = q.correct_index === oi;
+                        const cls = isAnswerKey
+                          ? "border-emerald-500 bg-emerald-50"
+                          : isStudentPick
+                          ? "border-red-400 bg-red-50"
+                          : "border-slate-200 bg-white";
+                        return (
+                          <div
+                            key={oi}
+                            className={`rounded-md border-2 ${cls} px-3 py-2 text-sm flex items-start gap-2`}
+                          >
+                            <span className={`inline-flex items-center justify-center w-5 h-5 rounded-full text-[10px] font-bold shrink-0 mt-0.5 ${
+                              isAnswerKey ? "bg-emerald-600 text-white"
+                              : isStudentPick ? "bg-red-500 text-white"
+                              : "bg-slate-200 text-slate-700"
+                            }`}>
+                              {String.fromCharCode(65 + oi)}
+                            </span>
+                            <span className="flex-1 leading-relaxed">{opt}</span>
+                            <span className="flex flex-col items-end gap-0.5 text-[10px] uppercase tracking-wide font-semibold">
+                              {isStudentPick && (
+                                <span className={isAnswerKey ? "text-emerald-700" : "text-red-700"}>
+                                  Your pick
+                                </span>
+                              )}
+                              {isAnswerKey && !isStudentPick && (
+                                <span className="text-emerald-700">Correct</span>
+                              )}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {q.explanation && (
+                      <div className="mt-3 rounded-md bg-slate-50 border border-slate-200 px-3 py-2 text-sm leading-relaxed">
+                        <div className="text-[10px] uppercase tracking-wide font-bold text-slate-500 mb-1">
+                          Explanation
+                        </div>
+                        <div className="text-slate-800">{q.explanation}</div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>

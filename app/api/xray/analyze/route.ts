@@ -1,8 +1,12 @@
 import { NextResponse } from "next/server";
 import { groqJSON, groqJSONVision } from "@/lib/groq";
 import { BLOOM_LEVELS, isBloomLevel, type BloomLevel } from "@/lib/bloom";
-import { getBearer, supabaseServer } from "@/lib/supabase/server";
+import { getBearer, supabaseServer, supabaseAdmin } from "@/lib/supabase/server";
 import { checkRateLimit, checkDailyCap } from "@/lib/rateLimit";
+import {
+  loadLearningContext,
+  prependLearningContext,
+} from "@/lib/learningContext";
 
 export const runtime = "nodejs";
 export const maxDuration = 90;
@@ -23,7 +27,7 @@ You will be given the paper as text or an image. Find each question (numbered or
 
 Then produce overall fields:
 - "paper_title": a short label for the paper if you can infer one ("CBSE Bio 2023" or null)
-- "recommendations": EXACTLY 5 short, concrete study actions targeted at the heaviest Bloom level + topic combinations. Each is one sentence, written as a directive ("Drill applying Newton's third law to two-block pulley problems").
+- "recommendations": EXACTLY 5 short, concrete study actions targeted at the heaviest Bloom level + topic combinations actually present in this paper. Each is one sentence, written as a directive, with topics drawn from this paper — NOT from generic K-12 examples like "Newton's third law" unless that's what the paper covered. Match the register set by the learner-context fragment at the top of this prompt (CAT / JEE / NEET / corporate / class boards).
 
 Respond with VALID JSON only:
 {
@@ -107,7 +111,16 @@ export async function POST(req: Request) {
       if (paper_text.length > 30000) {
         return NextResponse.json({ error: "Paper text is too long (max 30k chars)." }, { status: 400 });
       }
-      raw = await groqJSON(SYSTEM, `Paper text:\n"""\n${paper_text}\n"""\n\nReturn the JSON now.`);
+      // Learning-context inheritance — the 5 "study recommendations" the
+      // AI returns are user-facing prose. A CAT student uploading a
+      // mock paper should get CAT-style next-step suggestions; a
+      // corporate trainee gets cloud / Java suggestions. The tagging
+      // of each question by Bloom + topic stays paper-grounded; only
+      // the recommendations need our exam register. Vipin 2026-05-12.
+      const adminForCtx = supabaseAdmin();
+      const learnerCtx = await loadLearningContext(adminForCtx, user.id);
+      const contextAwareSystem = prependLearningContext(SYSTEM, learnerCtx);
+      raw = await groqJSON(contextAwareSystem, `Paper text:\n"""\n${paper_text}\n"""\n\nReturn the JSON now.`);
     } else if (kind === "image") {
       const image_data_url = String(body.image_data_url || "");
       if (!image_data_url.startsWith("data:image/")) {
@@ -116,7 +129,12 @@ export async function POST(req: Request) {
       if (image_data_url.length > 8_000_000) {
         return NextResponse.json({ error: "Image too large (max ~6 MB)." }, { status: 400 });
       }
-      raw = await groqJSONVision(SYSTEM, "Here is the past paper as an image. Tag every question and provide the answer + explanation.", image_data_url);
+      // Same context wrap on the vision path so the recommendations
+      // adapt regardless of upload format (text vs image).
+      const adminForCtxV = supabaseAdmin();
+      const learnerCtxV = await loadLearningContext(adminForCtxV, user.id);
+      const contextAwareSystemV = prependLearningContext(SYSTEM, learnerCtxV);
+      raw = await groqJSONVision(contextAwareSystemV, "Here is the past paper as an image. Tag every question and provide the answer + explanation.", image_data_url);
     } else {
       return NextResponse.json({ error: "kind must be 'text' or 'image'" }, { status: 400 });
     }

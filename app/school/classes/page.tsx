@@ -39,6 +39,11 @@ type ClassRow = {
   memberCount: number;
   quizCount: number;
   avgScore: number | null;
+  // Soft-delete status (migration 78). 'active' for normal classes;
+  // 'inactive' for classes the Admin Head has deactivated. Inactive
+  // rows are still listed here (admin only) with a Reactivate button.
+  status: "active" | "inactive";
+  deactivatedAt: string | null;
 };
 
 type Teacher = { id: string; full_name: string | null };
@@ -101,12 +106,20 @@ export default function SchoolClassesPage() {
       .order("full_name", { ascending: true, nullsFirst: false });
     setTeachersInSchool((teachers as Teacher[]) || []);
 
+    // Pull status + deactivated_at as well so the admin sees both active
+    // and soft-deleted classes (migration 78). Inactive rows render with
+    // a banner + Reactivate button rather than being filtered out — the
+    // Admin Head is the only role that lists this page anyway.
     const { data: cs } = await sb
       .from("classes")
-      .select("id, name, grade, section, owner_id, created_at")
+      .select("id, name, grade, section, owner_id, created_at, status, deactivated_at")
       .eq("school_id", prof.school_id)
       .order("created_at", { ascending: false });
-    type Cs = { id: string; name: string; grade: string | null; section: string | null; owner_id: string | null; created_at: string };
+    type Cs = {
+      id: string; name: string; grade: string | null; section: string | null;
+      owner_id: string | null; created_at: string;
+      status?: string | null; deactivated_at?: string | null;
+    };
     const classList = (cs as Cs[]) || [];
 
     // Pull primary + acting + invites for every class in one shot via the
@@ -193,6 +206,10 @@ export default function SchoolClassesPage() {
           memberCount: mCt || 0,
           quizCount: qCt || 0,
           avgScore,
+          // Migration 78 — soft-delete status. Default to 'active' if the
+          // column hasn't been populated yet (older rows / pre-migration).
+          status: (c.status === "inactive" ? "inactive" : "active") as "active" | "inactive",
+          deactivatedAt: c.deactivated_at ?? null,
         };
       })
     );
@@ -201,6 +218,47 @@ export default function SchoolClassesPage() {
   }
   useEffect(() => { load(); }, []);
   useFocusRefetch(load);
+
+  // ───────────────────────────────────────────────────────────────────
+  // Class soft-delete (migration 78). The Admin Head can DEACTIVATE a
+  // class (preserves every attempt / assignment / co-teacher record)
+  // and REACTIVATE later with one click. Physical deletion is never
+  // offered — too easy to wipe historical learning data by accident.
+  //
+  // Deactivation always gates on an explicit confirmation modal —
+  // simple confirm() is fine here, matches the existing patterns in
+  // this file (endActingCover, assign primary, etc.) and keeps the
+  // change footprint small.
+  // ───────────────────────────────────────────────────────────────────
+  const [pendingDeactivateFor, setPendingDeactivateFor] = useState<ClassRow | null>(null);
+  const [deactivateBusy, setDeactivateBusy] = useState(false);
+
+  async function setClassStatus(classId: string, wanted: "active" | "inactive", label: string) {
+    setAssignErr(null);
+    setAssignStatus(null);
+    setDeactivateBusy(true);
+    try {
+      const sb = supabaseBrowser();
+      const { data: { session } } = await sb.auth.getSession();
+      if (!session) throw new Error("Not signed in");
+      const r = await fetch(`/api/admin/classes/${classId}/status`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ status: wanted }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.error || `Failed to ${wanted === "inactive" ? "deactivate" : "reactivate"} class`);
+      setAssignStatus(wanted === "inactive"
+        ? `✅ "${label}" deactivated. All data is preserved — click Reactivate any time.`
+        : `✅ "${label}" reactivated.`);
+      setPendingDeactivateFor(null);
+      await load();
+    } catch (e) {
+      setAssignErr(e instanceof Error ? e.message : `Could not change class status`);
+    } finally {
+      setDeactivateBusy(false);
+    }
+  }
 
   // End acting cover — used when the canonical primary returns from leave
   // and the temporary cover should go away. One click per class; no
@@ -504,9 +562,19 @@ export default function SchoolClassesPage() {
             <tbody className="divide-y divide-slate-100">
               {filtered.map((c) => (
                 <Fragment key={c.id}>
-                <tr className="hover:bg-slate-50">
+                <tr className={`hover:bg-slate-50 ${c.status === "inactive" ? "opacity-60 bg-slate-50/40" : ""}`}>
                   <td className="px-4 py-3">
-                    <div className="font-medium">{c.name}</div>
+                    <div className="font-medium">
+                      {c.name}
+                      {c.status === "inactive" && (
+                        <span
+                          className="ml-2 text-[10px] uppercase tracking-wide font-bold text-amber-900 bg-amber-100 border border-amber-300 rounded-full px-2 py-0.5"
+                          title={c.deactivatedAt ? `Deactivated ${new Date(c.deactivatedAt).toLocaleString()}` : "Deactivated"}
+                        >
+                          Inactive
+                        </span>
+                      )}
+                    </div>
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex flex-col gap-1">
@@ -582,6 +650,30 @@ export default function SchoolClassesPage() {
                         title="Remove the acting cover. The canonical primary stays primary."
                       >
                         End cover
+                      </button>
+                    )}
+                    {/* Deactivate / Reactivate (migration 78 soft-delete).
+                        Active rows show a subtle "Deactivate" with a
+                        confirmation modal; inactive rows expose a
+                        one-click "Reactivate". Physical delete is never
+                        offered — see /api/admin/classes/[id]/status. */}
+                    {c.status === "active" ? (
+                      <button type="button"
+                        className="btn btn-ghost text-xs ml-1 text-red-700 hover:bg-red-50"
+                        onClick={() => setPendingDeactivateFor(c)}
+                        disabled={deactivateBusy}
+                        title="Deactivate this class. All data is preserved; you can reactivate later."
+                      >
+                        Deactivate
+                      </button>
+                    ) : (
+                      <button type="button"
+                        className="btn btn-ghost text-xs ml-1 text-emerald-700 hover:bg-emerald-50"
+                        onClick={() => setClassStatus(c.id, "active", c.name)}
+                        disabled={deactivateBusy}
+                        title="Reactivate this class. Teachers and students will see it again immediately."
+                      >
+                        Reactivate
                       </button>
                     )}
                   </td>
@@ -713,6 +805,86 @@ export default function SchoolClassesPage() {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* Deactivate-class confirmation modal (migration 78 soft-delete).
+          Rendered at page level (outside the table) so it overlays cleanly.
+          Vipin's explicit ask on 2026-05-12: NEVER deactivate without a
+          confirmation popup — too easy to nuke a class with attempt
+          history by accident. Modal lists what stays + what changes so
+          the admin can decide with full information. */}
+      {pendingDeactivateFor && (
+        <div
+          className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4"
+          onClick={() => !deactivateBusy && setPendingDeactivateFor(null)}
+        >
+          <div
+            className="card max-w-lg w-full"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-lg font-bold mb-1">
+              Deactivate &ldquo;{pendingDeactivateFor.name}&rdquo;?
+            </h2>
+            <p className="text-sm muted mb-3">
+              The class will be hidden from teachers and students, but every record
+              stays intact and you can reactivate at any time.
+            </p>
+
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm space-y-2">
+              <div>
+                <strong className="text-emerald-700">Preserved (no data loss):</strong>
+                <ul className="list-disc ml-5 mt-1 text-slate-700 space-y-0.5">
+                  <li>All student attempt history and scores</li>
+                  <li>Quiz assignments and reports</li>
+                  <li>Co-teacher links and pending invites</li>
+                  <li>Student enrollment in this class</li>
+                </ul>
+              </div>
+              <div>
+                <strong className="text-amber-700">Hidden until reactivated:</strong>
+                <ul className="list-disc ml-5 mt-1 text-slate-700 space-y-0.5">
+                  <li>The class disappears from teacher and student dashboards</li>
+                  <li>No new quiz assignments can be created against it</li>
+                  <li>Students cannot start tests assigned via this class</li>
+                </ul>
+              </div>
+            </div>
+
+            <div className="mt-3 text-xs muted">
+              This class currently has <strong>{pendingDeactivateFor.memberCount}</strong>{" "}
+              student{pendingDeactivateFor.memberCount === 1 ? "" : "s"},{" "}
+              <strong>{pendingDeactivateFor.coTeacherCount}</strong> co-teacher
+              {pendingDeactivateFor.coTeacherCount === 1 ? "" : "s"}, and{" "}
+              <strong>{pendingDeactivateFor.quizCount}</strong> assigned quiz
+              {pendingDeactivateFor.quizCount === 1 ? "" : "zes"}.
+            </div>
+
+            {assignErr && (
+              <div className="mt-3 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">
+                {assignErr}
+              </div>
+            )}
+
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={() => setPendingDeactivateFor(null)}
+                disabled={deactivateBusy}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn btn-danger"
+                onClick={() => setClassStatus(pendingDeactivateFor.id, "inactive", pendingDeactivateFor.name)}
+                disabled={deactivateBusy}
+              >
+                {deactivateBusy ? <span className="spinner" /> : "Deactivate class"}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

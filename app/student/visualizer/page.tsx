@@ -11,6 +11,7 @@ import {
   ChevronLeft, ChevronRight, History, RotateCcw,
 } from "lucide-react";
 import { type LearnerProfile } from "@/components/LearnerProfilePrompt";
+import { suggestedTopics, placeholderTopic } from "@/lib/topicSuggestions";
 
 // =============================================================================
 // Concept Visualizer — data-driven, motion-powered renderer.
@@ -475,6 +476,11 @@ export default function VisualizerPage() {
   // Default (and fallback) is "k12" — same content the page has
   // always shown to school students.
   const [learnerProfile, setLearnerProfile] = useState<LearnerProfile | null>(null);
+  // Pull granular exam_goal alongside learner_profile so CAT vs JEE vs
+  // NEET disambiguate cleanly. Earlier code locked the competitive_exam
+  // bucket to JEE/NEET examples, which read wrong for CAT / UPSC / Bank
+  // exam aspirants. Vipin 2026-05-12.
+  const [examGoal, setExamGoal] = useState<string | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -484,38 +490,34 @@ export default function VisualizerPage() {
         if (!user) return;
         const { data } = await sb
           .from("profiles")
-          .select("learner_profile")
+          .select("learner_profile, exam_goal")
           .eq("id", user.id)
           .single();
-        const v = (data as { learner_profile?: string } | null)?.learner_profile;
+        const row = data as { learner_profile?: string; exam_goal?: string | null } | null;
+        const v = row?.learner_profile;
         if (v === "k12" || v === "competitive_exam" || v === "corporate") {
           setLearnerProfile(v);
         } else {
           setLearnerProfile("k12");
         }
+        if (row?.exam_goal) setExamGoal(row.exam_goal);
       } catch {
         setLearnerProfile("k12");
       }
     })();
   }, []);
 
+  // Heading examples + topic placeholder both now route through the
+  // goal-aware helper in lib/topicSuggestions.ts so a CAT student sees
+  // CAT-style examples (not JEE/NEET), a JEE student sees JEE examples,
+  // etc. The user can change goal from the persistent chip in the
+  // header any time.
   function headingExamples(): string {
-    if (learnerProfile === "corporate") {
-      return "how a Java HashMap handles collisions, a CICS transaction flow, an OAuth handshake, a sorting algorithm, a system architecture diagram";
-    }
-    if (learnerProfile === "competitive_exam") {
-      return "JEE mechanics problems, NEET biology cycles, organic chemistry mechanisms, op-amp circuits";
-    }
-    return "biology cycles, mechanics diagrams, electric circuits, chemistry mechanisms";
+    const tops = suggestedTopics(examGoal, learnerProfile).slice(0, 4);
+    return tops.join(", ");
   }
   function topicPlaceholder(): string {
-    if (learnerProfile === "corporate") {
-      return "e.g. Java HashMap collision handling, CICS transaction lifecycle, OAuth 2.0 flow, TCP three-way handshake";
-    }
-    if (learnerProfile === "competitive_exam") {
-      return "e.g. Projectile motion at 45°, Krebs cycle, Op-amp inverting amplifier, Carnot cycle";
-    }
-    return "e.g. Krebs cycle, Newton's third law in pulleys, how a transistor amplifies";
+    return placeholderTopic(examGoal, learnerProfile);
   }
 
   useEffect(() => { void loadHistory(); }, []);

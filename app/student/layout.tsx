@@ -51,25 +51,29 @@ export default function StudentLayout({ children }: { children: React.ReactNode 
               router.replace("/student/expired");
               return;
             }
-            // First-run BloomIQ calibration gate. Individual students
-            // without a calibration row are routed to the dedicated
-            // /student/bloom-score reveal page so the score system has
-            // an anchor before they take quizzes. Skip the gate on the
-            // calibration / expired / future surfaces themselves and on
-            // /signup-driven landings already heading there.
-            if (
-              role === "student" &&
-              j.is_school_student === false &&
-              j.is_free_expired !== true &&
-              j.has_calibration === false &&
-              !pathname.startsWith("/student/bloom-score") &&
-              !pathname.startsWith("/student/calibration") &&
-              !pathname.startsWith("/student/future") &&
-              !pathname.startsWith("/student/expired")
-            ) {
-              router.replace("/student/bloom-score");
-              return;
-            }
+            // BloomIQ calibration is OPT-IN, not mandatory.
+            //
+            // Earlier versions of this layout hard-redirected any
+            // independent student without a calibration row to
+            // /student/bloom-score on every page load. That made
+            // calibration feel like a wall between login and the rest
+            // of the product, which it isn't — calibration is a
+            // value-add the student can choose to take when they're
+            // ready. We removed the gate per product direction
+            // (Vipin, 2026-05-12).
+            //
+            // The polite reminder lives on:
+            //   1. The /student dashboard "Discover your BloomIQ Score"
+            //      hero card — only renders when has_calibration ===
+            //      false, so it disappears the moment they complete it.
+            //   2. The BloomIQScoreBadge in this layout's top-right —
+            //      renders a "Get your BloomIQ →" CTA when uncalibrated,
+            //      visible on every /student/* page.
+            //
+            // Both surfaces explain the benefit (3-digit indicative
+            // readiness band tied to their goal + Bloom signature) so
+            // the student keeps seeing the value proposition without
+            // being forced into the flow.
           }
         } catch { /* fall through */ }
         if (cancelled) return;

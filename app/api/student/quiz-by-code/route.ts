@@ -38,10 +38,13 @@ export async function GET(req: Request) {
 
     const admin = supabaseAdmin();
 
-    // Quiz row — minimal fields exposed to the client.
+    // Quiz row — minimal fields exposed to the client. Includes
+    // marking_scheme (migration 76) so the student-side scoring engine
+    // can compute weighted marks at submit time and so the test-cover
+    // screen can show "Marks: +4 correct, −1 wrong".
     const { data: q } = await admin
       .from("quizzes")
-      .select("id, name, code, time_limit_minutes, active, owner_id")
+      .select("id, name, code, time_limit_minutes, active, owner_id, marking_scheme")
       .eq("code", code)
       .maybeSingle();
 
@@ -82,6 +85,9 @@ export async function GET(req: Request) {
         code: q.code,
         time_limit_minutes: q.time_limit_minutes,
         active: q.active,
+        // Pass marking_scheme through. NULL is the safe default — the
+        // student-side scoring engine resolves NULL to legacy +1/0/0.
+        marking_scheme: (q as { marking_scheme?: unknown }).marking_scheme ?? null,
       },
       questions,
     });

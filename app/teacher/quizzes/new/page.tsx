@@ -7,6 +7,8 @@ import { BLOOM_LEVELS, BLOOM_META, blankBloomCounts, isBloomLevel, recommendedQu
 import type { Question } from "@/lib/types";
 import { generateQuizCode } from "@/lib/utils";
 import BloomBadge from "@/components/BloomBadge";
+import MarkingSchemePicker from "@/components/MarkingSchemePicker";
+import type { MarkingScheme } from "@/lib/scoring";
 import {
   Search, Layers, Plus, Check, X, ChevronUp, ChevronDown,
   Trash2, Sparkles, Clock, Wand2, Lightbulb, Users,
@@ -53,6 +55,31 @@ function ComposerInner() {
   const [subject, setSubject] = useState("");
   const [time, setTime] = useState(15);
   const [timeManuallySet, setTimeManuallySet] = useState(false);
+  // Per-test marking scheme (migration 76). NULL means the legacy
+  // +1/0/0 default — every quiz created before today has implicit NULL
+  // and continues to grade identically. Picker emits a new value on
+  // every keystroke; we persist to quizzes.marking_scheme on save.
+  //
+  // Sticky default (migration 77): on mount, fetch profile.last_marking_scheme
+  // and pre-fill the picker with whatever the teacher last chose on any
+  // surface. NULL → picker stays at PRACTICE default.
+  const [markingScheme, setMarkingScheme] = useState<MarkingScheme | null>(null);
+  useEffect(() => {
+    (async () => {
+      try {
+        const sb = supabaseBrowser();
+        const { data: { user } } = await sb.auth.getUser();
+        if (!user) return;
+        const { data: prof } = await sb
+          .from("profiles")
+          .select("last_marking_scheme")
+          .eq("id", user.id)
+          .maybeSingle();
+        const lms = (prof as { last_marking_scheme?: unknown } | null)?.last_marking_scheme;
+        if (lms && typeof lms === "object") setMarkingScheme(lms as MarkingScheme);
+      } catch { /* silent — picker stays at PRACTICE default */ }
+    })();
+  }, []);
 
   const [bank, setBank] = useState<Question[]>([]);
   const [loadingBank, setLoadingBank] = useState(true);
@@ -401,6 +428,11 @@ function ComposerInner() {
 
       const blooms = Array.from(new Set(selectedQuestions.map((q) => q.bloom_level)));
       let quizRow: { id: string } | null = null;
+      // marking_scheme is the per-test rule. NULL means legacy +1/0/0
+      // (lib/scoring.ts → resolveScheme treats NULL as the default).
+      // The fallback insert (when migration 27's recommended_minutes is
+      // missing) also writes marking_scheme — if migration 76 hasn't
+      // run yet, the catch below downgrades a SECOND time.
       const insertWithRecommended = await sb.from("quizzes").insert({
         owner_id: user.id,
         name,
@@ -409,9 +441,11 @@ function ComposerInner() {
         time_limit_minutes: time,
         recommended_minutes: recommendedMinutes || null,
         bloom_filter: blooms,
+        marking_scheme: markingScheme,
       }).select("id").single();
       if (insertWithRecommended.error) {
-        if (/column.+recommended_minutes.+does not exist/i.test(insertWithRecommended.error.message)) {
+        const msg = insertWithRecommended.error.message;
+        if (/column.+(recommended_minutes|marking_scheme).+does not exist/i.test(msg)) {
           const fallback = await sb.from("quizzes").insert({
             owner_id: user.id,
             name,
@@ -437,6 +471,19 @@ function ComposerInner() {
       }));
       const { error: rerr } = await sb.from("quiz_questions").insert(rows);
       if (rerr) throw rerr;
+
+      // Sticky marking-scheme persistence (migration 77). Quiz + questions
+      // inserted successfully — write the teacher's pick back to
+      // profile.last_marking_scheme so the picker pre-fills with this
+      // scheme next time on any surface. Best-effort, silent on failure.
+      if (markingScheme && typeof markingScheme === "object") {
+        try {
+          await sb
+            .from("profiles")
+            .update({ last_marking_scheme: markingScheme })
+            .eq("id", user.id);
+        } catch { /* silent — preference will write on next save */ }
+      }
 
       const { data: { session } } = await sb.auth.getSession();
       if (session) {
@@ -619,9 +666,9 @@ function ComposerInner() {
         <aside className="lg:sticky lg:top-6 self-start space-y-3">
           <div className="card">
             <label className="label">Test name</label>
-            <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Photosynthesis Test" />
+            <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. End-of-unit assessment" />
             <label className="label mt-3">Subject <span className="muted text-xs">(optional)</span></label>
-            <input className="input" value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="e.g. Science" />
+            <input className="input" value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="e.g. your subject area" />
             <div className="flex items-center gap-2 mt-3">
               <Clock size={14} className="text-slate-400" />
               <label className="label !mb-0 !mt-0">Time limit</label>
@@ -659,6 +706,18 @@ function ComposerInner() {
                 )}
               </div>
             )}
+
+            {/* Marking scheme picker (migration 76). Default PRACTICE
+                (+1 correct / 0 wrong) keeps quizzes friendly. Teachers
+                running JEE / NEET / CAT mocks pick the matching preset;
+                the negative-marks toggle lets them run "JEE-weighted but
+                no penalty" diagnostics. */}
+            <div className="mt-4">
+              <MarkingSchemePicker
+                value={markingScheme}
+                onChange={setMarkingScheme}
+              />
+            </div>
           </div>
 
           <div className="card">

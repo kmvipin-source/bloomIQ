@@ -6,6 +6,9 @@ import Link from "next/link";
 import { supabaseBrowser } from "@/lib/supabase/client";
 import { ArrowLeft, Layers, RotateCcw, Sparkles, ThumbsUp, ThumbsDown, ChevronLeft, ChevronRight } from "lucide-react";
 import { BLOOM_LEVELS, BLOOM_META, type BloomLevel } from "@/lib/bloom";
+import { placeholderTopic } from "@/lib/topicSuggestions";
+import { type LearnerProfile } from "@/components/LearnerProfilePrompt";
+import CurrentGoalChip from "@/components/CurrentGoalChip";
 
 type Card = { front: string; back: string };
 type Mark = "todo" | "got" | "again";
@@ -22,6 +25,32 @@ export default function FlashcardsPage() {
   const [count, setCount] = useState(8);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  // Learning-context-aware placeholder (2026-05-12). Pulls exam_goal +
+  // learner_profile so a CAT student sees CAT topic examples, not
+  // "Photosynthesis, Fractions, Indian Independence".
+  const [examGoal, setExamGoal] = useState<string | null>(null);
+  const [learnerProfile, setLearnerProfile] = useState<LearnerProfile | null>(null);
+  useEffect(() => {
+    (async () => {
+      try {
+        const sb = supabaseBrowser();
+        const { data: { user } } = await sb.auth.getUser();
+        if (!user) return;
+        const { data: prof } = await sb
+          .from("profiles")
+          .select("exam_goal, learner_profile")
+          .eq("id", user.id)
+          .maybeSingle();
+        const row = prof as { exam_goal: string | null; learner_profile: string | null } | null;
+        if (row?.exam_goal) setExamGoal(row.exam_goal);
+        const lp = row?.learner_profile;
+        if (lp === "k12" || lp === "competitive_exam" || lp === "corporate") {
+          setLearnerProfile(lp);
+        }
+      } catch { /* silent — fall back to k12 default */ }
+    })();
+  }, []);
 
   const [cards, setCards] = useState<Card[]>([]);
   const [marks, setMarks] = useState<Mark[]>([]);
@@ -84,7 +113,10 @@ export default function FlashcardsPage() {
 
   return (
     <div className="max-w-3xl mx-auto fade-in">
-      <Link href="/student" className="text-sm text-emerald-700 font-semibold inline-flex items-center gap-1"><ArrowLeft size={14} /> Dashboard</Link>
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <Link href="/student" className="text-sm text-emerald-700 font-semibold inline-flex items-center gap-1"><ArrowLeft size={14} /> Dashboard</Link>
+        <CurrentGoalChip />
+      </div>
       <h1 className="h1 mt-2 flex items-center gap-2"><Layers size={28} /> Focus-area flashcards</h1>
       <p className="muted mt-1">Quick drills for the level (and optionally the topic) you want to strengthen.</p>
 
@@ -97,7 +129,7 @@ export default function FlashcardsPage() {
               className="input"
               value={topic}
               onChange={(e) => setTopic(e.target.value)}
-              placeholder="e.g. Photosynthesis, Fractions, Indian Independence"
+              placeholder={placeholderTopic(examGoal, learnerProfile)}
             />
           </div>
           <div>

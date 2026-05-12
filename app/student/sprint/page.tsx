@@ -7,6 +7,7 @@ import {
   CalendarDays, Flame, Trophy, Target, ArrowLeft, ArrowRight, Loader2,
   CheckCircle2, Sparkles, Settings as SettingsIcon, Trash2,
 } from "lucide-react";
+import CurrentGoalChip from "@/components/CurrentGoalChip";
 
 // =============================================================================
 // EXAM SPRINT MODE — countdown + adaptive daily mission.
@@ -155,9 +156,12 @@ export default function SprintPage() {
   if (showSetup) {
     return (
       <div className="max-w-2xl mx-auto fade-in">
-        <Link href="/student" className="inline-flex items-center gap-1 text-sm text-slate-600 hover:text-emerald-700 mb-3">
-          <ArrowLeft size={14} /> Back to dashboard
-        </Link>
+        <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
+          <Link href="/student" className="inline-flex items-center gap-1 text-sm text-slate-600 hover:text-emerald-700">
+            <ArrowLeft size={14} /> Back to dashboard
+          </Link>
+          <CurrentGoalChip />
+        </div>
 
         <div className="flex items-start gap-3">
           <div className="rounded-xl bg-emerald-100 text-emerald-700 p-3 shrink-0">
@@ -264,9 +268,12 @@ export default function SprintPage() {
 
   return (
     <div className="max-w-3xl mx-auto fade-in">
-      <Link href="/student" className="inline-flex items-center gap-1 text-sm text-slate-600 hover:text-emerald-700 mb-3">
-        <ArrowLeft size={14} /> Back to dashboard
-      </Link>
+      <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
+        <Link href="/student" className="inline-flex items-center gap-1 text-sm text-slate-600 hover:text-emerald-700">
+          <ArrowLeft size={14} /> Back to dashboard
+        </Link>
+        <CurrentGoalChip />
+      </div>
 
       {/* COUNTDOWN BANNER */}
       <div className={`rounded-2xl bg-gradient-to-br ${phaseAccent} p-6`}>

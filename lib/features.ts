@@ -102,9 +102,15 @@ export const FEATURES: FeatureDef[] = [
   },
   {
     key: "calibration",
-    label: "Confidence Calibration",
+    // Renamed 2026-05-13: "Confidence Calibration" → "Confidence Insights"
+    // to disambiguate from Speed-Accuracy Trainer. The OLD name read like
+    // an interactive feature; users opening it expected to "do" calibration
+    // but actually landed on a read-only chart. New name reads as a
+    // dashboard, which is what it actually is. URL `/student/calibration`
+    // kept for back-compat — see app/student/calibration/page.tsx.
+    label: "Confidence Insights",
     category: "metacognition",
-    description: "Train metacognitive accuracy — defeats negative marking.",
+    description: "Read-only dashboard of your stated-vs-actual confidence per band. Builds from Speed Trainer ratings — defeats negative marking.",
   },
   {
     key: "cohort_benchmarks",

@@ -11,16 +11,16 @@
  *                              endpoint, so the same numbers feel
  *                              consistent across surfaces.
  *
- *   2. predictRankAndColleges() — turns a score + exam goal into a
- *                              predicted rank (or percentile band) and
- *                              up to 3 named target colleges. Drives the
- *                              Future You reveal screen.
+ *   2. predictRankAndColleges() — turns a score + exam goal into an
+ *                              indicative rank band (or percentile band)
+ *                              and up to 3 tier descriptors of college
+ *                              outcomes typical of that band. Drives the
+ *                              indicative-band reveal screen.
  *
  *   3. computeBestYou()     — simulates fixing the student's top-3
  *                              weakest Bloom levels and returns the
- *                              lifted score + rank + colleges. This is
- *                              the "look how much higher you could be"
- *                              moment that powers the upgrade narrative.
+ *                              lifted score + band + tier descriptors.
+ *                              Powers the stretch-target view.
  *
  * SCORE PHILOSOPHY:
  *   - 300-900, credit-score familiar. Every Indian parent recognises a
@@ -36,6 +36,16 @@
  *   calibration sessions we can swap the formula for a regression
  *   trained against actual exam outcomes — but the public-facing 300-900
  *   range and Bloom-weighted intuition stay the same.
+ *
+ * IMPORTANT (legal posture):
+ *   This module produces an INDICATIVE self-assessment band. It is NOT
+ *   a prediction of exam rank, admission, or outcome at any specific
+ *   institution. Tier descriptors below are deliberately generic — no
+ *   institution is named anywhere in this file. Cutoff numbers used to
+ *   pick which tier band to show are drawn from publicly reported
+ *   approximate ranges and serve only as anchors for self-direction.
+ *   Any UI consuming these outputs must surface the indicative-only
+ *   framing prominently to the student (see app/student/future/page.tsx).
  */
 
 import { BLOOM_LEVELS, type BloomLevel } from "@/lib/bloom";
@@ -204,27 +214,34 @@ function scoreToPercentile(score: number): number {
 // ---------------------------------------------------------------------------
 
 export type CollegeTarget = {
+  /** Generic tier descriptor — e.g. "Top-tier government medical college".
+   *  Deliberately never an institution name. See module-level note. */
   name: string;
-  band: string; // e.g. "AIR ≤ 100", "Top 0.5%"
+  /** Approximate cutoff band the tier sits in — e.g. "AIR 5,000–15,000 band". */
+  band: string;
 };
 
 export type RankPrediction = {
-  /** Predicted exam rank (lower = better). null when only a percentile
-   *  band can be given (non-NEET/JEE/Boards exams). */
+  /** Indicative band rank (lower = better). Used internally to pick the
+   *  tier list and the band label. null when only a percentile band can
+   *  be given. The UI MUST NOT present this as a precise prediction. */
   predicted_rank: number | null;
-  /** Human-readable band like "AIR ~12,400" or "Top 12%" — always set. */
+  /** Human-readable indicative band like "NEET AIR 10,000–15,000 band"
+   *  or "Top 12% indicative band" — never an exact predicted number. */
   rank_label: string;
-  /** Up to 3 representative target colleges/outcomes the score qualifies
-   *  for. Empty when we don't have a cutoff table for the exam. */
+  /** Up to 3 tier descriptors (no institution names) the band typically
+   *  corresponds to per publicly reported approximate cutoffs. Empty when
+   *  we don't have a cutoff table for the exam. */
   colleges: CollegeTarget[];
 };
 
 /**
- * Maps a score (300-900) and an exam goal to a predicted rank and 3
- * representative colleges. The exam-cutoff numbers below are public,
- * approximate, and updated annually — they're meant to anchor the
- * student's intuition, not function as official admission predictions
- * (the UI surfaces this caveat).
+ * Maps a score (300-900) and an exam goal to an indicative rank BAND
+ * and 3 tier descriptors. The cutoff numbers below are public, approximate,
+ * and updated annually — they anchor self-direction, NOT admission
+ * outcomes. No institution is ever named in the output (legal posture);
+ * UIs that surface this data are responsible for the "indicative only"
+ * framing.
  */
 export function predictRankAndColleges(
   score: number,
@@ -232,15 +249,16 @@ export function predictRankAndColleges(
 ): RankPrediction {
   const goal = normalizeExamGoal(examGoal);
 
-  // Score → predicted rank scaling per exam. Higher score = lower rank.
-  // Curve: rank = base × exp(-k × (score - 300)/600). Tuned per exam so
-  // that score=900 ≈ AIR top-50 and score=300 ≈ AIR bottom-of-the-pool.
+  // Score → indicative-band rank scaling per exam. Higher score = lower
+  // rank. Curve: rank = base × exp(-k × (score - 300)/600). The exact
+  // number is never shown — it's rounded into a band by neetRankBandLabel
+  // / jeeRankBandLabel before display.
 
   if (goal === "neet") {
     const rank = Math.max(1, Math.round(180000 * Math.exp(-5.5 * (score - 300) / 600)));
     return {
       predicted_rank: rank,
-      rank_label: `NEET AIR ~${rank.toLocaleString("en-IN")}`,
+      rank_label: `NEET indicative band: ${neetRankBandLabel(rank)}`,
       colleges: collegesForNeet(rank),
     };
   }
@@ -249,51 +267,45 @@ export function predictRankAndColleges(
     const rank = Math.max(1, Math.round(120000 * Math.exp(-5.5 * (score - 300) / 600)));
     return {
       predicted_rank: rank,
-      rank_label: `JEE Main AIR ~${rank.toLocaleString("en-IN")}`,
+      rank_label: `JEE Main indicative band: ${jeeRankBandLabel(rank)}`,
       colleges: collegesForJee(rank),
     };
   }
 
   if (goal === "boards") {
-    // Boards: predicted percentage instead of rank.
+    // Boards: indicative percentage band instead of a specific number.
     const pct = Math.round(50 + ((score - 300) / 600) * 45); // 50..95%
     return {
       predicted_rank: null,
-      rank_label: `Predicted ~${pct}% in board exams`,
+      rank_label: `Boards indicative band: ${boardsPctBandLabel(pct)}`,
       colleges: collegesForBoards(pct),
     };
   }
 
   if (goal === "primary_middle") {
-    // For Class 5–9 students we don't predict ranks or colleges —
-    // those are years away and risk anxiety. Instead we surface three
-    // grade-appropriate outcomes:
+    // For Class 5–9 students we don't show ranks or colleges — those are
+    // years away and risk anxiety. Instead we surface three grade-
+    // appropriate indicative anchors:
     //   1. Grade-level position ("ahead of 75% of Class 7 peers").
     //   2. Olympiad / Talent-search readiness band.
     //   3. Forward-projection to Class 10 boards readiness.
-    // Score → "grade-percentile" (treats 600 BloomIQ as ~75th class
-    // percentile, with curve tuned for younger ages). Same scoreToPercentile
-    // shape as the generic branch; we re-label the rank line for parents.
     const gradePct = scoreToPercentile(score);
     return {
       predicted_rank: null,
-      rank_label: `Ahead of ${gradePct}% of grade-level peers`,
+      rank_label: `Indicative band: ahead of ~${peerBandLabel(gradePct)} of grade-level peers`,
       colleges: collegesForPrimaryMiddle(score, gradePct),
     };
   }
 
     if (goal === "cat") {
-    // CAT is itself a percentile-based exam — IIMs and B-schools cut off
-    // by percentile, not absolute rank. We map the BloomIQ score to an
-    // expected CAT percentile (skewed because CAT is selective: a 600
-    // BloomIQ ~ ~85th CAT percentile, a 800 BloomIQ ~ ~99th).
+    // CAT is itself a percentile-based exam. We map the BloomIQ score to
+    // an indicative CAT percentile band — never a precise number.
     const catPct = Math.max(1, Math.min(99.9,
-      // Curve: score 300 -> ~30%ile, 600 -> ~85%ile, 800 -> ~99%ile, 900 -> 99.9%ile
       30 + Math.pow((score - 300) / 600, 1.4) * 70
     ));
     return {
       predicted_rank: null,
-      rank_label: `Predicted CAT %ile ~${catPct.toFixed(1)}`,
+      rank_label: `CAT indicative band: ${catPctBandLabel(catPct)}`,
       colleges: collegesForCat(catPct),
     };
   }
@@ -302,9 +314,61 @@ export function predictRankAndColleges(
   const percentile = scoreToPercentile(score);
   return {
     predicted_rank: null,
-    rank_label: `Top ${100 - percentile}% nationally`,
+    rank_label: `Indicative band: top ${peerBandLabel(percentile)} nationally`,
     colleges: [],
   };
+}
+
+// ─── Band-label helpers ────────────────────────────────────────────
+// Convert a precise computed number into an indicative range. We never
+// show the raw number to the student — it implies a precision the v1
+// heuristic does not have, and reads as a promise.
+
+function neetRankBandLabel(rank: number): string {
+  if (rank <= 100)    return "AIR top-100 tier";
+  if (rank <= 500)    return "AIR top-500 tier";
+  if (rank <= 1500)   return "AIR 500–1,500 band";
+  if (rank <= 5000)   return "AIR 1,500–5,000 band";
+  if (rank <= 15000)  return "AIR 5,000–15,000 band";
+  if (rank <= 50000)  return "AIR 15,000–50,000 band";
+  if (rank <= 120000) return "AIR 50,000–1,20,000 band";
+  return "Foundation tier — strengthening recommended";
+}
+
+function jeeRankBandLabel(rank: number): string {
+  if (rank <= 100)    return "AIR top-100 tier";
+  if (rank <= 500)    return "AIR top-500 tier";
+  if (rank <= 3000)   return "AIR 500–3,000 band";
+  if (rank <= 10000)  return "AIR 3,000–10,000 band";
+  if (rank <= 30000)  return "AIR 10,000–30,000 band";
+  if (rank <= 100000) return "AIR 30,000–1,00,000 band";
+  return "Foundation tier — strengthening recommended";
+}
+
+function boardsPctBandLabel(pct: number): string {
+  if (pct >= 90) return "90%+ band";
+  if (pct >= 80) return "80–90% band";
+  if (pct >= 70) return "70–80% band";
+  if (pct >= 60) return "60–70% band";
+  return "Foundation band — strengthening recommended";
+}
+
+function catPctBandLabel(pct: number): string {
+  if (pct >= 99) return "99+ %ile band";
+  if (pct >= 95) return "95–99 %ile band";
+  if (pct >= 90) return "90–95 %ile band";
+  if (pct >= 80) return "80–90 %ile band";
+  if (pct >= 60) return "60–80 %ile band";
+  return "Foundation %ile band — strengthening recommended";
+}
+
+function peerBandLabel(pct: number): string {
+  if (pct >= 95) return "top 5%";
+  if (pct >= 90) return "top 10%";
+  if (pct >= 75) return "top 25%";
+  if (pct >= 50) return "top 50%";
+  if (pct >= 25) return "top 75%";
+  return "foundation band";
 }
 
 export function normalizeExamGoal(raw: string | null): "neet" | "jee" | "boards" | "cat" | "primary_middle" | "other" {
@@ -326,74 +390,78 @@ export function normalizeExamGoal(raw: string | null): "neet" | "jee" | "boards"
 }
 
 function collegesForNeet(rank: number): CollegeTarget[] {
-  // Public approximate cutoffs — meant to anchor the student's intuition.
-  if (rank <= 50)    return [
-    { name: "AIIMS Delhi (MBBS)",       band: "AIR ≤ 50" },
-    { name: "AIIMS Bhopal (MBBS)",      band: "AIR ≤ 600" },
-    { name: "MAMC Delhi (MBBS)",        band: "AIR ≤ 1,500" },
+  // Generic medical-college tier descriptors only — no named institutions.
+  // Cutoff bands are public approximate ranges, used as self-direction
+  // anchors for the student's expected tier. Not predictions.
+  if (rank <= 100)   return [
+    { name: "Top-tier national government medical (MBBS)", band: "approx AIR top-100 cutoff" },
+    { name: "Top-tier government medical (MBBS)",          band: "approx AIR top-500 cutoff" },
+    { name: "National-tier government medical (MBBS)",     band: "approx AIR top-1,500 cutoff" },
   ];
   if (rank <= 600)   return [
-    { name: "AIIMS Bhopal (MBBS)",      band: "AIR ≤ 600" },
-    { name: "JIPMER Puducherry (MBBS)", band: "AIR ≤ 700" },
-    { name: "MAMC Delhi (MBBS)",        band: "AIR ≤ 1,500" },
+    { name: "Top-tier government medical (MBBS)",          band: "approx AIR top-500 cutoff" },
+    { name: "National-tier government medical (MBBS)",     band: "approx AIR top-1,500 cutoff" },
+    { name: "State-tier government medical (MBBS)",        band: "approx AIR top-5,000 cutoff" },
   ];
   if (rank <= 1500)  return [
-    { name: "MAMC Delhi (MBBS)",        band: "AIR ≤ 1,500" },
-    { name: "GMC Mumbai (MBBS)",        band: "AIR ≤ 3,000" },
-    { name: "Top state govt MBBS",      band: "AIR ≤ 5,000" },
+    { name: "National-tier government medical (MBBS)",     band: "approx AIR top-1,500 cutoff" },
+    { name: "State-tier government medical (MBBS)",        band: "approx AIR top-5,000 cutoff" },
+    { name: "Reputed government medical (MBBS)",           band: "approx AIR top-15,000 cutoff" },
   ];
   if (rank <= 5000)  return [
-    { name: "GMC Mumbai (MBBS)",        band: "AIR ≤ 3,000" },
-    { name: "Top state govt MBBS",      band: "AIR ≤ 5,000" },
-    { name: "Reputed state colleges",   band: "AIR ≤ 15,000" },
+    { name: "State-tier government medical (MBBS)",        band: "approx AIR top-5,000 cutoff" },
+    { name: "Reputed government medical (MBBS)",           band: "approx AIR top-15,000 cutoff" },
+    { name: "Reputed private medical college (MBBS)",      band: "approx AIR top-25,000 cutoff" },
   ];
   if (rank <= 15000) return [
-    { name: "Reputed state govt MBBS",  band: "AIR ≤ 15,000" },
-    { name: "Top private (Manipal etc)",band: "AIR ≤ 25,000" },
-    { name: "Mid-tier private MBBS",    band: "AIR ≤ 50,000" },
+    { name: "Reputed government medical (MBBS)",           band: "approx AIR top-15,000 cutoff" },
+    { name: "Reputed private medical college (MBBS)",      band: "approx AIR top-25,000 cutoff" },
+    { name: "Mid-tier private medical college (MBBS)",     band: "approx AIR top-50,000 cutoff" },
   ];
   if (rank <= 50000) return [
-    { name: "Mid-tier private MBBS",    band: "AIR ≤ 50,000" },
-    { name: "BDS / BAMS (govt)",        band: "AIR ≤ 80,000" },
-    { name: "Lower-tier private MBBS",  band: "AIR ≤ 1,20,000" },
+    { name: "Mid-tier private medical college (MBBS)",     band: "approx AIR top-50,000 cutoff" },
+    { name: "Government dental / AYUSH (BDS / BAMS)",      band: "approx AIR top-80,000 cutoff" },
+    { name: "Lower-tier private medical (MBBS)",           band: "approx AIR top-1,20,000 cutoff" },
   ];
   return [
-    { name: "BDS / BAMS / BHMS",        band: "AIR ≤ 1,20,000" },
-    { name: "Lower-tier private MBBS",  band: "AIR ≤ 1,50,000" },
-    { name: "Re-attempt recommended",   band: "—" },
+    { name: "Private dental / AYUSH (BDS / BAMS / BHMS)",  band: "approx AIR top-1,20,000 cutoff" },
+    { name: "Lower-tier private medical (MBBS)",           band: "approx AIR top-1,50,000 cutoff" },
+    { name: "Foundation tier — strengthen and re-attempt", band: "—" },
   ];
 }
 
 function collegesForJee(rank: number): CollegeTarget[] {
+  // Generic engineering-college tier descriptors only — no named
+  // institutions. Cutoffs are public approximate ranges.
   if (rank <= 100)   return [
-    { name: "IIT Bombay — CSE",         band: "AIR ≤ 100" },
-    { name: "IIT Delhi — CSE",          band: "AIR ≤ 150" },
-    { name: "IIT Madras — CSE",         band: "AIR ≤ 200" },
+    { name: "Top-tier national engineering (core branches)",   band: "approx AIR top-100 cutoff" },
+    { name: "Top-tier national engineering (other branches)",  band: "approx AIR top-500 cutoff" },
+    { name: "National-tier engineering (CSE)",                 band: "approx AIR top-1,500 cutoff" },
   ];
   if (rank <= 500)   return [
-    { name: "IIT Madras / Kanpur — CSE",band: "AIR ≤ 500" },
-    { name: "Old IITs — Electrical",    band: "AIR ≤ 1,000" },
-    { name: "IIT Hyderabad — CSE",      band: "AIR ≤ 1,500" },
+    { name: "Top-tier national engineering (other branches)",  band: "approx AIR top-500 cutoff" },
+    { name: "National-tier engineering (core branches)",       band: "approx AIR top-1,000 cutoff" },
+    { name: "National-tier engineering (CSE)",                 band: "approx AIR top-1,500 cutoff" },
   ];
   if (rank <= 3000)  return [
-    { name: "Newer IIT branches",       band: "AIR ≤ 3,000" },
-    { name: "NIT Trichy / Warangal",    band: "AIR ≤ 5,000" },
-    { name: "BITS Pilani (via JEE)",    band: "AIR ≤ 8,000" },
+    { name: "National-tier engineering (newer institutes)",    band: "approx AIR top-3,000 cutoff" },
+    { name: "Reputed national engineering (core branches)",    band: "approx AIR top-5,000 cutoff" },
+    { name: "Reputed national engineering (other branches)",   band: "approx AIR top-8,000 cutoff" },
   ];
   if (rank <= 10000) return [
-    { name: "NIT mid-tier branches",    band: "AIR ≤ 10,000" },
-    { name: "IIIT Hyderabad",           band: "AIR ≤ 12,000" },
-    { name: "Top state govt engg",      band: "AIR ≤ 25,000" },
+    { name: "Reputed national engineering (mid-tier branches)",band: "approx AIR top-10,000 cutoff" },
+    { name: "Reputed national engineering (newer institutes)", band: "approx AIR top-12,000 cutoff" },
+    { name: "Top-tier state engineering",                      band: "approx AIR top-25,000 cutoff" },
   ];
   if (rank <= 30000) return [
-    { name: "Tier-2 NITs / IIITs",      band: "AIR ≤ 30,000" },
-    { name: "Top state govt engg",      band: "AIR ≤ 40,000" },
-    { name: "Reputed private engg",     band: "AIR ≤ 60,000" },
+    { name: "Tier-2 national engineering institutes",          band: "approx AIR top-30,000 cutoff" },
+    { name: "Top-tier state engineering",                      band: "approx AIR top-40,000 cutoff" },
+    { name: "Reputed private engineering",                     band: "approx AIR top-60,000 cutoff" },
   ];
   return [
-    { name: "Reputed private engg",     band: "AIR ≤ 60,000" },
-    { name: "Mid-tier private engg",    band: "AIR ≤ 1,00,000" },
-    { name: "State engg via JEE Main",  band: "—" },
+    { name: "Reputed private engineering",                     band: "approx AIR top-60,000 cutoff" },
+    { name: "Mid-tier private engineering",                    band: "approx AIR top-1,00,000 cutoff" },
+    { name: "State engineering via JEE Main",                  band: "—" },
   ];
 }
 
@@ -418,70 +486,71 @@ function collegesForPrimaryMiddle(score: number, gradePct: number): CollegeTarge
 }
 
 function collegesForCat(pct: number): CollegeTarget[] {
-  // CAT B-school cutoffs are public approximate composite percentiles
-  // (CAT %ile + GD/PI weight). We anchor the user's expected band.
+  // Generic B-school tier descriptors only — no named institutions.
+  // Cutoff bands are public approximate composite percentiles.
   if (pct >= 99.5) return [
-    { name: "IIM Ahmedabad (PGP)",     band: "≥ 99.5 %ile" },
-    { name: "IIM Bangalore (PGP)",     band: "≥ 99 %ile" },
-    { name: "IIM Calcutta (PGP)",      band: "≥ 99 %ile" },
+    { name: "Top-tier national B-school (PGP)",   band: "approx ≥ 99.5 %ile cutoff" },
+    { name: "Tier-1 national B-school (PGP)",     band: "approx ≥ 99 %ile cutoff" },
+    { name: "National-tier specialised B-school", band: "approx ≥ 98.5 %ile cutoff" },
   ];
   if (pct >= 99) return [
-    { name: "IIM Bangalore / Calcutta",band: "≥ 99 %ile" },
-    { name: "IIM Lucknow",             band: "≥ 97 %ile" },
-    { name: "FMS Delhi",               band: "≥ 98.5 %ile" },
+    { name: "Tier-1 national B-school (PGP)",     band: "approx ≥ 99 %ile cutoff" },
+    { name: "National-tier specialised B-school", band: "approx ≥ 98.5 %ile cutoff" },
+    { name: "Reputed national B-school",          band: "approx ≥ 97 %ile cutoff" },
   ];
   if (pct >= 97) return [
-    { name: "IIM Lucknow / Indore",    band: "≥ 97 %ile" },
-    { name: "IIM Kozhikode",           band: "≥ 96 %ile" },
-    { name: "FMS Delhi / SPJIMR",      band: "≥ 95 %ile" },
+    { name: "Reputed national B-school",          band: "approx ≥ 97 %ile cutoff" },
+    { name: "Reputed national B-school (other)",  band: "approx ≥ 96 %ile cutoff" },
+    { name: "National-tier specialised B-school", band: "approx ≥ 95 %ile cutoff" },
   ];
   if (pct >= 95) return [
-    { name: "IIM Kozhikode / Shillong",band: "≥ 94 %ile" },
-    { name: "SPJIMR Mumbai",           band: "≥ 95 %ile" },
-    { name: "MDI Gurgaon / IIFT",      band: "≥ 92 %ile" },
+    { name: "Reputed national B-school (other)",  band: "approx ≥ 94 %ile cutoff" },
+    { name: "National-tier specialised B-school", band: "approx ≥ 95 %ile cutoff" },
+    { name: "Tier-1 reputed B-school",            band: "approx ≥ 92 %ile cutoff" },
   ];
   if (pct >= 90) return [
-    { name: "New IIMs (Trichy/Udaipur/Rohtak)", band: "≥ 90 %ile" },
-    { name: "MDI Gurgaon / IIFT Delhi",         band: "≥ 92 %ile" },
-    { name: "NMIMS Mumbai / NITIE",             band: "≥ 90 %ile" },
+    { name: "Newer national-tier B-school",       band: "approx ≥ 90 %ile cutoff" },
+    { name: "Tier-1 reputed B-school",            band: "approx ≥ 92 %ile cutoff" },
+    { name: "Reputed private B-school",           band: "approx ≥ 90 %ile cutoff" },
   ];
   if (pct >= 80) return [
-    { name: "Newer IIMs (Sambalpur/Sirmaur)",   band: "≥ 85 %ile" },
-    { name: "IMT Ghaziabad / IMI Delhi",        band: "≥ 85 %ile" },
-    { name: "JBIMS Mumbai / SCMHRD Pune",       band: "≥ 80 %ile" },
+    { name: "Newer national-tier B-school",       band: "approx ≥ 85 %ile cutoff" },
+    { name: "Tier-2 reputed B-school",            band: "approx ≥ 85 %ile cutoff" },
+    { name: "Reputed private B-school",           band: "approx ≥ 80 %ile cutoff" },
   ];
   if (pct >= 60) return [
-    { name: "IFMR / Great Lakes Chennai",       band: "≥ 70 %ile" },
-    { name: "TAPMI Manipal / KJ Somaiya",       band: "≥ 70 %ile" },
-    { name: "Tier-2 reputed B-schools",         band: "≥ 60 %ile" },
+    { name: "Tier-2 reputed B-school",            band: "approx ≥ 70 %ile cutoff" },
+    { name: "Reputed private B-school",           band: "approx ≥ 70 %ile cutoff" },
+    { name: "Mid-tier B-school",                  band: "approx ≥ 60 %ile cutoff" },
   ];
   return [
-    { name: "Tier-2 / state B-schools",         band: "—" },
-    { name: "Re-attempt strongly recommended",  band: "—" },
-    { name: "Consider XAT / SNAP / NMAT path",  band: "—" },
+    { name: "Mid-tier / state B-school",          band: "—" },
+    { name: "Foundation tier — strengthen and re-attempt", band: "—" },
+    { name: "Consider alternative entrance paths", band: "—" },
   ];
 }
 
 function collegesForBoards(pct: number): CollegeTarget[] {
+  // Generic college-tier descriptors only — no named institutions.
   if (pct >= 90) return [
-    { name: "Top DU colleges (SRCC, Hindu)", band: "≥ 95%" },
-    { name: "Top state board colleges",       band: "≥ 90%" },
-    { name: "Strong CUET shortlists",         band: "≥ 90%" },
+    { name: "Top-tier central university",        band: "approx ≥ 95% cutoff" },
+    { name: "Top-tier state university",          band: "approx ≥ 90% cutoff" },
+    { name: "Strong CUET shortlists",             band: "approx ≥ 90% cutoff" },
   ];
   if (pct >= 80) return [
-    { name: "Reputed central / state colleges", band: "≥ 80%" },
-    { name: "CUET Tier-1 with strong score",    band: "≥ 80%" },
-    { name: "Top private universities",         band: "≥ 75%" },
+    { name: "Reputed central / state university", band: "approx ≥ 80% cutoff" },
+    { name: "CUET Tier-1 reputed institutes",     band: "approx ≥ 80% cutoff" },
+    { name: "Top-tier private university",        band: "approx ≥ 75% cutoff" },
   ];
   if (pct >= 70) return [
-    { name: "State Tier-1 colleges",            band: "≥ 70%" },
-    { name: "Most private universities",        band: "≥ 60%" },
-    { name: "CUET Tier-2 shortlists",           band: "≥ 65%" },
+    { name: "State Tier-1 university",            band: "approx ≥ 70% cutoff" },
+    { name: "Reputed private university",         band: "approx ≥ 60% cutoff" },
+    { name: "CUET Tier-2 shortlists",             band: "approx ≥ 65% cutoff" },
   ];
   return [
-    { name: "Mid-tier private colleges",        band: "≥ 55%" },
-    { name: "State open universities",          band: "—" },
-    { name: "Bridge / entrance prep route",     band: "—" },
+    { name: "Mid-tier private university",        band: "approx ≥ 55% cutoff" },
+    { name: "State open university",              band: "—" },
+    { name: "Foundation tier — bridge / re-attempt path", band: "—" },
   ];
 }
 

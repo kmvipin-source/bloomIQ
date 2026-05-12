@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getBearer, supabaseServer, supabaseAdmin } from "@/lib/supabase/server";
+import { sendEmail, primaryTeacherInviteTemplate } from "@/lib/email";
 
 export const runtime = "nodejs";
 
@@ -367,7 +368,44 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       );
     if (invErr) return NextResponse.json({ error: invErr.message }, { status: 500 });
 
-    return NextResponse.json({ ok: true, status: "pending", email });
+    // Send the invite email. Same best-effort posture as the co-teacher
+    // path. The class_teacher_invites row is the source of truth; this
+    // is the courtesy nudge so the recipient doesn't have to discover
+    // the invite via dashboard polling. (Vipin, 2026-05-12 fix.)
+    let emailStatus: "sent" | "not_configured" | "failed" | "skipped" = "skipped";
+    try {
+      const { data: cls2 } = await admin
+        .from("classes")
+        .select("name, school_id, schools:schools!classes_school_id_fkey(name)")
+        .eq("id", classId)
+        .maybeSingle();
+      const { data: inviter } = await admin
+        .from("profiles")
+        .select("full_name")
+        .eq("id", user.id)
+        .maybeSingle();
+      const origin = req.headers.get("origin") || process.env.NEXT_PUBLIC_APP_URL || "";
+      const acceptUrl = origin ? `${origin}/teacher` : "/teacher";
+      const tmpl = primaryTeacherInviteTemplate({
+        inviterName: (inviter as { full_name?: string | null } | null)?.full_name ?? null,
+        className: (cls2 as { name?: string } | null)?.name ?? "your class",
+        schoolName: ((cls2 as { schools?: { name?: string } | null } | null)?.schools?.name) ?? null,
+        acceptUrl,
+      });
+      const res = await sendEmail({
+        to: email!,
+        subject: tmpl.subject,
+        html: tmpl.html,
+        text: tmpl.text,
+      });
+      emailStatus = res.ok && res.sent ? "sent"
+        : res.ok && !res.sent ? "not_configured"
+        : "failed";
+    } catch {
+      emailStatus = "failed";
+    }
+
+    return NextResponse.json({ ok: true, status: "pending", email, email_status: emailStatus });
   } catch (e) {
     return NextResponse.json(
       { error: e instanceof Error ? e.message : "Failed to change primary" },

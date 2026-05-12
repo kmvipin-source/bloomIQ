@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { supabaseBrowser } from "@/lib/supabase/client";
 import { GraduationCap, ArrowRight } from "lucide-react";
+import { learnerProfileFromGoal } from "@/lib/learnerProfileFromGoal";
 
 /**
  * StudentGoalPicker
@@ -26,16 +27,21 @@ import { GraduationCap, ArrowRight } from "lucide-react";
  */
 
 export const STUDENT_GOALS = [
-  { id: "class_5_8",       label: "Class 5–8",         emoji: "🎒", sub: "Primary + middle school NCERT" },
+  { id: "class_5_8",       label: "Class 5–8",            emoji: "🎒", sub: "Primary + middle school NCERT" },
   { id: "class_9",         label: "Class 9",              emoji: "📕", sub: "Foundation for boards" },
-  { id: "class_10_boards", label: "Class 10 boards",     emoji: "📘", sub: "CBSE, ICSE, state boards" },
-  { id: "class_12_boards", label: "Class 12 boards",     emoji: "📗", sub: "CBSE, ICSE, state boards" },
-  { id: "jee_prep",        label: "JEE prep",            emoji: "🛠️", sub: "Engineering entrance" },
-  { id: "neet_prep",       label: "NEET prep",           emoji: "🩺", sub: "Medical entrance" },
-  { id: "cat_prep",        label: "CAT prep",            emoji: "🎯", sub: "MBA entrance" },
-  { id: "upsc_prep",       label: "UPSC prep",           emoji: "🏛️", sub: "Civil services" },
-  { id: "bank_exams",      label: "Bank exams",          emoji: "🏦", sub: "IBPS, SBI, RBI, etc." },
-  { id: "exploring",       label: "Just exploring",      emoji: "🌱", sub: "Self-study, no specific exam" },
+  { id: "class_10_boards", label: "Class 10 boards",      emoji: "📘", sub: "CBSE, ICSE, state boards" },
+  { id: "class_12_boards", label: "Class 12 boards",      emoji: "📗", sub: "CBSE, ICSE, state boards" },
+  { id: "jee_prep",        label: "JEE prep",             emoji: "🛠️", sub: "Engineering entrance" },
+  { id: "neet_prep",       label: "NEET prep",            emoji: "🩺", sub: "Medical entrance" },
+  { id: "cat_prep",        label: "CAT prep",             emoji: "🎯", sub: "MBA entrance" },
+  { id: "upsc_prep",       label: "UPSC prep",            emoji: "🏛️", sub: "Civil services" },
+  { id: "bank_exams",      label: "Bank exams",           emoji: "🏦", sub: "IBPS, SBI, RBI, etc." },
+  // Corporate / professional training was previously captured via the
+  // separate LearnerProfilePrompt pill on generate pages. We merged the
+  // two capture points into this one picker — see lib/learnerProfileFromGoal.ts
+  // for the goal → coarse learner_profile derivation.
+  { id: "corporate",       label: "Professional / training", emoji: "💼", sub: "Software, cloud, mainframe, etc." },
+  { id: "exploring",       label: "Just exploring",       emoji: "🌱", sub: "Self-study, no specific exam" },
 ] as const;
 
 export type StudentGoalId = typeof STUDENT_GOALS[number]["id"];
@@ -55,11 +61,20 @@ export default function StudentGoalPicker({
       const sb = supabaseBrowser();
       const { data: { user } } = await sb.auth.getUser();
       if (!user) throw new Error("Not signed in.");
+      // exam_goal is the granular field (jee_main, cat_prep, etc.).
+      // learner_profile is the coarse field (k12 | competitive_exam |
+      // corporate) used by topic-skill detection. Previously captured
+      // separately via the inline LearnerProfilePrompt on generate
+      // pages — that pill has been removed, and we now auto-derive
+      // learner_profile from exam_goal here so the two fields stay
+      // in lockstep without the user managing both.
+      const derivedProfile = learnerProfileFromGoal(goal);
       const { error } = await sb
         .from("profiles")
         .update({
           exam_goal: goal,
           exam_goal_set_at: new Date().toISOString(),
+          learner_profile: derivedProfile,
         })
         .eq("id", user.id);
       if (error) throw error;

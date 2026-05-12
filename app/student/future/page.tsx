@@ -3,22 +3,27 @@
 // =============================================================================
 // app/student/future/page.tsx
 // -----------------------------------------------------------------------------
-// "Future You" reveal — the dramatic post-calibration moment.
+// Indicative-band reveal — the post-calibration moment.
 //
 // Shows three things in sequence:
 //
 //   1. A large count-up animation from 300 to the student's actual score.
-//      The animation manufactures anticipation; the brain treats a counter
-//      that climbs the same way it treats a slot-machine wheel.
+//      The animation manufactures anticipation around the score reveal.
 //
-//   2. The predicted exam-day rank + 3 named target colleges (or a
-//      percentile band fallback for exam goals we don't have cutoff
-//      tables for).
+//   2. The indicative rank BAND (never an exact number) + 3 generic
+//      tier descriptors (never named institutions). Both come from
+//      lib/bloomiqScore.ts which is designed to keep the data layer
+//      promise-free.
 //
-//   3. A side-by-side "Best You" card showing the lifted rank + colleges
-//      they'd hit if they fixed their top 3 weakest Bloom levels —
-//      explicitly named ("Apply, Analyze, Create"). This delta is the
-//      single most important pixel on the screen — it's the hope.
+//   3. A side-by-side "Stretch target" card showing the band they'd
+//      indicatively reach if they strengthened their top 3 weakest
+//      Bloom levels.
+//
+// LEGAL POSTURE:
+//   This screen MUST display the indicative-only framing prominently
+//   (the disclaimer banner at the top of <Reveal>). The score and bands
+//   are self-direction anchors, NOT predictions of admission, rank, or
+//   outcome. No institution is named anywhere — copy must stay that way.
 //
 // Direct-navigation safe: if there's no fresh sessionStorage payload from
 // the just-finished calibration, the page falls back to fetching
@@ -159,8 +164,13 @@ export default function FutureYouPage() {
             score: data.calibration.best_you_score ?? data.score,
             prediction: {
               predicted_rank: data.calibration.best_you_predicted_rank,
+              // Cold-path label: never reconstruct a precise AIR number.
+              // The fresh path uses lib/bloomiqScore's band labels; the
+              // cold path doesn't have access to those bands directly,
+              // so we use a generic indicative label until the next
+              // recompute / calibration re-fills with proper band data.
               rank_label: data.calibration.best_you_predicted_rank
-                ? `AIR ~${data.calibration.best_you_predicted_rank.toLocaleString("en-IN")}`
+                ? "Indicative stretch band"
                 : "—",
               colleges: [], // not in score payload — they'll re-compute on next calibration
             },
@@ -195,8 +205,9 @@ export default function FutureYouPage() {
           <Sparkles size={32} className="mx-auto mb-3 opacity-60" />
           <h1 className="text-xl font-bold">No calibration yet</h1>
           <p className="mt-2 opacity-70">
-            Take the 7-minute calibration to discover your BloomIQ Score and your
-            predicted exam-day rank.
+            Take the 7-minute calibration to discover your BloomIQ Score and an
+            indicative readiness band for your exam goal. Self-assessment only —
+            not a prediction of rank or admission.
           </p>
           <Link
             href="/student/bloom-score"
@@ -354,16 +365,20 @@ function Reveal({ data, animate }: { data: Reveal; animate: boolean }) {
 
   function shareScreenshot() {
     // Best-effort share. Many browsers can't capture the page itself,
-    // so we offer a copy-link shortcut and a guidance toast.
+    // so we offer a copy-link shortcut and a guidance toast. Share text
+    // deliberately omits any rank / college / prediction language — only
+    // the self-assessment score itself is shared, with an "indicative"
+    // marker on the readiness band to keep the social-share copy free
+    // of outcome claims.
     if (navigator.share) {
       navigator.share({
         title: "My BloomIQ Score",
-        text: `My BloomIQ Score is ${data.score}. Predicted ${data.prediction.rank_label}. Discover yours →`,
+        text: `My BloomIQ Score (self-assessment) is ${data.score}/900. Indicative readiness band: ${data.prediction.rank_label}. Try it →`,
         url: window.location.origin + "/pricing",
       }).catch(() => { /* user cancelled */ });
     } else {
       navigator.clipboard?.writeText(
-        `My BloomIQ Score is ${data.score}. Predicted ${data.prediction.rank_label}. Try it: ${window.location.origin}/signup`
+        `My BloomIQ Score (self-assessment) is ${data.score}/900. Indicative readiness band: ${data.prediction.rank_label}. Try it: ${window.location.origin}/signup`
       );
       alert("Copied to clipboard — paste into your story!");
     }
@@ -371,6 +386,32 @@ function Reveal({ data, animate }: { data: Reveal; animate: boolean }) {
 
   return (
     <div className="max-w-3xl mx-auto pt-6 pb-16">
+      {/* INDICATIVE-ONLY DISCLAIMER — must stay visible above the score.
+          The whole reveal experience downstream is framed as a band, not
+          a prediction; this block carries the legal posture in plain
+          language so the framing isn't only in the small print at the
+          bottom. Do not move below the fold. */}
+      <div
+        className="rounded-xl p-3 mb-4 text-xs leading-relaxed"
+        style={{
+          background: "rgba(99,102,241,0.06)",
+          border: "1px solid rgba(99,102,241,0.25)",
+          color: "#334155",
+        }}
+      >
+        <div className="flex items-start gap-2">
+          <AlertTriangle size={14} className="flex-shrink-0 mt-0.5" style={{ color: "#6366f1" }} />
+          <div>
+            <strong style={{ color: "#1e293b" }}>Indicative only — not a prediction.</strong>{" "}
+            BloomIQ Score is a self-assessment tool. The bands and tier descriptors below
+            are anchors for self-direction based on public approximate cutoffs. They are{" "}
+            <strong>not</strong> a forecast of exam rank, admission, or outcome at any
+            institution. Tier descriptors are generic and do not imply affiliation with
+            or endorsement by any specific college. Individual results vary.
+          </div>
+        </div>
+      </div>
+
       {data.is_stale ? (
         <div className="card mb-4 p-4 border-2"
              style={{ borderColor: "#f59e0b", background: "rgba(245,158,11,0.08)" }}>
@@ -465,7 +506,7 @@ function Reveal({ data, animate }: { data: Reveal; animate: boolean }) {
 
         <div className="mt-6 inline-flex items-center gap-2 text-sm rounded-full px-4 py-1.5"
              style={{ background: "rgba(99,102,241,0.12)", color: "#6366f1" }}>
-          <Target size={14} /> Predicted exam day: <strong>{data.prediction.rank_label}</strong>
+          <Target size={14} /> <strong>{data.prediction.rank_label}</strong>
         </div>
 
         {data.prediction.colleges.length > 0 ? (
@@ -477,10 +518,12 @@ function Reveal({ data, animate }: { data: Reveal; animate: boolean }) {
         ) : null}
       </div>
 
-      {/* BEST YOU */}
+      {/* STRETCH TARGET — hypothetical band if the student strengthens
+          their weakest Bloom levels. Framed throughout as indicative,
+          not a promised outcome. */}
       <div className="mt-6 grid md:grid-cols-2 gap-4">
         <div className="card p-5">
-          <div className="text-xs uppercase tracking-wider opacity-60 mb-1">Current you</div>
+          <div className="text-xs uppercase tracking-wider opacity-60 mb-1">Current score</div>
           <div className="text-3xl font-bold">{data.score}</div>
           <div className="text-sm opacity-70 mt-1">{data.prediction.rank_label}</div>
         </div>
@@ -493,7 +536,7 @@ function Reveal({ data, animate }: { data: Reveal; animate: boolean }) {
         >
           <div className="text-xs uppercase tracking-wider mb-1 flex items-center gap-1"
                style={{ color: "#10b981" }}>
-            <TrendingUp size={12} /> Best you
+            <TrendingUp size={12} /> Stretch target (indicative)
           </div>
           <div className="text-3xl font-bold flex items-baseline gap-2">
             {data.best_you.score}
@@ -517,8 +560,9 @@ function Reveal({ data, animate }: { data: Reveal; animate: boolean }) {
           ) : null}
           {liftedLevels.length > 0 ? (
             <div className="mt-3 text-xs opacity-80">
-              Reachable by closing your top weak spots:{" "}
-              <strong>{liftedLevels.join(", ")}</strong>
+              Indicative band if you strengthen these areas:{" "}
+              <strong>{liftedLevels.join(", ")}</strong>.{" "}
+              <span className="opacity-60">Not a guarantee — for self-direction only.</span>
             </div>
           ) : null}
         </div>
@@ -611,16 +655,19 @@ function Reveal({ data, animate }: { data: Reveal; animate: boolean }) {
               ) : null}
             </div>
 
-            {/* Time to Best You — concrete timeline */}
+            {/* Indicative practice volume — framed as a heuristic anchor,
+                not a guaranteed timeline. Individual results vary. */}
             {data.best_you.score > data.score ? (
               <div className="mt-3 rounded-lg p-3 flex items-center gap-3 text-sm"
                    style={{ background: "rgba(0,0,0,0.03)" }}>
                 <Clock size={16} className="opacity-60 flex-shrink-0" />
                 <div className="leading-relaxed">
-                  At <strong>{time.dailyMinutes} min/day of focused practice</strong>, you can lift your
-                  score from <strong>{data.score}</strong> to <strong>{data.best_you.score}</strong> in
-                  about <strong>{time.weeksMin}–{time.weeksMax} weeks</strong>{" "}
-                  ({time.totalHours} hours of total practice).
+                  Indicative practice volume to move toward the stretch target ({data.score} →{" "}
+                  {data.best_you.score}):{" "}
+                  <strong>~{time.dailyMinutes} min/day</strong> across roughly{" "}
+                  <strong>{time.weeksMin}–{time.weeksMax} weeks</strong>{" "}
+                  (~{time.totalHours} hours of focused practice).{" "}
+                  <span className="opacity-60">Heuristic estimate — individual results vary.</span>
                 </div>
               </div>
             ) : null}
@@ -814,9 +861,13 @@ function Reveal({ data, animate }: { data: Reveal; animate: boolean }) {
         </button>
       </div>
 
-      <p className="text-xs opacity-50 text-center mt-6">
-        College predictions use public approximate cutoffs as anchors — not official
-        admission predictions. Re-calibrate anytime to refresh.
+      <p className="text-xs opacity-60 text-center mt-6 leading-relaxed max-w-2xl mx-auto">
+        BloomIQ Score, the indicative bands, and the tier descriptors shown here are a
+        self-assessment heuristic — they are <strong>not</strong> a prediction of exam rank,
+        admission, or outcome at any specific institution. Cutoff numbers are drawn from
+        publicly reported approximate ranges and serve as self-direction anchors only.
+        Tier descriptors are generic and do not imply affiliation with or endorsement by
+        any college. Re-calibrate anytime to refresh.
       </p>
 
       <div className="text-center mt-3">

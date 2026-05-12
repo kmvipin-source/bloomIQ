@@ -169,7 +169,7 @@ export default function LandingPage() {
             <FeatureCard
               icon={<Target size={22} />}
               title="Exam-prep tools"
-              desc="JEE/NEET/CAT/UPSC mock-rank predictor, past-paper X-ray, trap detector."
+              desc="Mock-rank predictor, past-paper X-ray, trap detector — for competitive exams, school boards, and professional certifications."
             />
             <FeatureCard
               icon={<Layers size={22} />}

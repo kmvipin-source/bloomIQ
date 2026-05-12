@@ -10,6 +10,12 @@ import { formatSeconds } from "@/lib/utils";
 import { ChevronLeft, ChevronRight, AlarmClock, Clock, Play, AlertCircle } from "lucide-react";
 import { track } from "@/lib/posthog";
 import { triggerScoreRecompute } from "@/lib/scoreRecompute";
+import {
+  computeAttemptScore,
+  marksEarnedFor,
+  resolveScheme,
+  type AttemptAnswerInput,
+} from "@/lib/scoring";
 
 export default function TakeQuiz() {
   const router = useRouter();
@@ -211,11 +217,39 @@ export default function TakeQuiz() {
     // would be undercounted by however long the student stared at it.
     if (trackTime) flushCurrentQuestionTime();
     const sb = supabaseBrowser();
-    let score = 0;
-    const rows = questions.map((q) => {
+
+    // ─── Marking scheme — resolved ONCE here, snapshotted on the attempt ───
+    // The quiz row carries the scheme the teacher (or student-creator)
+    // picked. NULL => legacy +1/0/0 (resolveScheme handles that). We
+    // freeze the resolved scheme onto the attempt so future admin edits
+    // to the quiz cannot retroactively re-grade this attempt.
+    const scheme = resolveScheme((quiz as { marking_scheme?: unknown }).marking_scheme);
+
+    // Build the per-question answer outcomes once. Used both for
+    // computing the attempt-level totals AND for the per-row
+    // marks_earned writes. Skipped questions = selected_index === null
+    // → counted as unattempted (scheme.rules.default.unattempted, 0
+    // for every preset except future CUSTOMs).
+    const answerInputs: AttemptAnswerInput[] = questions.map((q) => {
       const sel = answers[q.id];
-      const correct = typeof sel === "number" && sel === q.correct_index;
-      if (correct) score += 1;
+      const selected_index = typeof sel === "number" ? sel : null;
+      return {
+        selected_index,
+        is_correct: selected_index !== null && selected_index === q.correct_index,
+      };
+    });
+
+    // Single source of truth: lib/scoring.ts computes raw_score, max_score,
+    // percentage, counts (correct/wrong/unattempted/total). Identical math
+    // to the old hardcoded loop when scheme is the legacy default.
+    const breakdown = computeAttemptScore(answerInputs, scheme);
+
+    // Per-question rows — now carry marks_earned alongside the existing
+    // is_correct. Bloom mastery still keys off is_correct, so the
+    // BloomIQ Score recompute is unaffected. Skipped questions still
+    // get is_correct: null (legacy invariant), but marks_earned: 0.
+    const rows = questions.map((q, i) => {
+      const ai = answerInputs[i];
       // Only record per-question timing when the student consented.
       // Otherwise leave the column NULL — the cohort benchmark routes
       // already filter NULL rows out, so non-consenting students don't
@@ -226,25 +260,47 @@ export default function TakeQuiz() {
       return {
         attempt_id: attemptId,
         question_id: q.id,
-        selected_index: typeof sel === "number" ? sel : null,
-        is_correct: typeof sel === "number" ? correct : null,
+        selected_index: ai.selected_index,
+        // Preserve the historical convention: is_correct is NULL for a
+        // skipped question (not false). Code throughout the app
+        // distinguishes "got it wrong" from "didn't attempt."
+        is_correct: ai.selected_index !== null ? ai.is_correct : null,
         bloom_level: q.bloom_level,
         time_taken_ms,
+        marks_earned: marksEarnedFor(ai, scheme),
       };
     });
     if (rows.length) await sb.from("attempt_answers").insert(rows);
     const seconds = Math.floor((Date.now() - startedAtRef.current) / 1000);
+
+    // Persist BOTH the new (raw_score / max_score / snapshot) AND the
+    // legacy (score / total) columns. The legacy columns store the
+    // back-compat correct-count value — i.e., what the old code would
+    // have written — clamped at 0 because the legacy schema is int and
+    // many readers assume non-negative. Result page + new reports read
+    // raw_score; existing readers that still consume score keep working.
     await sb.from("quiz_attempts").update({
       submitted_at: new Date().toISOString(),
-      score,
-      total: questions.length,
+      score: Math.max(0, breakdown.counts.correct),     // legacy: correct-count, never negative
+      total: breakdown.counts.total,                     // legacy: question count
+      raw_score: breakdown.raw_score,                    // new: signed points (can be negative)
+      max_score: breakdown.max_score,                    // new: total possible points
+      marking_scheme_snapshot: scheme,                   // new: frozen rule
       time_taken_seconds: seconds,
     }).eq("id", attemptId);
     track("quiz_submitted", {
       quiz_id: quiz.id,
       attempt_id: attemptId,
-      score,
-      total: questions.length,
+      // Telemetry keeps the legacy correct-count for back-compat with
+      // existing PostHog dashboards. New raw/percentage attributes
+      // surface marking-scheme-aware numbers without breaking funnels.
+      score: breakdown.counts.correct,
+      total: breakdown.counts.total,
+      raw_score: breakdown.raw_score,
+      max_score: breakdown.max_score,
+      percentage: breakdown.percentage,
+      scheme_preset: breakdown.scheme.preset,
+      negative_marks_enabled: breakdown.scheme.negative_marks_enabled,
       time_taken_seconds: seconds,
     });
     // Recompute the BloomIQ score so the badge + Future You reflect
@@ -339,6 +395,49 @@ export default function TakeQuiz() {
               <span><strong>{questions.length}</strong> question{questions.length === 1 ? "" : "s"}</span>
             </div>
           </div>
+
+          {/* ── Marking-scheme summary ────────────────────────────────
+              Shown when the quiz has a non-default scheme (e.g. JEE Main
+              with +4/−1). Resolves a NULL marking_scheme to PRACTICE
+              transparently. Practice quizzes (+1/0) hide this block
+              entirely to keep the cover page clean.
+              The student MUST see this before clicking Begin — knowing
+              "wrong answers cost you 1 mark" is a basic test-strategy
+              precondition. */}
+          {(() => {
+            const previewScheme = resolveScheme((quiz as { marking_scheme?: unknown }).marking_scheme);
+            const nonDefault = previewScheme.preset !== "PRACTICE" || previewScheme.negative_marks_enabled;
+            if (!nonDefault) return null;
+            const r = previewScheme.rules.default;
+            return (
+              <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs">
+                <div className="font-bold text-amber-900 uppercase tracking-wide text-[10px]">
+                  Marking scheme
+                </div>
+                <div className="grid grid-cols-3 gap-2 mt-2 text-slate-800">
+                  <div>
+                    <div className="text-slate-500 text-[10px]">Correct</div>
+                    <div className="font-bold text-emerald-700">+{r.correct}</div>
+                  </div>
+                  <div>
+                    <div className="text-slate-500 text-[10px]">Wrong</div>
+                    <div className={`font-bold ${r.wrong < 0 ? "text-rose-700" : ""}`}>
+                      {r.wrong > 0 ? "+" : ""}{r.wrong}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-slate-500 text-[10px]">Skip</div>
+                    <div className="font-bold">{r.unattempted}</div>
+                  </div>
+                </div>
+                {previewScheme.negative_marks_enabled && (
+                  <div className="text-[11px] text-amber-900 mt-2 leading-snug">
+                    Wrong answers <strong>deduct marks</strong>. Skip a question if you&apos;re not sure.
+                  </div>
+                )}
+              </div>
+            );
+          })()}
 
           {/* Per-question time tracking checkbox.
               Pre-filled from the student's saved default (profile.track_question_time)

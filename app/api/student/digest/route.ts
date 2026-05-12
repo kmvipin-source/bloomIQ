@@ -1,8 +1,12 @@
 import { NextResponse } from "next/server";
 import { groqJSON } from "@/lib/groq";
-import { getBearer, supabaseServer } from "@/lib/supabase/server";
+import { getBearer, supabaseServer, supabaseAdmin } from "@/lib/supabase/server";
 import { buildStudentContext } from "@/lib/studentContext";
 import { BLOOM_LEVELS, type BloomLevel } from "@/lib/bloom";
+import {
+  loadLearningContext,
+  prependLearningContext,
+} from "@/lib/learningContext";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -129,8 +133,16 @@ export async function POST(req: Request) {
     }
 
     const ctx = await buildStudentContext(user.id);
+    // Learning-context inheritance — the digest is student-facing prose,
+    // so headlines, wins, focus and actions should reach for the
+    // student's own register (CAT student gets CAT topics in actions,
+    // not "photosynthesis"; corporate trainee gets cloud / Java
+    // suggestions, not NCERT). Vipin 2026-05-12.
+    const admin = supabaseAdmin();
+    const learnerCtx = await loadLearningContext(admin, user.id);
+    const contextAwareSystem = prependLearningContext(SYSTEM, learnerCtx);
     const userPrompt = JSON.stringify(ctx, null, 2);
-    const raw = await groqJSON(SYSTEM, userPrompt);
+    const raw = await groqJSON(contextAwareSystem, userPrompt);
     const digest = normaliseDigest(raw);
 
     return NextResponse.json({

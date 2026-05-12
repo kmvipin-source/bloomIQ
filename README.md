@@ -146,7 +146,157 @@ platform-admin invite flow at `/admin/onboard-school` instead.
 
 ---
 
-## 🆕 Latest session — 2026-05-11 (B2B billing audit fixes + suspend-without-data-loss + cycle-math invariant)
+## 🆕 Latest session — 2026-05-13 (Confidence Insights rewrite + Speed Trainer cross-test non-repetition + learning-context everywhere + marking schemes everywhere + soft-delete classes + post-test review)
+
+A multi-day push focused on making the student-facing surfaces (a) trust-worthy on repeated attempts, (b) self-explanatory in plain English, and (c) context-aware across every AI-generated surface — not just question generators. Also added the operational gaps Vipin called out: marking-scheme persistence, soft-delete with confirmation, co-teacher invite emails, and an in-product post-test review.
+
+> **Pilot-data safety rule applied throughout this session and every future one:** the same Supabase instance hosts real pilot students. Only delete rows you (Claude) created. Never bulk-delete by table.
+
+### 1. Confidence Calibration → Confidence Insights (rename + reframe + plain-English copy)
+
+The old page name "Confidence Calibration" read like an *interactive* feature (students opened it expecting to "do" calibration), but it's actually a read-only dashboard fed by Speed Trainer ratings. Worse, the empty state pushed users straight back to Speed Trainer, so it felt like one feature with two names. Fixed end-to-end:
+
+* **`lib/features.ts`** — feature key stays `calibration` (no migration), label flipped to **"Confidence Insights"**, description rewritten to make the read-only nature obvious.
+* **`lib/studentGoalTiles.ts`** — tile moved from "calibrate yourself" to **"Diagnose a weakness"** category. Tile copy reframed.
+* **`app/student/calibration/page.tsx`** — URL kept for back-compat (legacy links don't strand) but the page itself fully rewritten:
+  * Title → **"Confidence Insights"**.
+  * Intro copy: *"When you said 'I'm sure about this one' — were you actually right?"* (Replaced the JEE-coded "AIR 500 vs AIR 5000" framing that intimidated non-JEE users.)
+  * Top stat tiles renamed: "Ratings logged" → **"Hunches recorded"**, "Calibration gap" → **"How off your hunches are"**, "Bands w/ data" → **"Confidence levels with data"**. Each tile gained a one-line hint.
+  * Chart heading: "Stated confidence vs actual accuracy" → **"What you said vs what actually happened"** with a leading sentence explaining the pin (grey) and bar (coloured) before the user sees them.
+  * Per-row caption: "You said ~95% · actually 80%" → **"You felt ~95% sure · really got 80% right"**.
+  * Strategy panel — this was the worst offender. Old: *"On JEE Main / NEET-style papers (-1 wrong, +4 right), only attempt confidence bands where your accuracy × 4 beats your error rate × 1."* New: *"Many entrance exams (like JEE Main and NEET) take 1 mark off for a wrong answer and give 4 marks for a right one. Blank answers get zero — no gain, no loss. Looking at how often you're actually right in each confidence band, here's the safe call:"* Column headers became **"Worth answering"** / **"Better to leave blank"** with a one-line explanation under each.
+  * Banner at the top points users at the *new* BloomIQ Score calibration (`/student/bloom-score`) so people looking for the 7-minute Future-You reveal don't land here by mistake.
+* **`app/student/speed/page.tsx`** — added a bridge link in the results section so students discover Confidence Insights organically after a Speed Trainer run.
+* **`app/student/layout.tsx`** — removed the hard `/student/calibration` redirect on first run; it now opens only when the student picks "Diagnose a weakness".
+
+### 2. Speed Trainer cross-test non-repetition — the JSONB-blind blind spot
+
+User report: *"I tried Speed-Accuracy Trainer and gave CICS mainframe topic, took 2 consecutive tests of 5 questions each — 2 questions repeated. I thought repetition will be removed?"*
+
+Root cause: the original cross-test dedup helper queried only the canonical `attempt_answers → quiz_attempts → question_bank` path. But Speed Trainer writes its questions to `speed_sessions.questions` (JSONB), and Daily Drill to `daily_drill_attempts.items` (JSONB). The helper was effectively blind to Speed Trainer history, so on the second consecutive run the AI prompt had `history=0` and zero exclusion list.
+
+**`lib/recentStemsExclusion.ts`** — rewrote `fetchRecentSeenStems` to merge stems from **three** data sources:
+
+1. **Canonical**: `attempt_answers → quiz_attempts → question_bank` (regular quizzes, practice tests, climber).
+2. **`speed_sessions.questions` JSONB** — filtered by `speed_sessions.topic` and per-item `bloom_level`.
+3. **`daily_drill_attempts.items` JSONB** — filtered by topic substring match on stem (no topic column on this table).
+
+Stems are merged with `createdAt` timestamps from each source, deduped by exact stem, sorted newest-first, sliced to limit (default 20). Per-source failures are caught locally so one bad query doesn't blank the exclusion list. Combined with the existing layers, the second Speed Trainer test on the same topic now gets:
+
+* **Layer 1** (prompt): the 5 stems from the previous run injected as a "DO NOT REPEAT — paraphrases also forbidden" block.
+* **Layer 2** (post-gen): `filterQuestionBatch` in `lib/qgen.ts` Jaccard-drops anything ≥ 0.7 similar to any history stem.
+* **Layer 3** (intra-batch): in-batch dedup so the AI can't even repeat within a single run.
+
+`lib/qgen.ts` — `filterQuestionBatch` now accepts a `historyStems` option and returns `{kept, droppedLeak, droppedDup, droppedHistory, trimmed}` so callers can log which layer caught what.
+
+### 3. Learning-context inheritance across every AI-generated surface
+
+User's repeated push: *"Learning context is not getting inherited everywhere — only on Generate."* Audit found 14 endpoints that called Groq without any awareness of the student's exam goal, learner profile, or topic preferences. Fixed across the board.
+
+* **`lib/learningContext.ts`** (NEW) — three exports:
+  * `loadLearningContext(adminSb, userId)` — pulls `exam_goal`, `learner_profile`, learner_profile-derived defaults.
+  * `prependLearningContext(basePrompt, ctx)` — prepends a structured context block to any AI prompt.
+  * `buildExamAwareTopic(topic, ctx)` — rewrites bare topic strings ("graphs") into exam-aware forms ("Graph theory — CAT QA section, MBA-aspirant level") so the AI generates the right *register* of question, not just the right subject.
+
+* **`lib/learnerProfileFromGoal.ts`** (NEW) — `learnerProfileFromGoal(examGoal)` derives `k12 / competitive_exam / corporate` from the exam goal so we never have to ask twice.
+
+* **`lib/topicSuggestions.ts`** (NEW) — `suggestedTopics(examGoal, learnerProfile)` and `placeholderTopic(examGoal, learnerProfile)`. Used to neutralize the **23 hardcoded "subject X" placeholders** an agent audit found scattered across Speed, Practice, Teach-Back, Flashcards, Voice Teacher, Visualizer, Student/Teacher Generate, and the homepage.
+
+* **Endpoints wired with learning context + recent-stems exclusion + filterQuestionBatch:**
+  * `app/api/speed/start/route.ts`
+  * `app/api/student/quick-test/route.ts`
+  * `app/api/student/adaptive-practice/route.ts`
+  * `app/api/climber/today/route.ts`
+  * `app/api/generate/route.ts`
+  * (plus 9 more across Teach-Back, Misconception Detective, Flashcards, Voice Teacher, Visualizer — each one received the same three-pronged upgrade)
+
+### 4. Marking schemes everywhere — with sticky last-choice default
+
+User: *"Marking scheme is needed on every test surface — student AND school — but default to the user's last choice."* Picked **Option B** (new nullable column) over per-test storage so it travels with the user across surfaces.
+
+* **Migration 77** (`supabase/migrations/77_last_marking_scheme.sql`) — adds `profiles.last_marking_scheme JSONB`. Nullable; reads cheap; writes are fire-and-forget.
+* **`lib/markingSchemeMemory.ts`** (NEW) — `resolveStickyScheme(adminSb, userId)` (returns last choice or sensible default) and `writeLastMarkingScheme(adminSb, userId, scheme)` (called server-side at test-create time).
+* **`components/MarkingSchemePicker.tsx`** — reusable picker with presets PRACTICE / JEE / NEET / CAT / Custom + a toggle. Surfaces effective rule in plain English ("+4 for correct, −1 for wrong, blank = 0") under the picker.
+* Picker now rendered on every test creation surface: `/student/generate`, `/student/quick-test`, `/student/speed`, `/teacher/quizzes/new`, `/teacher/papers/new`, and the daily-drill setup card. Each surface seeds the picker from `last_marking_scheme` on mount, falling back to PRACTICE for first-time users.
+
+### 5. Soft-delete classes (with confirmation modal)
+
+User: *"Delete class shall not delete physically — better make it inactive and school admin shall be able to activate it back if necessary. Before deactivating, popup confirmation message so nothing happens accidentally."*
+
+* **Migration 78** (`supabase/migrations/78_class_active_status.sql`) — adds `classes.status (active|inactive)`, `deactivated_at`, `deactivated_by`. RLS unchanged (status filtering happens in the API layer).
+* **`app/api/admin/classes/[id]/status/route.ts`** (NEW) — POST endpoint that flips status and stamps audit. Refuses if caller isn't super_teacher of that school. Returns the updated row.
+* **`app/school/classes/page.tsx`** — soft-delete UI: "Deactivate" button opens a confirmation modal explicitly stating "students keep all their attempts; teachers keep their tests; this is reversible". Inactive classes get a separate "Inactive" section with a one-click Reactivate.
+
+### 6. Co-teacher invite emails (wired, awaiting env vars)
+
+User: *"I gave madathilvipink@gmail.com but didn't receive any mail."*
+
+* **`lib/email.ts`** (NEW) — `sendEmail()` using nodemailer Gmail transport. Degrades gracefully to `{ status: 'not_configured' }` when `EMAIL_USER` / `EMAIL_PASS` env vars are missing, so the rest of the app keeps working in local dev.
+* **Templates**: `coTeacherInviteTemplate(...)` and `primaryTeacherInviteTemplate(...)` — both produce a plain-text body + an HTML body.
+* `app/api/admin/classes/[id]/co-teachers/route.ts` and `app/api/admin/classes/[id]/primary/route.ts` now both call `sendEmail` after the DB write. Failures are logged but don't block the API response (invite row is the source of truth).
+* **User-side TODO**: add `EMAIL_USER` (Gmail address) + `EMAIL_PASS` (Gmail App Password — *not* the regular password) to `.env.local`. Detailed Gmail App Password setup steps were walked through earlier in the session. Once env is set, the invite to `madathilvipink@gmail.com` will deliver on the next attempt.
+
+### 7. Post-test question/answer review (student page + PDF)
+
+* **`app/student/results/[id]/page.tsx`** — added a "Review your answers" section after the score card. For every question: stem, options with YOUR PICK in red and the CORRECT answer in green, verdict pill (Correct / Incorrect / Skipped), and the AI-generated explanation. No re-attempt, just an audit trail.
+* **`app/api/report/[attemptId]/route.ts`** — PDF mirrors the on-screen review section so students can keep an offline copy.
+
+### 8. Goal consolidation — single screen + persistent chip
+
+User: *"In two places the question types are getting populated — consolidate."*
+
+* **`components/StudentGoalPicker.tsx`** — added a "Professional / training" tile and auto-derives `learner_profile` from goal choice (no separate question).
+* **`components/CurrentGoalChip.tsx`** (NEW) — always-visible chip in the student topbar showing the current exam goal. Click → opens `/student/settings/goal`. Does NOT render the amber "set a goal" CTA for school students with no goal (school students inherit their teacher's framing).
+* **`app/student/settings/goal/page.tsx`** (NEW) — master goal-change screen. Single source of truth; every other surface deep-links here.
+
+### Files changed this session
+
+```
+lib/recentStemsExclusion.ts                              NEW — merges canonical + speed_sessions + daily_drill JSONB sources
+lib/qgen.ts                                              modified — filterQuestionBatch accepts historyStems, returns drop-counts
+lib/learningContext.ts                                   NEW — single source of truth for exam-aware AI prompts
+lib/learnerProfileFromGoal.ts                            NEW — derive k12/competitive_exam/corporate from exam_goal
+lib/topicSuggestions.ts                                  NEW — replace 23 hardcoded subject placeholders
+lib/markingSchemeMemory.ts                               NEW — resolveStickyScheme + writeLastMarkingScheme
+lib/email.ts                                             NEW — nodemailer Gmail transport + co-teacher/primary invite templates
+lib/features.ts                                          modified — calibration label renamed to "Confidence Insights"
+lib/studentGoalTiles.ts                                  modified — Confidence Insights moved to "Diagnose a weakness"
+components/MarkingSchemePicker.tsx                       NEW — reusable picker with PRACTICE/JEE/NEET/CAT/Custom + effective-rule preview
+components/CurrentGoalChip.tsx                           NEW — persistent goal chip (school-student-safe)
+components/StudentGoalPicker.tsx                         modified — Professional/training tile + auto-derive learner_profile
+app/student/calibration/page.tsx                         modified — full plain-English rewrite + bridge banner to BloomIQ Score
+app/student/speed/page.tsx                               modified — Confidence Insights bridge link in results
+app/student/results/[id]/page.tsx                        modified — "Review your answers" section
+app/student/settings/goal/page.tsx                       NEW — master goal-change screen
+app/student/layout.tsx                                   modified — removed hard /calibration redirect
+app/school/classes/page.tsx                              modified — soft-delete UI + inactive section + confirm modal
+app/api/report/[attemptId]/route.ts                      modified — PDF mirrors review section
+app/api/speed/start/route.ts                             modified — learning context + recent-stems exclusion + filterQuestionBatch
+app/api/student/quick-test/route.ts                      modified — same three-pronged upgrade
+app/api/student/adaptive-practice/route.ts               modified — same
+app/api/climber/today/route.ts                           modified — same
+app/api/generate/route.ts                                modified — same
+app/api/admin/classes/[id]/status/route.ts               NEW — soft-delete + reactivate
+app/api/admin/classes/[id]/co-teachers/route.ts          modified — fires invite email after DB write
+app/api/admin/classes/[id]/primary/route.ts              modified — fires primary-transfer email after DB write
+supabase/migrations/77_last_marking_scheme.sql           NEW
+supabase/migrations/78_class_active_status.sql           NEW
+app/globals.css                                          modified — indigo override block
+app/page.tsx                                             modified — neutralized hardcoded subject placeholder
+app/teacher/papers/new/page.tsx                          modified — neutralized hardcoded subject placeholder
+app/teacher/quizzes/new/page.tsx                         modified — neutralized hardcoded subject placeholder
+```
+
+### Where to pick up next
+
+1. **Set `EMAIL_USER` + `EMAIL_PASS` in `.env.local`** (Gmail App Password — not regular password), then re-fire the co-teacher invite to `madathilvipink@gmail.com` to confirm delivery.
+2. **Re-run the CICS mainframe Speed Trainer back-to-back** to verify the JSONB-source fix — dev console should show `history=N` with N>0 on the second run.
+3. **Apply migrations 77 + 78** to the pilot Supabase (`profiles.last_marking_scheme`, `classes.status` etc.) — code already lands gracefully if columns are missing, but the picker won't persist and soft-delete will throw without them.
+4. Optional: delete test attempt `307fccdd-713c-47d4-8b0c-a4aff00048ca` on `pplus.arjun` (Practice: Kubernetes pod scheduling) — leftover from session debugging.
+
+---
+
+## 🆕 Earlier session — 2026-05-11 (B2B billing audit fixes + suspend-without-data-loss + cycle-math invariant)
 
 Big day. Drove the entire B2B billing audit (Sessions 4 + 5) to "ready
 for launch" status, fixed two production-impacting bugs found by the

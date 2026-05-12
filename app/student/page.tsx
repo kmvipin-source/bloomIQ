@@ -414,10 +414,15 @@ export default function StudentHome() {
                   Discover your BloomIQ Score
                 </div>
                 <p className="text-sm opacity-80 mt-1 max-w-lg">
-                  A single 3-digit score (300&ndash;900) that predicts your
-                  exam-day rank &mdash; based on <em>how</em> you think across
-                  all six levels of Bloom&apos;s Taxonomy. Plus a glimpse of
-                  the rank you&apos;d hit if you closed your top weak spots.
+                  A single 3-digit score (300&ndash;900) plus an indicative
+                  readiness band for your exam goal &mdash; based on <em>how</em>
+                  you think across all six levels of Bloom&apos;s Taxonomy. Plus a
+                  stretch target showing where your score could move if you
+                  strengthen your weakest areas.
+                </p>
+                <p className="text-[10px] opacity-60 mt-1 max-w-lg">
+                  Self-assessment heuristic. Not a prediction of exam rank, admission, or
+                  outcome at any institution.
                 </p>
               </div>
               <div className="hidden md:grid w-20 h-20 place-items-center rounded-xl flex-shrink-0"

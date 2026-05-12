@@ -190,9 +190,15 @@ export default function BloomScoreCalibrationPage() {
           </p>
 
           <p className="mt-3 text-base leading-relaxed">
-            At the end you&apos;ll get a single 3-digit score (300–900), a predicted
-            exam-day rank, and a glimpse of the score you&apos;d hit if you closed your
-            top weak spots.
+            At the end you&apos;ll get a single 3-digit score (300–900), an indicative
+            readiness band for your exam goal, and a stretch target showing where
+            your score could move if you strengthen your weakest areas.
+          </p>
+
+          <p className="mt-3 text-xs opacity-60 leading-relaxed">
+            BloomIQ Score is a self-assessment heuristic — bands and tier descriptors are
+            anchors for self-direction, not a prediction of exam rank, admission, or
+            outcome at any institution. Individual results vary.
           </p>
 
           <div className="mt-6 grid grid-cols-3 gap-3">

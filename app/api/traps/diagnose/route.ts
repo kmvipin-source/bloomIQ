@@ -1,7 +1,11 @@
 import { NextResponse } from "next/server";
 import { groqJSON } from "@/lib/groq";
-import { getBearer, supabaseServer } from "@/lib/supabase/server";
+import { getBearer, supabaseServer, supabaseAdmin } from "@/lib/supabase/server";
 import { checkRateLimit } from "@/lib/rateLimit";
+import {
+  loadLearningContext,
+  prependLearningContext,
+} from "@/lib/learningContext";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -131,8 +135,16 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: true, diagnosed: 0, traps: [] });
     }
 
+    // Learning-context inheritance — the trap "detail" prose returned
+    // to the student should match their exam register (CAT trap detail
+    // vs Class-10 trap detail vs corporate). The 9 canonical trap
+    // LABELS stay constant; only the explanatory prose adapts.
+    const admin = supabaseAdmin();
+    const ctx = await loadLearningContext(admin, user.id);
+    const contextAwareSystem = prependLearningContext(SYSTEM, ctx);
+
     const userPrompt = `Classify each of these wrong picks. Items:\n${JSON.stringify(items, null, 2)}`;
-    const raw = await groqJSON(SYSTEM, userPrompt);
+    const raw = await groqJSON(contextAwareSystem, userPrompt);
     const rawDiagnoses = (raw as { diagnoses?: unknown }).diagnoses;
     if (!Array.isArray(rawDiagnoses)) {
       return NextResponse.json({ ok: true, diagnosed: 0, traps: [] });

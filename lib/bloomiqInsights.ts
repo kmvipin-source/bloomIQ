@@ -293,25 +293,23 @@ export function computeUpgradeNarrative(
 // real syllabus questions at the requested Bloom level.
 
 export function topicForGoal(goal: string | null | undefined): string {
-  if (!goal) return "Class 11–12 Mathematics (Algebra, Calculus, Coordinate Geometry)";
-  const s = goal.toLowerCase();
-  if (s.includes("neet")) return "NEET Biology — Class 11/12 NCERT (Cell Biology, Genetics, Plant/Human Physiology)";
-  if (s.includes("jee"))  return "JEE Main Mathematics — Class 11/12 NCERT (Calculus, Coordinate Geometry, Algebra)";
-  if (s.includes("cat") || s.includes("iim") || s.includes("mba"))
-    return "CAT Quantitative Aptitude — Arithmetic, Algebra, Geometry, Number Systems";
-  if (s.includes("upsc") || s.includes("ias") || s.includes("ips"))
-    return "UPSC Prelims — Indian Polity (Constitution, Articles, Parliament, Judiciary)";
-  if (s.includes("bank") || s.includes("ibps") || s.includes("sbi") || s.includes("rbi"))
-    return "Bank PO — Quantitative Aptitude (Number Series, Approximation, DI)";
-  if (/class[\s_]*5[\s_]*8/.test(s) || /primary|middle/.test(s))
-    return "NCERT Class 5–8 Mathematics (Fractions, Decimals, Basic Algebra, Geometry)";
-  if (/class[\s_]*9\b/.test(s))
-    return "NCERT Class 9 Mathematics (Number Systems, Polynomials, Linear Equations, Triangles)";
-  if (/class[\s_]*10|10th|x board/.test(s))
-    return "NCERT Class 10 Mathematics (Quadratic Equations, AP, Trigonometry, Statistics)";
-  if (/class[\s_]*12|12th|xii board/.test(s))
-    return "NCERT Class 12 Physics (Electrostatics, Current Electricity, EMI, Optics, Modern Physics)";
-  if (s.includes("board"))
-    return "NCERT board Mathematics (Algebra, Geometry, Trigonometry)";
-  return "Class 11–12 Mathematics (Algebra, Calculus, Coordinate Geometry)";
+  // Goal-aware single-string topic for deep-link practice drills.
+  // Previously hardcoded one fixed subject per slug (e.g. NEET → only
+  // Biology, JEE → only Maths, CAT → only Quant), which biased every
+  // active-path drill toward one corner of the syllabus regardless of
+  // the student's actual weakest area. Now we delegate to the same
+  // suggestedTopics table used across every other UI surface — first
+  // suggestion wins (lists the broadest entry for the goal). Anything
+  // that needs MORE diversity should use suggestedTopics directly.
+  //
+  // The dynamic import keeps this file free of a hard dependency on
+  // topicSuggestions when older callers don't pass through this code
+  // path; we fall back to the goal-suggested topic if the helper
+  // exists, else to a neutral generic.
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { suggestedTopics } = require("./topicSuggestions") as {
+    suggestedTopics: (g: string | null | undefined, p?: unknown) => string[];
+  };
+  const tops = suggestedTopics(goal ?? null, null);
+  return tops[0] || "your current syllabus";
 }

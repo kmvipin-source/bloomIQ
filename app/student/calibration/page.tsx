@@ -127,11 +127,12 @@ export default function CalibrationPage() {
           <Gauge size={22} />
         </div>
         <div className="flex-1">
-          <h1 className="h1">Confidence Calibration</h1>
+          <h1 className="h1">Confidence Insights</h1>
           <p className="muted mt-1">
-            Are your hunches actually right? When you mark a question as &quot;Sure&quot;, are you really getting it right?
-            Knowing the difference between confident-and-correct vs confident-and-wrong is what separates
-            AIR 500 from AIR 5000 on negative-marking exams.
+            When you said &quot;I&apos;m sure about this one&quot; — were you actually right? This page quietly tracks that.
+            It fills itself in as you tap <em>Sure / Probably / Probably not / Guess</em> in the Speed Trainer.
+            No quiz to take here. Once enough data lands, it&apos;ll tell you which of your hunches you can trust
+            in a real exam, and which ones cost you marks.
           </p>
         </div>
       </div>
@@ -139,17 +140,19 @@ export default function CalibrationPage() {
       {/* Top stat strip */}
       <div className="grid sm:grid-cols-3 gap-3 mt-6">
         <div className="card">
-          <div className="text-xs muted uppercase font-semibold">Ratings logged</div>
+          <div className="text-xs muted uppercase font-semibold">Hunches recorded</div>
           <div className="text-3xl font-bold">{totalN}</div>
+          <div className="text-[11px] muted mt-0.5">Tap a confidence button in Speed Trainer to add more.</div>
         </div>
         <div className="card">
-          <div className="text-xs muted uppercase font-semibold">Calibration gap</div>
+          <div className="text-xs muted uppercase font-semibold">How off your hunches are</div>
           <div className="text-3xl font-bold">{overallCalibrationGap === null ? "—" : `${overallCalibrationGap}%`}</div>
-          <div className="text-[11px] muted mt-0.5">{overallCalibrationGap === null ? "Need more data" : overallCalibrationGap < 10 ? "Well-calibrated" : overallCalibrationGap < 20 ? "Reasonable" : "Off — read the bars"}</div>
+          <div className="text-[11px] muted mt-0.5">{overallCalibrationGap === null ? "Need more data" : overallCalibrationGap < 10 ? "You read yourself well" : overallCalibrationGap < 20 ? "Roughly in line with reality" : "Quite off — see the bars below"}</div>
         </div>
         <div className="card">
-          <div className="text-xs muted uppercase font-semibold">Bands w/ data</div>
+          <div className="text-xs muted uppercase font-semibold">Confidence levels with data</div>
           <div className="text-3xl font-bold">{stats.filter((s) => s.n > 0).length} <span className="text-base muted">/ 4</span></div>
+          <div className="text-[11px] muted mt-0.5">We need ratings across Sure, Probably, Probably not, Guess.</div>
         </div>
       </div>
 
@@ -158,28 +161,36 @@ export default function CalibrationPage() {
       ) : totalN === 0 ? (
         <div className="card mt-6 text-center py-10">
           <Sparkles size={20} className="mx-auto text-teal-500 mb-2" />
-          <h2 className="font-semibold">No ratings yet</h2>
+          <h2 className="font-semibold">Your insights will appear here</h2>
           <p className="text-sm muted mt-1 max-w-md mx-auto">
-            Take a Speed-Accuracy session — each question now asks you to rate how confident you are right
-            before you answer. Your profile builds itself from there.
+            This dashboard builds itself automatically. Every time you rate a question
+            <strong> Sure / Probably / Probably not / Guess</strong> in Speed Trainer, a new row
+            lands here. Class quizzes will add to it in a later release. There&apos;s nothing
+            to take here — it just watches your hunches and tells you whether to trust them.
           </p>
-          <Link href="/student/speed" className="btn btn-primary mt-4">Open Speed Trainer →</Link>
+          <Link href="/student/speed" className="btn btn-secondary mt-4">
+            Source: Speed Trainer →
+          </Link>
         </div>
       ) : (
         <>
           {/* Stated vs actual chart */}
           <div className="card mt-6">
-            <h2 className="font-semibold mb-3">Stated confidence vs actual accuracy</h2>
+            <h2 className="font-semibold mb-1">What you said vs what actually happened</h2>
+            <p className="text-xs muted mb-3">
+              For each confidence level, the grey pin shows roughly how often you <em>thought</em> you&apos;d be
+              right. The coloured bar shows how often you <em>actually</em> were.
+            </p>
             <div className="space-y-3">
               {stats.map((s) => (
                 <div key={s.conf}>
                   <div className="flex items-center justify-between text-sm mb-1">
                     <span className="font-medium">
                       {s.label}
-                      <span className="muted text-xs ml-2">({s.n} ratings)</span>
+                      <span className="muted text-xs ml-2">({s.n} {s.n === 1 ? "rating" : "ratings"})</span>
                     </span>
                     <span className="muted text-xs">
-                      You said ~{s.stated}% · actually {s.n > 0 ? `${Math.round(s.accuracy)}%` : "—"}
+                      You felt ~{s.stated}% sure · really got {s.n > 0 ? `${Math.round(s.accuracy)}%` : "—"} right
                     </span>
                   </div>
                   <div className="relative h-3 bg-slate-100 rounded-full overflow-hidden">
@@ -192,34 +203,38 @@ export default function CalibrationPage() {
               ))}
             </div>
             <p className="text-xs muted mt-3">
-              The colored bar is your actual accuracy. The vertical pin marks where you <em>said</em> you were.
-              Bar to the left of pin = overconfident. Bar to the right = underconfident.
+              <strong>Bar ends before the pin?</strong> You&apos;re a bit overconfident — you thought you&apos;d do better than you did.
+              <br />
+              <strong>Bar goes past the pin?</strong> You&apos;re actually <em>better</em> than you think — trust those answers more.
             </p>
           </div>
 
           {/* Strategy panel */}
           <div className="card mt-4 bg-emerald-50/40 border-emerald-200">
-            <h2 className="font-semibold inline-flex items-center gap-2"><Lightbulb size={18} className="text-emerald-700" /> Negative-marking strategy</h2>
+            <h2 className="font-semibold inline-flex items-center gap-2"><Lightbulb size={18} className="text-emerald-700" /> Should you answer, or leave it blank?</h2>
             <p className="text-sm muted mt-1">
-              On JEE Main / NEET-style papers (-1 wrong, +4 right), only attempt confidence bands where your
-              accuracy × 4 beats your error rate × 1. With your current calibration:
+              Many entrance exams (like JEE Main and NEET) take <strong>1 mark off</strong> for a wrong answer
+              and give <strong>4 marks</strong> for a right one. Blank answers get zero — no gain, no loss.
+              Looking at how often you&apos;re actually right in each confidence band, here&apos;s the safe call:
             </p>
             <div className="mt-3 grid sm:grid-cols-2 gap-3">
               <div className="rounded-lg border border-emerald-200 bg-white p-3">
-                <div className="text-xs uppercase tracking-wide font-semibold text-emerald-800 mb-1">Attempt these</div>
+                <div className="text-xs uppercase tracking-wide font-semibold text-emerald-800 mb-1">Worth answering</div>
                 <div className="text-sm font-medium">
                   {strategy.ok.length > 0 ? strategy.ok.join(", ") : "Need more data first"}
                 </div>
+                <div className="text-[11px] muted mt-1">You get these right often enough that the +4 outweighs the risk of −1.</div>
               </div>
               <div className="rounded-lg border border-amber-200 bg-white p-3">
-                <div className="text-xs uppercase tracking-wide font-semibold text-amber-800 mb-1">Skip these in the real exam</div>
+                <div className="text-xs uppercase tracking-wide font-semibold text-amber-800 mb-1">Better to leave blank</div>
                 <div className="text-sm font-medium">
                   {strategy.skip.length > 0 ? strategy.skip.join(", ") : "—"}
                 </div>
+                <div className="text-[11px] muted mt-1">You get these wrong too often — guessing will cost more marks than it earns.</div>
               </div>
             </div>
             <p className="text-xs muted mt-3">
-              This rule shifts as you get better — re-check this page weekly.
+              This list updates as you practise more. Check back every week — bands you&apos;re currently &quot;leaving blank&quot; can move to &quot;worth answering&quot; once your accuracy improves.
             </p>
           </div>
         </>

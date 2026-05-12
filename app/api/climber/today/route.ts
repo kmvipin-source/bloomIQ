@@ -1,8 +1,14 @@
 import { NextResponse } from "next/server";
 import { groqJSON } from "@/lib/groq";
 import { BLOOM_LEVELS, type BloomLevel } from "@/lib/bloom";
-import { getBearer, supabaseServer } from "@/lib/supabase/server";
+import { getBearer, supabaseServer, supabaseAdmin } from "@/lib/supabase/server";
 import { checkRateLimit } from "@/lib/rateLimit";
+import {
+  loadLearningContext,
+  prependLearningContext,
+  buildExamAwareTopic,
+} from "@/lib/learningContext";
+import { getRecentStemsForExclusion } from "@/lib/recentStemsExclusion";
 
 export const runtime = "nodejs";
 export const maxDuration = 45;
@@ -91,8 +97,17 @@ export async function POST(req: Request) {
     const target: BloomLevel = nextLevelFor(mastered);
 
     // Generate the day's questions.
-    const userPrompt = `Topic: ${topic}\nBloom level: ${target}\n\nGenerate the JSON now.`;
-    const raw = await groqJSON(SYSTEM, userPrompt);
+    // Learning-context inheritance + cross-test non-repetition. The
+    // 3-question micro-drill should never repeat questions the student
+    // saw in the last 30 days at the same Bloom level on this topic.
+    const admin = supabaseAdmin();
+    const ctx = await loadLearningContext(admin, user.id);
+    const examAwareTopic = buildExamAwareTopic(topic, ctx);
+    const exclusion = await getRecentStemsForExclusion(admin, user.id, topic, target, 20);
+    const systemPrompt = prependLearningContext(SYSTEM, ctx) + exclusion.promptBlock;
+
+    const userPrompt = `Topic: ${examAwareTopic}\nBloom level: ${target}\n\nGenerate the JSON now.`;
+    const raw = await groqJSON(systemPrompt, userPrompt);
     const arr = (raw as { questions?: unknown }).questions;
     if (!Array.isArray(arr)) {
       return NextResponse.json({ error: "AI did not return questions; please retry." }, { status: 502 });

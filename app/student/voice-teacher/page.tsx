@@ -6,6 +6,9 @@ import { supabaseBrowser } from "@/lib/supabase/client";
 import {
   Mic, MicOff, Volume2, VolumeX, ArrowLeft, Loader2, Bot, Trash2, Sparkles, Film,
 } from "lucide-react";
+import { suggestedTopics } from "@/lib/topicSuggestions";
+import { type LearnerProfile } from "@/components/LearnerProfilePrompt";
+import CurrentGoalChip from "@/components/CurrentGoalChip";
 
 // =============================================================================
 // VOICE AI TEACHER — speak your doubt, hear the answer back. The student
@@ -50,6 +53,39 @@ export default function VoiceTeacherPage() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [unsupported, setUnsupported] = useState(false);
+
+  // Goal-aware "try things like…" sample prompts (2026-05-12). Previously
+  // hardcoded to "kinetic energy", "mitosis vs meiosis", and "Newton's
+  // third law in pulleys" — a corporate trainee, CAT aspirant, or UPSC
+  // student saw physics/biology prompts that have nothing to do with
+  // their syllabus.
+  const [examGoal, setExamGoal] = useState<string | null>(null);
+  const [learnerProfile, setLearnerProfile] = useState<LearnerProfile | null>(null);
+  useEffect(() => {
+    (async () => {
+      try {
+        const sb = supabaseBrowser();
+        const { data: { user } } = await sb.auth.getUser();
+        if (!user) return;
+        const { data: prof } = await sb
+          .from("profiles")
+          .select("exam_goal, learner_profile")
+          .eq("id", user.id)
+          .maybeSingle();
+        const row = prof as { exam_goal: string | null; learner_profile: string | null } | null;
+        if (row?.exam_goal) setExamGoal(row.exam_goal);
+        const lp = row?.learner_profile;
+        if (lp === "k12" || lp === "competitive_exam" || lp === "corporate") {
+          setLearnerProfile(lp);
+        }
+      } catch { /* silent — falls back to k12 defaults */ }
+    })();
+  }, []);
+
+  const samplePrompts = (() => {
+    const tops = suggestedTopics(examGoal, learnerProfile).slice(0, 3);
+    return tops.map((t) => `"Explain ${t} to me like I'm asking my teacher."`);
+  })();
 
   // Animation panel (lazily loaded if user taps "Show me an animation")
   const [animTopic, setAnimTopic] = useState<string | null>(null);
@@ -229,9 +265,12 @@ export default function VoiceTeacherPage() {
 
   return (
     <div className="max-w-4xl mx-auto fade-in">
-      <Link href="/student" className="inline-flex items-center gap-1 text-sm text-slate-600 hover:text-emerald-700 mb-3">
-        <ArrowLeft size={14} /> Back to dashboard
-      </Link>
+      <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
+        <Link href="/student" className="inline-flex items-center gap-1 text-sm text-slate-600 hover:text-emerald-700">
+          <ArrowLeft size={14} /> Back to dashboard
+        </Link>
+        <CurrentGoalChip />
+      </div>
 
       <div className="flex items-start gap-3">
         <div className="rounded-xl bg-violet-100 text-violet-700 p-3 shrink-0">
@@ -263,9 +302,9 @@ export default function VoiceTeacherPage() {
                 <Bot size={20} className="mx-auto text-violet-500 mb-2" />
                 <p>Tap the mic and ask a question. Try things like:</p>
                 <ul className="mt-2 text-xs space-y-1">
-                  <li>&ldquo;Sir, why does kinetic energy have a half in it?&rdquo;</li>
-                  <li>&ldquo;Difference between mitosis and meiosis?&rdquo;</li>
-                  <li>&ldquo;Explain Newton&apos;s third law for pulleys.&rdquo;</li>
+                  {samplePrompts.map((p, i) => (
+                    <li key={i}>{p}</li>
+                  ))}
                 </ul>
               </div>
             ) : (

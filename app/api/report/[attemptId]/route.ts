@@ -4,6 +4,8 @@ import autoTable from "jspdf-autotable";
 import { getBearer, supabaseServer } from "@/lib/supabase/server";
 import { BLOOM_LEVELS, BLOOM_META, blankBloomCounts, type BloomLevel } from "@/lib/bloom";
 import { groqText } from "@/lib/groq";
+import { resolveScheme, percentageOf, rawScoreLabel } from "@/lib/scoring";
+import { SCORING_PRESETS } from "@/lib/scoringPresets";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -27,11 +29,86 @@ export async function GET(req: Request, ctx: Ctx) {
       .maybeSingle();
     if (!attempt) return NextResponse.json({ error: "Attempt not found" }, { status: 404 });
 
-    const { data: ans } = await sb.from("attempt_answers").select("is_correct, bloom_level").eq("attempt_id", attemptId);
+    // Extended fetch (2026-05-12) — we now pull question_id, selected_index,
+    // and marks_earned alongside the Bloom aggregation columns so the PDF
+    // can also include the per-question review section the student now
+    // sees on /student/results/[id].
+    const { data: ans } = await sb
+      .from("attempt_answers")
+      .select("is_correct, bloom_level, question_id, selected_index, marks_earned")
+      .eq("attempt_id", attemptId);
     const correct = blankBloomCounts(); const totals = blankBloomCounts();
     (ans || []).forEach((x: { bloom_level: BloomLevel; is_correct: boolean | null }) => {
       totals[x.bloom_level] += 1; if (x.is_correct) correct[x.bloom_level] += 1;
     });
+
+    // Per-question review payload — join attempt_answers to question_bank
+    // + quiz_questions for the canonical stem / options / explanation /
+    // position. Best-effort: if any of these reads fail we skip the
+    // review section silently so the rest of the PDF still renders.
+    type ReviewQ = {
+      position: number;
+      stem: string;
+      options: string[];
+      correct_index: number;
+      selected_index: number | null;
+      is_correct: boolean | null;
+      explanation: string | null;
+      bloom_level: BloomLevel;
+      marks_earned: number | null;
+    };
+    let reviewItems: ReviewQ[] = [];
+    try {
+      type AnsRow = {
+        question_id: string;
+        selected_index: number | null;
+        marks_earned: number | null;
+        is_correct: boolean | null;
+        bloom_level: BloomLevel;
+      };
+      const ansTyped = (ans as AnsRow[] | null) || [];
+      const qids = ansTyped.map((a) => a.question_id).filter(Boolean);
+      if (qids.length > 0) {
+        const quizId = (attempt as { quiz_id?: string }).quiz_id || "";
+        const [qBank, qOrder] = await Promise.all([
+          sb
+            .from("question_bank")
+            .select("id, stem, options, correct_index, explanation")
+            .in("id", qids),
+          quizId
+            ? sb
+                .from("quiz_questions")
+                .select("question_id, position")
+                .eq("quiz_id", quizId)
+                .in("question_id", qids)
+            : Promise.resolve({ data: [] as Array<{ question_id: string; position: number }> }),
+        ]);
+        type QbRow = { id: string; stem: string; options: string[]; correct_index: number; explanation: string | null };
+        type QqRow = { question_id: string; position: number };
+        const qbById = new Map<string, QbRow>();
+        ((qBank.data as QbRow[]) || []).forEach((r) => qbById.set(r.id, r));
+        const positionById = new Map<string, number>();
+        ((qOrder.data as QqRow[] | null) || []).forEach((r) => positionById.set(r.question_id, r.position));
+        reviewItems = ansTyped
+          .map((row) => {
+            const q = qbById.get(row.question_id);
+            if (!q) return null;
+            return {
+              position: positionById.get(row.question_id) ?? 0,
+              stem: q.stem,
+              options: Array.isArray(q.options) ? q.options : [],
+              correct_index: q.correct_index,
+              selected_index: row.selected_index,
+              is_correct: row.is_correct,
+              explanation: q.explanation || null,
+              bloom_level: row.bloom_level,
+              marks_earned: row.marks_earned,
+            } as ReviewQ;
+          })
+          .filter((x): x is ReviewQ => x !== null)
+          .sort((a, b) => a.position - b.position);
+      }
+    } catch { /* silent — PDF renders without the review block */ }
 
     // AI commentary
     let commentary = "";
@@ -119,7 +196,15 @@ ${lines}`
     y += 40;
 
     // --- Score badge ---
-    const percent = attempt.total ? Math.round((attempt.score / attempt.total) * 100) : 0;
+    // Marking-scheme aware. Prefers raw_score / max_score (migration 76)
+    // when present; falls back to legacy score / total when NULL (every
+    // pre-migration attempt). percentageOf() clamps at 0 for safety on
+    // negative-raw attempts. Same math the student saw on the result
+    // page — single source of truth via lib/scoring.ts.
+    const percentExact = percentageOf(attempt);
+    const percent = Math.round(percentExact);
+    const label = rawScoreLabel(attempt);
+    const scoreText = label ? `${formatNumber(label.raw)} / ${formatNumber(label.max)}` : "—";
     const badgeColor: [number, number, number] =
       percent >= 75 ? [5, 150, 105] :
       percent >= 50 ? [217, 119, 6] :
@@ -129,7 +214,7 @@ ${lines}`
     doc.setTextColor(255);
     doc.setFont("helvetica", "bold");
     doc.setFontSize(22);
-    doc.text(`${attempt.score} / ${attempt.total}`, M + 6, y + 14);
+    doc.text(scoreText, M + 6, y + 14);
     doc.setFontSize(28);
     doc.text(`${percent}%`, pageW - M - 6, y + 15, { align: "right" });
     doc.setFont("helvetica", "normal");
@@ -137,6 +222,26 @@ ${lines}`
     const verdict = percent >= 75 ? "Strong performance" : percent >= 50 ? "On track — room to grow" : "Needs more practice";
     doc.text(verdict, M + 6, y + 19);
     y += 30;
+
+    // --- Marking-scheme line (printed only when the attempt was scored
+    // under a non-default scheme — keeps practice quizzes uncluttered).
+    const schemeForReport = resolveScheme(
+      (attempt as { marking_scheme_snapshot?: unknown }).marking_scheme_snapshot
+    );
+    if (schemeForReport.preset !== "PRACTICE" || schemeForReport.negative_marks_enabled) {
+      doc.setTextColor(100, 116, 139);
+      doc.setFontSize(9);
+      const r = schemeForReport.rules.default;
+      const negLabel = schemeForReport.negative_marks_enabled
+        ? ` · wrong ${r.wrong > 0 ? "+" : ""}${r.wrong}`
+        : "";
+      doc.text(
+        `Marking: ${SCORING_PRESETS[schemeForReport.preset].label} (correct +${r.correct}${negLabel} · skip ${r.unattempted})`,
+        M,
+        y,
+      );
+      y += 6;
+    }
 
     // --- Bloom table heading ---
     doc.setTextColor(15, 23, 42);
@@ -194,6 +299,89 @@ ${lines}`
     doc.setFontSize(10);
     doc.setTextColor(30, 41, 59);
     doc.text(splitForBox, M + 4, after + 13);
+    after = after + boxH + 10;
+
+    // --- Per-question review (2026-05-12) ---
+    // Mirrors the "Review your answers" section on /student/results/[id].
+    // For each question: stem, all 4 options (correct + student's pick
+    // marked), short explanation. Page-breaks as needed. Renders nothing
+    // when reviewItems is empty (e.g., legacy attempts with no question
+    // bank rows still attached).
+    if (reviewItems.length > 0) {
+      if (after > pageH - 40) { doc.addPage(); after = M + 10; }
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(12);
+      doc.setTextColor(15, 23, 42);
+      doc.text("Review your answers", M, after);
+      after += 7;
+
+      const lineW = pageW - M * 2;
+      for (let i = 0; i < reviewItems.length; i++) {
+        const q = reviewItems[i];
+        const isSkipped = q.selected_index === null;
+        const isRight = !isSkipped && q.is_correct === true;
+        const verdict = isRight ? "Correct" : isSkipped ? "Skipped" : "Wrong";
+        const verdictColor: [number, number, number] = isRight
+          ? [5, 150, 105]
+          : isSkipped
+          ? [180, 83, 9]
+          : [185, 28, 28];
+
+        const stemLines = doc.splitTextToSize(`Q${i + 1}. ${q.stem}`, lineW - 4);
+        // Pre-estimate height: stem + 4 options + (optional) explanation lines.
+        const optionLines: string[][] = q.options.map((opt, oi) => {
+          const prefix = `${String.fromCharCode(65 + oi)}. `;
+          const marker = oi === q.correct_index ? "  ✓"
+                        : oi === q.selected_index ? "  ←"
+                        : "";
+          return doc.splitTextToSize(`${prefix}${opt}${marker}`, lineW - 8);
+        });
+        const explLines = q.explanation
+          ? doc.splitTextToSize(`Explanation: ${q.explanation}`, lineW - 8)
+          : [];
+        const estH = 8 + stemLines.length * 5 + optionLines.reduce((s, ls) => s + ls.length * 5, 0) + (explLines.length ? 4 + explLines.length * 4 : 0) + 4;
+        if (after + estH > pageH - 20) { doc.addPage(); after = M + 10; }
+
+        // Verdict pill
+        doc.setFillColor(...verdictColor);
+        doc.setTextColor(255);
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(8);
+        const pillW = 14;
+        doc.roundedRect(M, after - 4, pillW, 5, 1, 1, "F");
+        doc.text(verdict, M + pillW / 2, after - 0.6, { align: "center" });
+
+        // Stem
+        doc.setTextColor(15, 23, 42);
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(10);
+        doc.text(stemLines, M + pillW + 3, after);
+        after += stemLines.length * 5 + 1;
+
+        // Options
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(9);
+        for (let oi = 0; oi < q.options.length; oi++) {
+          if (oi === q.correct_index) doc.setTextColor(5, 150, 105);
+          else if (oi === q.selected_index) doc.setTextColor(185, 28, 28);
+          else doc.setTextColor(71, 85, 105);
+          doc.text(optionLines[oi], M + 4, after);
+          after += optionLines[oi].length * 5;
+        }
+
+        // Explanation (if present)
+        if (explLines.length > 0) {
+          after += 1;
+          doc.setTextColor(100, 116, 139);
+          doc.setFont("helvetica", "italic");
+          doc.setFontSize(8);
+          doc.text(explLines, M + 4, after);
+          after += explLines.length * 4;
+        }
+
+        after += 5;
+      }
+    }
 
     // --- Footer (every page) ---
     const total = doc.getNumberOfPages();
@@ -206,6 +394,14 @@ ${lines}`
       doc.setFont("helvetica", "normal");
       doc.text("Generated by BloomIQ — bloom-aligned assessments", M, pageH - 8);
       doc.text(`Page ${i} of ${total}`, pageW - M, pageH - 8, { align: "right" });
+    }
+
+    function formatNumber(n: number): string {
+      // Print integers cleanly (no trailing .0), decimals to two places.
+      // Negative raw scores (rare, e.g. JEE Main mock with many wrong)
+      // print with their minus sign — transparency matches CAT/JEE.
+      if (Number.isInteger(n)) return String(n);
+      return n.toFixed(2);
     }
 
     const bytes = doc.output("arraybuffer");

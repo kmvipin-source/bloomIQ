@@ -34,8 +34,15 @@ import {
   findMisconceptionDistractors,
   formatDistractorSeedsForPrompt,
   verifyAnswerKeys,
+  filterQuestionBatch,
   type VerifiableQuestion,
 } from "@/lib/qgen";
+import {
+  loadLearningContext,
+  prependLearningContext,
+  buildExamAwareTopic,
+} from "@/lib/learningContext";
+import { getRecentStemsForExclusion } from "@/lib/recentStemsExclusion";
 
 export const runtime = "nodejs";
 export const maxDuration = 90;
@@ -230,9 +237,19 @@ export async function POST(req: Request) {
     }
 
     // 3) Generate 5 MCQs at the targeted level
+    // Learning-context inheritance — exam_goal-aware SYSTEM prompt + topic
+    // wrap so a CAT student asking for "Geometry" gets CAT-pattern questions.
+    // Plus cross-test non-repetition (lib/recentStemsExclusion.ts) so
+    // consecutive Adaptive Practice sessions on the same topic don't
+    // serve up the same Q1-Q5.
+    const adminForCtx = supabaseAdmin();
+    const ctx = await loadLearningContext(adminForCtx, user.id);
+    const contextAwareTopic = buildExamAwareTopic(effectiveTopic, ctx);
+    const exclusion = await getRecentStemsForExclusion(adminForCtx, user.id, effectiveTopic, targetedLevel, 20);
+    const contextAwareSystem = prependLearningContext(SYSTEM, ctx) + exclusion.promptBlock;
     let raw: Record<string, unknown>;
     try {
-      raw = await groqJSON(SYSTEM, buildPrompt(effectiveTopic, targetedLevel, QUESTION_COUNT, seedBlock));
+      raw = await groqJSON(contextAwareSystem, buildPrompt(contextAwareTopic, targetedLevel, QUESTION_COUNT, seedBlock));
     } catch (e) {
       // eslint-disable-next-line no-console
       console.error(`[adaptive-practice] groqJSON failed:`, e instanceof Error ? e.message : e);
@@ -245,7 +262,7 @@ export async function POST(req: Request) {
       ? (raw as { questions: GenQ[] }).questions
       : [];
 
-    const valid: GenQ[] = arr.filter(
+    const structurallyValid: GenQ[] = arr.filter(
       (q) =>
         q &&
         typeof q.stem === "string" &&
@@ -256,6 +273,26 @@ export async function POST(req: Request) {
         Number.isInteger(q.correct_index) &&
         q.correct_index >= 0 &&
         q.correct_index <= 3
+    );
+
+    // Quality + cross-test filters (Vipin 2026-05-12):
+    //   1. drop questions whose correct answer is echoed in the stem
+    //   2. drop near-duplicate paraphrases inside this batch
+    //   3. drop questions ≥70% Jaccard-similar to stems the student
+    //      has already answered on this topic in the last 30 days
+    //   4. hard-slice to the requested QUESTION_COUNT
+    const { kept: valid, droppedLeak, droppedDup, droppedHistory } = filterQuestionBatch(
+      structurallyValid,
+      {
+        maxCount: QUESTION_COUNT,
+        similarityThreshold: 0.7,
+        historyStems: exclusion.stems,
+      },
+    );
+    // eslint-disable-next-line no-console
+    console.log(
+      `[adaptive-practice] kept=${valid.length}/${structurallyValid.length} ` +
+      `(dropped: leak=${droppedLeak.length} dup=${droppedDup.length} history=${droppedHistory.length})`
     );
 
     if (valid.length === 0) {
@@ -334,6 +371,16 @@ export async function POST(req: Request) {
       code = generateQuizCode();
     }
 
+    // Per-quiz marking scheme — same JSONB shape as quizzes.marking_scheme
+    // (migration 76). NULL = legacy +1/0/0. Client sends NULL on first
+    // ever attempt (then auto-suggested by the picker); subsequent
+    // attempts pre-fill from profile.last_marking_scheme so a CAT student
+    // stays on CAT preset across surfaces.
+    const requestedMarkingScheme: unknown =
+      body.markingScheme && typeof body.markingScheme === "object"
+        ? body.markingScheme
+        : null;
+
     const niceName = `Adaptive Practice — ${topic}`;
     type QuizInsert = {
       owner_id: string;
@@ -342,6 +389,7 @@ export async function POST(req: Request) {
       time_limit_minutes: number;
       bloom_filter: string[];
       subject?: string | null;
+      marking_scheme?: unknown | null;
     };
     const fullInsert: QuizInsert = {
       owner_id: user.id,
@@ -354,16 +402,17 @@ export async function POST(req: Request) {
       ),
       bloom_filter: [targetedLevel],
       subject: topic,
+      marking_scheme: requestedMarkingScheme,
     };
     let { data: quiz, error: quizErr } = await sb
       .from("quizzes")
       .insert(fullInsert)
       .select()
       .single();
-    if (quizErr && /column .*(subject|topic_family)/i.test(quizErr.message)) {
+    if (quizErr && /column .*(subject|topic_family|marking_scheme)/i.test(quizErr.message)) {
       // eslint-disable-next-line no-console
       console.warn(
-        `[adaptive-practice] schema missing subject column — falling back. Apply migrations 04/05.`
+        `[adaptive-practice] schema missing column — falling back. Apply migrations 04/05/76.`
       );
       const fb = await sb
         .from("quizzes")
@@ -410,6 +459,15 @@ export async function POST(req: Request) {
     console.log(
       `[adaptive-practice] success: quiz=${quiz!.code} level=${targetedLevel} questions=${linkRows.length} verified=${verifiedCount}/${verifyResults.length}`
     );
+
+    // Sticky marking-scheme persistence — write the user's pick to
+    // profile.last_marking_scheme so the next surface pre-fills with
+    // it. Best-effort, silent on failure.
+    if (requestedMarkingScheme && typeof requestedMarkingScheme === "object") {
+      const { writeLastMarkingScheme } = await import("@/lib/markingSchemeMemory");
+      const { resolveScheme } = await import("@/lib/scoring");
+      await writeLastMarkingScheme(adminForCtx, user.id, resolveScheme(requestedMarkingScheme));
+    }
 
     return NextResponse.json({
       ok: true,

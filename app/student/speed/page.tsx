@@ -8,6 +8,12 @@ import { triggerScoreRecompute } from "@/lib/scoreRecompute";
 import {
   Timer, Zap, Sparkles, ArrowLeft, Loader2, CheckCircle2, XCircle, History,
 } from "lucide-react";
+import CurrentGoalChip from "@/components/CurrentGoalChip";
+import MarkingSchemePicker from "@/components/MarkingSchemePicker";
+import { type MarkingScheme } from "@/lib/scoring";
+import { suggestPresetForGoal, type ScoringPresetKey } from "@/lib/scoringPresets";
+import { suggestedTopics, placeholderTopic } from "@/lib/topicSuggestions";
+import { type LearnerProfile } from "@/components/LearnerProfilePrompt";
 
 // =============================================================================
 // SPEED-ACCURACY TRAINER — competitive-exam pacing tool. Each question has a
@@ -60,6 +66,17 @@ export default function SpeedTrainerPage() {
   const [recentTopics, setRecentTopics] = useState<string[]>([]);
   const [count, setCount] = useState(8);
 
+  // Learning-context-aware topic suggestions + sticky marking scheme.
+  // Both pull from profile (exam_goal, learner_profile, last_marking_scheme)
+  // so a CAT student sees CAT-style topic chips + their previously-picked
+  // marking scheme, a corporate learner sees Kubernetes / AWS / Java chips,
+  // and a Class 10 student sees board-pattern topics — never "Kinematics"
+  // for everyone.
+  const [examGoal, setExamGoal] = useState<string | null>(null);
+  const [learnerProfile, setLearnerProfile] = useState<LearnerProfile | null>(null);
+  const [markingScheme, setMarkingScheme] = useState<MarkingScheme | null>(null);
+  const [suggestedPreset, setSuggestedPreset] = useState<ScoringPresetKey>("PRACTICE");
+
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -83,7 +100,38 @@ export default function SpeedTrainerPage() {
   useEffect(() => {
     void loadHistory();
     void loadRecentTopics();
+    void loadLearningContext();
   }, []);
+
+  // Fetch the student's exam_goal, learner_profile, and last_marking_scheme.
+  // Drives the topic-suggestion chips, the placeholder, the marking-scheme
+  // picker's pre-fill, and the marking-scheme suggestion banner.
+  async function loadLearningContext() {
+    try {
+      const sb = supabaseBrowser();
+      const { data: { user } } = await sb.auth.getUser();
+      if (!user) return;
+      const { data: prof } = await sb
+        .from("profiles")
+        .select("exam_goal, learner_profile, last_marking_scheme")
+        .eq("id", user.id)
+        .maybeSingle();
+      const row = prof as {
+        exam_goal: string | null;
+        learner_profile: string | null;
+        last_marking_scheme: unknown | null;
+      } | null;
+      if (row?.exam_goal) setExamGoal(row.exam_goal);
+      const lp = row?.learner_profile;
+      if (lp === "k12" || lp === "competitive_exam" || lp === "corporate") {
+        setLearnerProfile(lp);
+      }
+      setSuggestedPreset(suggestPresetForGoal(row?.exam_goal ?? null));
+      if (row?.last_marking_scheme && typeof row.last_marking_scheme === "object") {
+        setMarkingScheme(row.last_marking_scheme as MarkingScheme);
+      }
+    } catch { /* silent — chips fall back to k12 defaults */ }
+  }
 
   useEffect(() => {
     // Tick the countdown for the active question
@@ -137,7 +185,10 @@ export default function SpeedTrainerPage() {
       const r = await fetch("/api/speed/start", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
-        body: JSON.stringify({ topic: topic.trim() || undefined, count }),
+        // markingScheme is forwarded to the server so it can persist
+        // last_marking_scheme on success and (when meaningful for this
+        // surface) drive negative-marks-aware scoring on submit.
+        body: JSON.stringify({ topic: topic.trim() || undefined, count, markingScheme }),
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j?.error || "Could not start session");
@@ -279,9 +330,13 @@ export default function SpeedTrainerPage() {
 
   return (
     <div className="max-w-3xl mx-auto fade-in">
-      <Link href="/student" className="inline-flex items-center gap-1 text-sm text-slate-600 hover:text-emerald-700 mb-3">
-        <ArrowLeft size={14} /> Back to dashboard
-      </Link>
+      <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
+        <Link href="/student" className="inline-flex items-center gap-1 text-sm text-slate-600 hover:text-emerald-700">
+          <ArrowLeft size={14} /> Back to dashboard
+        </Link>
+        {/* Persistent goal chip — tap to change context from anywhere. */}
+        <CurrentGoalChip />
+      </div>
 
       <div className="flex items-start gap-3">
         <div className="rounded-xl bg-orange-100 text-orange-700 p-3 shrink-0">
@@ -303,27 +358,54 @@ export default function SpeedTrainerPage() {
             <label className="label">Topic</label>
             <input
               className="input"
-              placeholder="e.g. Kinematics, Genetics, Thermodynamics"
+              placeholder={placeholderTopic(examGoal, learnerProfile)}
               value={topic}
               onChange={(e) => setTopic(e.target.value)}
               maxLength={120}
             />
+            {/* Suggested topics — goal-aware. A CAT student sees QA/VARC
+                topics, a corporate learner sees Kubernetes/AWS/Java, a
+                Class 10 student sees board topics. Tap a chip to fill
+                the input. The "recent topics" chip row sits below
+                (history-driven, not goal-driven). */}
+            <div className="mt-2 flex flex-wrap gap-2">
+              {suggestedTopics(examGoal, learnerProfile).map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => setTopic(t)}
+                  className={`text-xs px-2.5 py-1 rounded-full border transition ${
+                    topic === t
+                      ? "bg-emerald-100 border-emerald-300 text-emerald-800 font-semibold"
+                      : "bg-white border-slate-200 text-slate-700 hover:border-emerald-300"
+                  }`}
+                  title="Tap to use this topic"
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
             {recentTopics.length > 0 && (
-              <div className="mt-2 flex flex-wrap gap-2">
-                {recentTopics.map((t) => (
-                  <button
-                    key={t}
-                    type="button"
-                    onClick={() => setTopic(t)}
-                    className={`text-xs px-2.5 py-1 rounded-full border transition ${
-                      topic === t
-                        ? "bg-emerald-100 border-emerald-300 text-emerald-800 font-semibold"
-                        : "bg-white border-slate-200 text-slate-700 hover:border-emerald-300"
-                    }`}
-                  >
-                    {t}
-                  </button>
-                ))}
+              <div className="mt-3">
+                <div className="text-[10px] uppercase tracking-wide font-semibold text-slate-500 mb-1">
+                  Recent topics
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {recentTopics.map((t) => (
+                    <button
+                      key={t}
+                      type="button"
+                      onClick={() => setTopic(t)}
+                      className={`text-xs px-2.5 py-1 rounded-full border transition ${
+                        topic === t
+                          ? "bg-emerald-100 border-emerald-300 text-emerald-800 font-semibold"
+                          : "bg-white border-slate-200 text-slate-700 hover:border-emerald-300"
+                      }`}
+                    >
+                      {t}
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
           </div>
@@ -342,6 +424,19 @@ export default function SpeedTrainerPage() {
               ))}
             </div>
           </div>
+          {/* Marking scheme — sticky pre-fill from profile.last_marking_scheme.
+              Default = PRACTICE (+1/0); set once via the picker and it
+              follows the user across Speed / Sprint / Drill / Practice /
+              Generate / Teacher quiz builder. */}
+          <div>
+            <label className="label">Marking scheme</label>
+            <MarkingSchemePicker
+              value={markingScheme}
+              onChange={setMarkingScheme}
+              suggested={suggestedPreset}
+            />
+          </div>
+
           {err && (
             <div className="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{err}</div>
           )}
@@ -506,6 +601,32 @@ export default function SpeedTrainerPage() {
               </div>
             </div>
           </div>
+
+          {/* Bridge to the read-only Confidence Insights dashboard. Speed
+              Trainer is where confidence ratings are COLLECTED; the
+              dashboard at /student/calibration aggregates those ratings
+              into a stated-vs-actual chart. Surfacing it here forward
+              makes the relationship explicit so students don't
+              experience the "two names, same screen" confusion that
+              Vipin flagged on 2026-05-13. */}
+          <Link
+            href="/student/calibration"
+            className="card flex items-center justify-between gap-3 hover:bg-teal-50/40 transition border-teal-200"
+          >
+            <div className="flex items-start gap-3">
+              <div className="rounded-lg bg-teal-100 text-teal-700 p-2 shrink-0">
+                <Sparkles size={16} />
+              </div>
+              <div>
+                <div className="font-semibold">Confidence Insights ready</div>
+                <div className="text-xs muted">
+                  Every Sure / Probably / Guess you marked on this session has been logged. See how
+                  well-calibrated your hunches are over time.
+                </div>
+              </div>
+            </div>
+            <span className="text-sm font-semibold text-teal-700 whitespace-nowrap">Open dashboard →</span>
+          </Link>
 
           {/* ============ PER-QUESTION REVIEW ============
               Now that the session is graded, show every question with the

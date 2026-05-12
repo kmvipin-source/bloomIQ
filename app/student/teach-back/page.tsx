@@ -8,6 +8,9 @@ import {
   GraduationCap, Sparkles, MessageCircleQuestion, ArrowRight, History,
   CheckCircle2, AlertTriangle, Loader2, ArrowLeft,
 } from "lucide-react";
+import { suggestedTopics, placeholderTopic } from "@/lib/topicSuggestions";
+import { type LearnerProfile } from "@/components/LearnerProfilePrompt";
+import CurrentGoalChip from "@/components/CurrentGoalChip";
 
 // =============================================================================
 // TEACH-BACK (Feynman) — student explains a topic in their own words and the
@@ -48,9 +51,37 @@ export default function TeachBackPage() {
   // ----- history -----
   const [history, setHistory] = useState<SessionRow[]>([]);
 
+  // ----- learning-context-aware topic suggestions (2026-05-12) -----
+  // Hardcoded "Photosynthesis" placeholder was wrong for CAT / NEET /
+  // corporate learners. Pulls exam_goal + learner_profile from the
+  // profile so the placeholder and the chip row both match the user's
+  // register. User can change goal from the persistent chip below.
+  const [examGoal, setExamGoal] = useState<string | null>(null);
+  const [learnerProfile, setLearnerProfile] = useState<LearnerProfile | null>(null);
+
   useEffect(() => {
     void loadHistory();
+    void loadLearningContext();
   }, []);
+
+  async function loadLearningContext() {
+    try {
+      const sb = supabaseBrowser();
+      const { data: { user } } = await sb.auth.getUser();
+      if (!user) return;
+      const { data: prof } = await sb
+        .from("profiles")
+        .select("exam_goal, learner_profile")
+        .eq("id", user.id)
+        .maybeSingle();
+      const row = prof as { exam_goal: string | null; learner_profile: string | null } | null;
+      if (row?.exam_goal) setExamGoal(row.exam_goal);
+      const lp = row?.learner_profile;
+      if (lp === "k12" || lp === "competitive_exam" || lp === "corporate") {
+        setLearnerProfile(lp);
+      }
+    } catch { /* silent — chips fall back to generic */ }
+  }
 
   async function loadHistory() {
     const sb = supabaseBrowser();
@@ -142,9 +173,12 @@ export default function TeachBackPage() {
 
   return (
     <div className="max-w-3xl mx-auto fade-in">
-      <Link href="/student" className="inline-flex items-center gap-1 text-sm text-slate-600 hover:text-emerald-700 mb-3">
-        <ArrowLeft size={14} /> Back to dashboard
-      </Link>
+      <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
+        <Link href="/student" className="inline-flex items-center gap-1 text-sm text-slate-600 hover:text-emerald-700">
+          <ArrowLeft size={14} /> Back to dashboard
+        </Link>
+        <CurrentGoalChip />
+      </div>
 
       <div className="flex items-start gap-3">
         <div className="rounded-xl bg-emerald-100 text-emerald-700 p-3 shrink-0">
@@ -165,12 +199,31 @@ export default function TeachBackPage() {
             <label className="label">Topic</label>
             <input
               className="input"
-              placeholder="e.g. Photosynthesis, Newton's third law, Pythagoras' theorem"
+              placeholder={placeholderTopic(examGoal, learnerProfile)}
               value={topic}
               onChange={(e) => setTopic(e.target.value)}
               required
               maxLength={200}
             />
+            {/* Goal-aware topic chips — tap one to fill the input. Replaces
+                the old hardcoded "Photosynthesis" example which read wrong
+                for CAT / NEET / corporate learners. */}
+            <div className="mt-2 flex flex-wrap gap-2">
+              {suggestedTopics(examGoal, learnerProfile).map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => setTopic(t)}
+                  className={`text-xs px-2.5 py-1 rounded-full border transition ${
+                    topic === t
+                      ? "bg-emerald-100 border-emerald-300 text-emerald-800 font-semibold"
+                      : "bg-white border-slate-200 text-slate-700 hover:border-emerald-300"
+                  }`}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
           </div>
           <div>
             <label className="label">

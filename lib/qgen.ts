@@ -326,3 +326,188 @@ export async function verifyAnswerKeys(
   await Promise.all(workers);
   return out;
 }
+
+// =============================================================================
+// E. QUALITY FILTERS — answer-leak detection + near-duplicate dedup.
+// -----------------------------------------------------------------------------
+// Vipin caught two recurring AI failures on 2026-05-12:
+//   1. "Some answers are in the question itself" — the AI generates a stem
+//      like "What is photosynthesis?" with option "A. Photosynthesis is the
+//      process …", giving the answer away by repetition.
+//   2. "Questions are repetitive — not literally, but multiple questions
+//      mean the same thing" — the AI paraphrases the same concept multiple
+//      times in one batch, padding the count without adding learning value.
+//
+// Both filters run AFTER structural validation and BEFORE the .slice() cap,
+// so we drop bad rows first and only THEN trim to the requested count.
+// =============================================================================
+
+/** Lowercase + collapse non-word chars to a single space, trim. Used to
+ *  normalise both stems and option text before any comparison. */
+function normaliseForCompare(s: string): string {
+  return String(s || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** Tokenise normalised text into a set of meaningful words (>= 4 chars).
+ *  Short words ("the", "is", "of") would dominate any overlap score and
+ *  collapse it to noise, so we skip them. */
+function tokenSet(s: string): Set<string> {
+  const out = new Set<string>();
+  for (const t of normaliseForCompare(s).split(" ")) {
+    if (t.length >= 4) out.add(t);
+  }
+  return out;
+}
+
+/** Jaccard similarity on two token sets, 0..1. 0 = nothing in common,
+ *  1 = identical token bags. Cheap and good enough to catch paraphrases
+ *  for our scale (≤ 30 questions per call). */
+function jaccard(a: Set<string>, b: Set<string>): number {
+  if (a.size === 0 || b.size === 0) return 0;
+  let inter = 0;
+  for (const t of a) if (b.has(t)) inter++;
+  const union = a.size + b.size - inter;
+  return union === 0 ? 0 : inter / union;
+}
+
+export type LeakCheckable = {
+  stem: string;
+  options: string[];
+  correct_index: number;
+};
+
+/**
+ * Detect "the correct answer is inside the question stem" — the most
+ * common AI failure mode that makes a question trivially solvable by
+ * pattern-matching alone.
+ *
+ * Heuristic: if every meaningful word (≥ 4 chars) of the correct option
+ * also appears in the stem, the answer is effectively echoed. We don't
+ * require literal substring match — "Photosynthesis is the process …"
+ * (option) and "What is photosynthesis?" (stem) share the only word
+ * that matters.
+ *
+ * Returns true when the question is OK (no leak), false when it should
+ * be discarded.
+ */
+export function isStemAnswerLeakClean(q: LeakCheckable): boolean {
+  if (!q || !q.stem || !Array.isArray(q.options)) return false;
+  const ci = q.correct_index;
+  if (!Number.isInteger(ci) || ci < 0 || ci >= q.options.length) return false;
+  const correct = q.options[ci];
+  if (!correct) return false;
+
+  const stemTokens = tokenSet(q.stem);
+  const correctTokens = tokenSet(correct);
+
+  // Single-word answers (e.g. "Photosynthesis"): leak if the word is in the stem.
+  if (correctTokens.size === 1) {
+    const [only] = Array.from(correctTokens);
+    return !stemTokens.has(only);
+  }
+
+  // Multi-word answers: leak if EVERY meaningful token is also in the stem.
+  if (correctTokens.size === 0) return true; // option has no signal — let it through
+  for (const t of correctTokens) {
+    if (!stemTokens.has(t)) return true; // at least one token is unique to the answer — OK
+  }
+  return false; // every answer token also in stem → leak
+}
+
+/**
+ * Drop near-duplicate questions from a batch. Two questions are
+ * considered near-duplicates when their stem token sets have Jaccard
+ * similarity >= threshold (default 0.7).
+ *
+ * We keep the FIRST occurrence — usually the AI's strongest attempt.
+ * The dropped list is returned alongside for telemetry / logging.
+ */
+export function dedupeBySimilarity<T extends { stem: string }>(
+  items: T[],
+  threshold = 0.7,
+): { kept: T[]; dropped: T[] } {
+  const kept: T[] = [];
+  const dropped: T[] = [];
+  const keptTokens: Set<string>[] = [];
+  for (const item of items) {
+    const toks = tokenSet(item.stem);
+    let dup = false;
+    for (const prev of keptTokens) {
+      if (jaccard(toks, prev) >= threshold) { dup = true; break; }
+    }
+    if (dup) {
+      dropped.push(item);
+    } else {
+      kept.push(item);
+      keptTokens.push(toks);
+    }
+  }
+  return { kept, dropped };
+}
+
+/**
+ * Convenience: run leak detection + within-batch similarity dedup +
+ * (Layer 2) cross-test similarity dedup against the student's recent
+ * history + final hard slice to the requested count.
+ *
+ * The cross-test layer takes a `historyStems` array — stems the student
+ * has already seen on this topic + bloom level within the last 30 days
+ * (see lib/recentStemsExclusion.ts → getRecentStemsForExclusion). Any
+ * new question whose stem is ≥ similarityThreshold Jaccard-similar to a
+ * historyStem is dropped, even if the AI ignored the explicit "don't
+ * repeat" rule in the prompt.
+ *
+ * Routes can call this once and get a clean batch back, plus a stats
+ * object for logging / instrumentation.
+ */
+export function filterQuestionBatch<T extends LeakCheckable>(
+  items: T[],
+  opts: {
+    maxCount: number;
+    similarityThreshold?: number;
+    /** Stems the student has already seen — used for Layer 2 cross-test
+     *  dedup. Pass an empty array (or omit) when there's no history. */
+    historyStems?: string[];
+  } = { maxCount: Infinity },
+): { kept: T[]; droppedLeak: T[]; droppedDup: T[]; droppedHistory: T[]; trimmed: T[] } {
+  const threshold = opts.similarityThreshold ?? 0.7;
+  const historyStems = opts.historyStems ?? [];
+  // Pre-compute token sets for history so we don't tokenise per candidate.
+  const historyTokens: Set<string>[] = historyStems.map(tokenSet);
+
+  const droppedLeak: T[] = [];
+  const stage1: T[] = [];
+  for (const q of items) {
+    if (isStemAnswerLeakClean(q)) stage1.push(q);
+    else droppedLeak.push(q);
+  }
+
+  // Stage 2: dedupe within the batch (peers).
+  const { kept: stage2, dropped: droppedDup } = dedupeBySimilarity(stage1, threshold);
+
+  // Stage 3 (Layer 2): dedupe against student's recent history.
+  const droppedHistory: T[] = [];
+  const stage3: T[] = [];
+  if (historyTokens.length === 0) {
+    stage3.push(...stage2);
+  } else {
+    for (const item of stage2) {
+      const toks = tokenSet(item.stem);
+      let collisions = false;
+      for (const prev of historyTokens) {
+        if (jaccard(toks, prev) >= threshold) { collisions = true; break; }
+      }
+      if (collisions) droppedHistory.push(item);
+      else stage3.push(item);
+    }
+  }
+
+  const max = Math.max(0, Math.floor(opts.maxCount));
+  const kept = Number.isFinite(max) ? stage3.slice(0, max) : stage3;
+  const trimmed = Number.isFinite(max) ? stage3.slice(max) : [];
+  return { kept, droppedLeak, droppedDup, droppedHistory, trimmed };
+}

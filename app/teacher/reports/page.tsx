@@ -6,6 +6,7 @@ import { supabaseBrowser } from "@/lib/supabase/client";
 import { BLOOM_LEVELS, BLOOM_META, blankBloomCounts, type BloomLevel } from "@/lib/bloom";
 import type { Quiz } from "@/lib/types";
 import { pct } from "@/lib/utils";
+import { percentageOf } from "@/lib/scoring";
 import Empty from "@/components/Empty";
 import {
   Download, FileSpreadsheet, FileText, Mail, Sparkles,
@@ -31,8 +32,22 @@ type Att = {
   id: string;
   quiz_id: string;
   student_id: string;
+  /**
+   * Legacy correct-count. Always non-negative. Pre-migration attempts
+   * have score = correct_count, total = question_count, raw_score/
+   * max_score = NULL. Post-migration attempts also fill these so
+   * legacy readers keep working — see lib/scoring.ts → percentageOf().
+   */
   score: number;
   total: number;
+  /**
+   * Marks-aware columns (migration 76). NULL on pre-migration attempts.
+   * raw_score can be negative when scheme had wrong < 0.
+   */
+  raw_score: number | null;
+  max_score: number | null;
+  /** Snapshot of the scheme that scored this attempt. NULL = legacy +1/0. */
+  marking_scheme_snapshot: unknown | null;
   submitted_at: string | null;
   time_taken_seconds: number | null;
   profile: { full_name: string | null; school: string | null; grade: string | null } | null;
@@ -212,7 +227,15 @@ export default function ReportsPage() {
       // 5) All attempts on those quizzes.
       const { data: atts } = await sb
         .from("quiz_attempts")
-        .select("id, quiz_id, student_id, score, total, submitted_at, time_taken_seconds, profile:profiles!quiz_attempts_student_id_fkey(full_name, school, grade)")
+        // Fetch the marks-aware columns alongside the legacy ones. The
+        // percentageOf() helper below routes mixed-scheme attempts
+        // correctly (raw_score / max_score when present, falls back to
+        // score / total otherwise).
+        .select(
+          "id, quiz_id, student_id, score, total, raw_score, max_score, " +
+          "marking_scheme_snapshot, submitted_at, time_taken_seconds, " +
+          "profile:profiles!quiz_attempts_student_id_fkey(full_name, school, grade)"
+        )
         .in("quiz_id", quizIds)
         .not("submitted_at", "is", null);
       const attsList = ((atts as unknown) as Att[]) || [];
@@ -301,7 +324,7 @@ export default function ReportsPage() {
 
   // Hero stats now reflect filters
   const stats = useMemo(() => {
-    const ratios = atts.filter((a) => a.total > 0).map((a) => pct(a.score, a.total));
+    const ratios = atts.filter((a) => a.total > 0).map((a) => percentageOf(a));
     const avg = ratios.length ? Math.round(ratios.reduce((s, x) => s + x, 0) / ratios.length) : 0;
     const studentCount = new Set(atts.map((a) => a.student_id)).size;
     return { quizzes: filteredQuizzes.length, attempts: atts.length, students: studentCount, avg };
@@ -327,12 +350,21 @@ export default function ReportsPage() {
         quizAns.filter((x) => x.attempt_id === a.id).forEach((x) => {
           tot[x.bloom_level] += 1; if (x.is_correct) per[x.bloom_level] += 1;
         });
+        // Excel export columns. Score column shows the marks-aware
+        // value when available (e.g. "72/120" for a JEE Main mock with
+        // negative marking), falling back to legacy correct-count
+        // ("18/30") for pre-migration attempts. The legacy Correct/
+        // Total columns also survive for any downstream parser that
+        // expected the old shape.
+        const showMarks = a.raw_score != null && a.max_score != null;
         const r: Record<string, string | number> = {
           Student: a.profile?.full_name || "Unknown",
           School: a.profile?.school || "",
           Grade: a.profile?.grade || "",
-          Score: `${a.score}/${a.total}`,
-          Percent: pct(a.score, a.total),
+          Score: showMarks ? `${a.raw_score}/${a.max_score}` : `${a.score}/${a.total}`,
+          Correct: a.score,
+          Total: a.total,
+          Percent: percentageOf(a),
           "Time taken (s)": a.time_taken_seconds || "",
           Submitted: a.submitted_at ? new Date(a.submitted_at).toLocaleString() : "",
         };
@@ -368,7 +400,7 @@ export default function ReportsPage() {
       // Sheet 1 — Quiz overview
       const quizOverview = filteredQuizzes.map((q) => {
         const qAtts = atts.filter((a) => a.quiz_id === q.id);
-        const ratios = qAtts.filter((a) => a.total > 0).map((a) => pct(a.score, a.total));
+        const ratios = qAtts.filter((a) => a.total > 0).map((a) => percentageOf(a));
         const avg = ratios.length ? Math.round(ratios.reduce((s, x) => s + x, 0) / ratios.length) : 0;
         // "Class(es)" column added so a workbook reader can tell which
         // class each test belongs to without looking it up. Multi-class
@@ -403,7 +435,7 @@ export default function ReportsPage() {
         if (!byStudent.has(a.student_id)) byStudent.set(a.student_id, { name: a.profile?.full_name || "Unknown", attempts: 0, ratios: [] });
         const s = byStudent.get(a.student_id)!;
         s.attempts++;
-        if (a.total > 0) s.ratios.push(pct(a.score, a.total));
+        if (a.total > 0) s.ratios.push(percentageOf(a));
       });
       const studentSummary = Array.from(byStudent, ([id, s]) => ({
         Student: s.name,
@@ -443,7 +475,7 @@ export default function ReportsPage() {
         allTopics.forEach((t) => {
           const quizIdsForTopic = filteredQuizzes.filter((q) => (q.topic_family || "(uncategorised)") === t).map((q) => q.id);
           const studentAttsForTopic = atts.filter((a) => a.student_id === sid && quizIdsForTopic.includes(a.quiz_id));
-          const ratios = studentAttsForTopic.filter((a) => a.total > 0).map((a) => pct(a.score, a.total));
+          const ratios = studentAttsForTopic.filter((a) => a.total > 0).map((a) => percentageOf(a));
           row[t] = ratios.length ? Math.round(ratios.reduce((x, y) => x + y, 0) / ratios.length) : "—";
         });
         topicMatrix.push(row);
@@ -524,7 +556,7 @@ export default function ReportsPage() {
         allTopics.forEach((t) => {
           const quizIdsForTopic = filteredQuizzes.filter((q) => (q.topic_family || "(uncategorised)") === t).map((q) => q.id);
           const sAtts = atts.filter((a) => a.student_id === sid && quizIdsForTopic.includes(a.quiz_id));
-          const ratios = sAtts.filter((a) => a.total > 0).map((a) => pct(a.score, a.total));
+          const ratios = sAtts.filter((a) => a.total > 0).map((a) => percentageOf(a));
           row[t] = ratios.length ? Math.round(ratios.reduce((x, y) => x + y, 0) / ratios.length) : "—";
         });
         return row;

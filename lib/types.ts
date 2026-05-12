@@ -60,6 +60,12 @@ export type Quiz = {
   bloom_filter: BloomLevel[] | null;
   active: boolean;
   created_at: string;
+  /**
+   * Per-test marking scheme (migration 76). NULL means legacy +1/0/0.
+   * Resolved through `lib/scoring.ts → resolveScheme()` at every read
+   * site so consumers don't need to know about the NULL case.
+   */
+  marking_scheme: unknown | null;
 };
 
 export type QuizAttempt = {

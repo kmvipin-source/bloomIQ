@@ -14,8 +14,15 @@ import {
   findMisconceptionDistractors,
   formatDistractorSeedsForPrompt,
   verifyAnswerKeys,
+  filterQuestionBatch,
   type VerifiableQuestion,
 } from "@/lib/qgen";
+import {
+  loadLearningContext,
+  prependLearningContext,
+  buildExamAwareTopic,
+} from "@/lib/learningContext";
+import { getRecentStemsForExclusion } from "@/lib/recentStemsExclusion";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -30,6 +37,25 @@ mapped precisely to Bloom's Taxonomy levels. Each question must:
 - include a brief explanation of why it's correct
 - match the requested Bloom level's cognitive demand
 - be unambiguous, grammatically correct, and free of trick wording
+
+HARD CONSTRAINTS — questions violating any of these will be rejected:
+1. The correct answer's key terms must NEVER appear inside the stem. If the
+   correct option is "Photosynthesis is the process …", the stem must NOT
+   contain the word "photosynthesis". Re-word the stem or pick a different
+   right answer — never let the question telegraph itself.
+2. Within a single batch, do NOT generate paraphrases of the same question.
+   Each item must test a DISTINCT sub-concept or skill — different formula,
+   different scenario, different angle. Multiple questions meaning the
+   same thing are duplicates even if the wording differs.
+3. For Apply / Analyze / Evaluate level questions, VARY the scenario domain
+   across the batch. Do NOT use the same template with a swapped noun
+   (e.g., "hospital" vs "bank" vs "school" in otherwise identical stems).
+   Each scenario should bring genuinely different context, constraints,
+   or quantities.
+4. Return EXACTLY the requested number of questions — no more, no fewer.
+   If asked for 20, return 20. Generating extras wastes the user's quota
+   and time.
+
 Return STRICT JSON only.`;
 
 function jsonShape() {
@@ -279,7 +305,11 @@ export async function POST(req: Request) {
     const syllabus: string = body.syllabus || "";
     const imageDataUrl: string = body.imageDataUrl || "";
     const examLabel: string = body.examLabel || "";
-    const perLevel: number = Math.max(1, Math.min(10, Number(body.perLevel) || 2));
+    // Raised the upper bound from 10 → 25 on 2026-05-12 — students asking
+    // for 20 questions/level were getting silently truncated to 10. The
+    // post-generation filterQuestionBatch() now enforces an exact slice
+    // so larger asks return what was requested.
+    const perLevel: number = Math.max(1, Math.min(25, Number(body.perLevel) || 2));
     // Optional non-uniform per-level counts. When present (by_time mode in
     // the UI), each Bloom level gets its own count instead of all sharing
     // `perLevel`. Counts are clamped to 1..10 per level.
@@ -293,6 +323,16 @@ export async function POST(req: Request) {
       return Math.max(1, Math.min(10, Math.round(v)));
     }
     const numericalPercent: number = Math.max(0, Math.min(100, Number(body.numericalPercent) || 0));
+    // Per-test marking scheme (migration 76). Client sends NULL or a
+    // full MarkingScheme object from <MarkingSchemePicker />. We pass
+    // whatever's there straight into quizzes.marking_scheme — the
+    // Supabase JSONB column accepts any JSON. lib/scoring.ts → resolveScheme
+    // at the student's submission time will validate / fall back to the
+    // legacy default if anything's malformed.
+    const markingScheme: unknown =
+      body.markingScheme && typeof body.markingScheme === "object"
+        ? body.markingScheme
+        : null;
     const requested: string[] = Array.isArray(body.levels) ? body.levels : BLOOM_LEVELS;
     const levels: BloomLevel[] = requested.filter(isBloomLevel);
     const timeLimit: number = Math.max(1, Math.min(180, Number(body.timeLimit) || 15));
@@ -342,6 +382,24 @@ export async function POST(req: Request) {
     // eslint-disable-next-line no-console
     console.log(`[quick-test] start source=${source} levels=${levels.join(",")} effectiveLevels=${effectiveLevels.join(",")} perLevel=${perLevel} topic="${topic}"`);
 
+    // Learning-context inheritance (lib/learningContext.ts). The student's
+    // exam_goal primes the SYSTEM prompt and disambiguates exam-acronym
+    // topics like "CAT" / "GATE" / "CLAT" that collide with everyday
+    // words. Applied once here; every prompt builder below uses the
+    // context-aware versions.
+    const adminForCtx = supabaseAdmin();
+    const ctx = await loadLearningContext(adminForCtx, user.id);
+    const contextAwareTopic = buildExamAwareTopic(topic, ctx);
+    // Cross-test non-repetition (Layer 1+2+3, lib/recentStemsExclusion.ts).
+    // Pull stems the student has already answered on this topic in the
+    // last 30 days. We pass bloomLevel=null because this endpoint
+    // generates across multiple Bloom levels; the post-gen filter
+    // checks each per-level batch against the union of recent stems.
+    // Layer 3 (concepts already covered) is baked into the same prompt
+    // block.
+    const exclusion = await getRecentStemsForExclusion(adminForCtx, user.id, topic, null, 20);
+    const contextAwareSystem = prependLearningContext(SYSTEM, ctx) + exclusion.promptBlock;
+
     // Generate per-level
     const genFor = async (lvl: BloomLevel) => {
       // Mine misconception seeds — empty list on no-data => standard generation.
@@ -367,29 +425,51 @@ export async function POST(req: Request) {
       let json: Record<string, unknown>;
       switch (source) {
         case "past_paper":
-          json = await groqJSONVision(SYSTEM, pastPaperPrompt(topic, examLabel, lvl, perLevel, numericalPercent, seedBlock), imageDataUrl);
+          json = await groqJSONVision(contextAwareSystem, pastPaperPrompt(contextAwareTopic, examLabel, lvl, perLevel, numericalPercent, seedBlock), imageDataUrl);
           break;
         case "image":
-          json = await groqJSONVision(SYSTEM, imagePrompt(topic, lvl, perLevel, numericalPercent, seedBlock), imageDataUrl);
+          json = await groqJSONVision(contextAwareSystem, imagePrompt(contextAwareTopic, lvl, perLevel, numericalPercent, seedBlock), imageDataUrl);
           break;
         case "topic_syllabus":
-          json = await groqJSON(SYSTEM, syllabusPrompt(topic, className, syllabus, lvl, perLevel, numericalPercent, seedBlock));
+          json = await groqJSON(contextAwareSystem, syllabusPrompt(contextAwareTopic, className, syllabus, lvl, perLevel, numericalPercent, seedBlock));
           break;
         case "topic_only":
-          json = await groqJSON(SYSTEM, topicOnlyPrompt(topic, lvl, perLevel, numericalPercent, seedBlock));
+          json = await groqJSON(contextAwareSystem, topicOnlyPrompt(contextAwareTopic, lvl, perLevel, numericalPercent, seedBlock));
           break;
         case "notes":
         default:
-          json = await groqJSON(SYSTEM, notesPrompt(content, topic, lvl, perLevel, numericalPercent, seedBlock));
+          json = await groqJSON(contextAwareSystem, notesPrompt(content, contextAwareTopic, lvl, perLevel, numericalPercent, seedBlock));
       }
       const arr: GenQ[] = Array.isArray((json as { questions?: GenQ[] })?.questions)
         ? (json as { questions: GenQ[] }).questions
         : [];
       // eslint-disable-next-line no-console
       console.log(`[quick-test] level=${lvl}: model returned ${arr.length} raw question(s)`);
-      const passed = arr
+      const structurallyValid = arr
         .filter((q) => q && q.stem && Array.isArray(q.options) && q.options.length === 4
                       && Number.isInteger(q.correct_index) && q.correct_index >= 0 && q.correct_index <= 3);
+
+      // Quality filters (Vipin 2026-05-12):
+      //   1. drop questions whose correct answer is echoed in the stem
+      //   2. drop near-duplicate paraphrases inside this batch
+      //   3. (Layer 2) drop near-duplicates of stems the student has
+      //      already seen on this topic in the last 30 days
+      //   4. hard-slice to the user's requested per-level count
+      const perLevelTarget = countForLevel(lvl);
+      const { kept: passed, droppedLeak, droppedDup, droppedHistory, trimmed } = filterQuestionBatch(
+        structurallyValid as Array<{ stem: string; options: string[]; correct_index: number; explanation?: string }>,
+        {
+          maxCount: perLevelTarget,
+          similarityThreshold: 0.7,
+          historyStems: exclusion.stems,
+        },
+      );
+      // eslint-disable-next-line no-console
+      console.log(
+        `[quick-test] level=${lvl}: kept=${passed.length}/${structurallyValid.length} ` +
+        `(target=${perLevelTarget}, dropped: leak=${droppedLeak.length} dup=${droppedDup.length} ` +
+        `history=${droppedHistory.length} trimmed=${trimmed.length})`
+      );
 
       const baseRows = passed.map((q) => ({
         owner_id: user.id,
@@ -589,6 +669,7 @@ export async function POST(req: Request) {
       owner_id: string; name: string; code: string;
       time_limit_minutes: number; bloom_filter: string[];
       subject?: string | null; topic_family?: string | null;
+      marking_scheme?: unknown | null;
     };
     const fullInsert: QuizInsert = {
       owner_id: user.id,
@@ -598,9 +679,14 @@ export async function POST(req: Request) {
       code,
       time_limit_minutes: timeLimit,
       bloom_filter: levels,
+      // Migration 76 — per-test scheme. NULL = legacy +1/0/0.
+      marking_scheme: markingScheme,
     };
     let { data: quiz, error: quizErr } = await sb.from("quizzes").insert(fullInsert).select().single();
-    if (quizErr && /column .*(topic_family|subject)/i.test(quizErr.message)) {
+    if (
+      quizErr &&
+      /column .*(topic_family|subject|marking_scheme)/i.test(quizErr.message)
+    ) {
       // eslint-disable-next-line no-console
       console.warn(`[quick-test] schema missing subject/topic_family — falling back. Apply migrations 04 + 05 + 'notify pgrst, "reload schema";'.`);
       const fallbackInsert: QuizInsert = {
@@ -678,6 +764,17 @@ export async function POST(req: Request) {
 
     // eslint-disable-next-line no-console
     console.log(`[quick-test] success: quiz=${quiz!.code} questions=${linkRows.length}`);
+
+    // Sticky marking-scheme persistence — write the user's pick back to
+    // profile.last_marking_scheme so every future test surface
+    // pre-fills with this scheme. See lib/markingSchemeMemory.ts. Done
+    // ONLY after a successful quiz+questions insert so a failed test
+    // never pollutes the preference. Best-effort — silent on failure.
+    if (markingScheme && typeof markingScheme === "object") {
+      const { writeLastMarkingScheme } = await import("@/lib/markingSchemeMemory");
+      const { resolveScheme } = await import("@/lib/scoring");
+      await writeLastMarkingScheme(adminForCtx, user.id, resolveScheme(markingScheme));
+    }
 
     const verifiedCount = allRows.filter((r) => r.quality.verified).length;
     const disputedCount = allRows.length - verifiedCount;

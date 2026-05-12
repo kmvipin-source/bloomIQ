@@ -210,15 +210,15 @@ export default function NewPaperPage() {
           </div>
           <div>
             <label className="label">Subject</label>
-            <input className="input" value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="e.g. Mathematics" />
+            <input className="input" value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="e.g. your subject" />
           </div>
           <div>
             <label className="label">School name</label>
-            <input className="input" value={schoolName} onChange={(e) => setSchoolName(e.target.value)} placeholder="e.g. Springfield High" />
+            <input className="input" value={schoolName} onChange={(e) => setSchoolName(e.target.value)} placeholder="e.g. your institution" />
           </div>
           <div>
-            <label className="label">Class / grade</label>
-            <input className="input" value={classGrade} onChange={(e) => setClassGrade(e.target.value)} placeholder="e.g. Class 9 — Section A" />
+            <label className="label">Class / grade / batch</label>
+            <input className="input" value={classGrade} onChange={(e) => setClassGrade(e.target.value)} placeholder="e.g. your cohort label" />
           </div>
           <div>
             <label className="label">Date</label>
@@ -325,11 +325,11 @@ export default function NewPaperPage() {
           <div className="grid sm:grid-cols-2 gap-3">
             <div>
               <label className="label">Topic</label>
-              <input className="input" value={topic} onChange={(e) => setTopic(e.target.value)} placeholder="e.g. Quadratic equations" />
+              <input className="input" value={topic} onChange={(e) => setTopic(e.target.value)} placeholder="e.g. the chapter or skill you want to test" />
             </div>
             <div>
-              <label className="label">Syllabus / board <span className="muted text-xs">(optional)</span></label>
-              <input className="input" value={syllabus} onChange={(e) => setSyllabus(e.target.value)} placeholder="e.g. CBSE, IGCSE, IB MYP" />
+              <label className="label">Syllabus / board / framework <span className="muted text-xs">(optional)</span></label>
+              <input className="input" value={syllabus} onChange={(e) => setSyllabus(e.target.value)} placeholder="e.g. your curriculum framework" />
             </div>
           </div>
         )}
@@ -337,7 +337,7 @@ export default function NewPaperPage() {
         {source === "topic_only" && (
           <div>
             <label className="label">Topic</label>
-            <input className="input" value={topic} onChange={(e) => setTopic(e.target.value)} placeholder="e.g. Photosynthesis" />
+            <input className="input" value={topic} onChange={(e) => setTopic(e.target.value)} placeholder="e.g. the chapter or skill you want to test" />
           </div>
         )}
 

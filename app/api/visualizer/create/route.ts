@@ -471,9 +471,30 @@ export async function POST(req: Request) {
     };
     const profileHint = PROFILE_HINTS[learnerProfile];
 
+    // Granular exam-goal refinement — the 3-bucket learner_profile above
+    // bins everyone into k12/competitive_exam/corporate, which loses the
+    // signal between "Class-10 student" and "CAT aspirant" (both are
+    // ambiguous-topic interpretations differ wildly). Layer on the
+    // exam-goal context from profiles.exam_goal — if it's set, a CAT
+    // student's "stack" diagram pitches differently from a JEE Main
+    // student's "stack" diagram even though both are competitive_exam.
+    // Falls through (empty prompt) when goal is "exploring" or unset.
+    let goalRefinement = "";
+    let contextAwareTopic = topic;
+    try {
+      const { supabaseAdmin } = await import("@/lib/supabase/server");
+      const { loadLearningContext, buildExamAwareTopic } = await import("@/lib/learningContext");
+      const admin = supabaseAdmin();
+      const ctx = await loadLearningContext(admin, user.id);
+      if (ctx.prompt) {
+        goalRefinement = `\nExam refinement: ${ctx.prompt}`;
+        contextAwareTopic = buildExamAwareTopic(topic, ctx);
+      }
+    } catch { /* non-fatal — bare profile hint still applies */ }
+
     const userPrompt =
-      `Learner context: ${profileHint}\n\n` +
-      `Topic: ${topic}\n\n` +
+      `Learner context: ${profileHint}${goalRefinement}\n\n` +
+      `Topic: ${contextAwareTopic}\n\n` +
       `Produce the JSON now. 5 frames, typed elements, ids reused across frames for elements that should tween.`;
     // Prefer Gemini 2.5 Flash for keyframe layout. When configured, do a
     // two-pass pipeline:

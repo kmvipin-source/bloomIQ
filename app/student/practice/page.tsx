@@ -17,6 +17,12 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { supabaseBrowser } from "@/lib/supabase/client";
 import { BLOOM_META, type BloomLevel, isBloomLevel } from "@/lib/bloom";
 import { Target, Sparkles, Play, Zap } from "lucide-react";
+import CurrentGoalChip from "@/components/CurrentGoalChip";
+import MarkingSchemePicker from "@/components/MarkingSchemePicker";
+import { type MarkingScheme } from "@/lib/scoring";
+import { suggestPresetForGoal, type ScoringPresetKey } from "@/lib/scoringPresets";
+import { suggestedTopics, placeholderTopic } from "@/lib/topicSuggestions";
+import { type LearnerProfile } from "@/components/LearnerProfilePrompt";
 
 type StartResponse = {
   ok: true;
@@ -50,6 +56,15 @@ export default function StudentPracticePage() {
   const [result, setResult] = useState<StartResponse | null>(null);
   const [authed, setAuthed] = useState<boolean | null>(null);
 
+  // Learning context + sticky marking scheme — same pattern as Speed
+  // Trainer / Generate. Pulls profile.exam_goal + learner_profile +
+  // last_marking_scheme on mount and feeds the topic chips, the
+  // placeholder, and the marking-scheme picker.
+  const [examGoal, setExamGoal] = useState<string | null>(null);
+  const [learnerProfile, setLearnerProfile] = useState<LearnerProfile | null>(null);
+  const [markingScheme, setMarkingScheme] = useState<MarkingScheme | null>(null);
+  const [suggestedPreset, setSuggestedPreset] = useState<ScoringPresetKey>("PRACTICE");
+
   // Light auth check on mount so we can show a sensible message instead of
   // a 401 fetch error after the form submit.
   useEffect(() => {
@@ -57,6 +72,29 @@ export default function StudentPracticePage() {
       const sb = supabaseBrowser();
       const { data: { user } } = await sb.auth.getUser();
       setAuthed(!!user);
+      if (!user) return;
+      // Same fetch shape as the Speed Trainer + Generate pages.
+      try {
+        const { data: prof } = await sb
+          .from("profiles")
+          .select("exam_goal, learner_profile, last_marking_scheme")
+          .eq("id", user.id)
+          .maybeSingle();
+        const row = prof as {
+          exam_goal: string | null;
+          learner_profile: string | null;
+          last_marking_scheme: unknown | null;
+        } | null;
+        if (row?.exam_goal) setExamGoal(row.exam_goal);
+        const lp = row?.learner_profile;
+        if (lp === "k12" || lp === "competitive_exam" || lp === "corporate") {
+          setLearnerProfile(lp);
+        }
+        setSuggestedPreset(suggestPresetForGoal(row?.exam_goal ?? null));
+        if (row?.last_marking_scheme && typeof row.last_marking_scheme === "object") {
+          setMarkingScheme(row.last_marking_scheme as MarkingScheme);
+        }
+      } catch { /* silent — chips fall back to generic */ }
     })();
   }, []);
 
@@ -86,7 +124,12 @@ export default function StudentPracticePage() {
     const fallbackTopic = deepLinkBloom ? "core syllabus" : "";
     const t = (topic.trim() || fallbackTopic).trim();
     if (t.length < 2) {
-      setErr("Tell us what you want to practise (e.g. Photosynthesis).");
+      // Use a goal-aware example so the error message itself matches
+      // the user's register. suggestedTopics() always returns a
+      // non-empty array (k12 default), so the || fallback is dead code
+      // but kept defensive in case the helper is ever changed.
+      const example = suggestedTopics(examGoal, learnerProfile)[0] || "your topic";
+      setErr(`Tell us what you want to practise (e.g. ${example}).`);
       return;
     }
     setBusy(true);
@@ -104,6 +147,11 @@ export default function StudentPracticePage() {
         body: JSON.stringify({
           topic: t,
           ...(deepLinkBloom ? { target_bloom: deepLinkBloom } : {}),
+          // Per-quiz marking scheme — persists onto quizzes.marking_scheme
+          // on the API side so the resulting quiz scores against it. The
+          // server also writes profile.last_marking_scheme on success so
+          // every future surface pre-fills with the same pick.
+          markingScheme,
         }),
       });
       const data = (await res.json()) as Partial<StartResponse> & { error?: string };
@@ -156,14 +204,17 @@ export default function StudentPracticePage() {
         </div>
       ) : null}
 
-      <div className="flex items-center gap-3">
-        <div className="rounded-xl bg-emerald-100 text-emerald-700 p-2.5">
-          <Target size={22} />
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div className="flex items-center gap-3">
+          <div className="rounded-xl bg-emerald-100 text-emerald-700 p-2.5">
+            <Target size={22} />
+          </div>
+          <div>
+            <h1 className="h1">Adaptive Practice</h1>
+            <p className="muted mt-0.5">{deepLinkBloom ? `Targeting ${BLOOM_META[deepLinkBloom].label} level.` : "Questions targeted to your level."}</p>
+          </div>
         </div>
-        <div>
-          <h1 className="h1">Adaptive Practice</h1>
-          <p className="muted mt-0.5">{deepLinkBloom ? `Targeting ${BLOOM_META[deepLinkBloom].label} level.` : "Questions targeted to your level."}</p>
-        </div>
+        <CurrentGoalChip />
       </div>
 
       {/* "Today's focus" — preview before submit, full result after. */}
@@ -220,7 +271,7 @@ export default function StudentPracticePage() {
             <label className="label">What do you want to practise?</label>
             <input
               className="input"
-              placeholder="e.g. Photosynthesis, Quadratic equations, French Revolution"
+              placeholder={placeholderTopic(examGoal, learnerProfile)}
               value={topic}
               onChange={(e) => setTopic(e.target.value)}
               onKeyDown={(e) => {
@@ -229,9 +280,38 @@ export default function StudentPracticePage() {
               disabled={busy}
               maxLength={200}
             />
-            <p className="text-xs muted mt-1">
+            {/* Goal-aware suggested topics — tap to fill. Replaces the
+                old hardcoded "Photosynthesis" example that was wrong for
+                CAT / corporate / UPSC learners. */}
+            <div className="mt-2 flex flex-wrap gap-2">
+              {suggestedTopics(examGoal, learnerProfile).map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => setTopic(t)}
+                  className={`text-xs px-2.5 py-1 rounded-full border transition ${
+                    topic === t
+                      ? "bg-emerald-100 border-emerald-300 text-emerald-800 font-semibold"
+                      : "bg-white border-slate-200 text-slate-700 hover:border-emerald-300"
+                  }`}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+            <p className="text-xs muted mt-2">
               Be specific — &ldquo;Photosynthesis&rdquo; works better than &ldquo;Biology&rdquo;.
             </p>
+          </div>
+
+          {/* Marking scheme — sticky pre-fill from profile.last_marking_scheme. */}
+          <div>
+            <label className="label">Marking scheme</label>
+            <MarkingSchemePicker
+              value={markingScheme}
+              onChange={setMarkingScheme}
+              suggested={suggestedPreset}
+            />
           </div>
 
           {err && (
