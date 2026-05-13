@@ -15,9 +15,20 @@ import {
   type MarkingScheme,
 } from "@/lib/scoring";
 import { SCORING_PRESETS } from "@/lib/scoringPresets";
-import { Sparkles, Search, AlertOctagon, Crosshair, Trophy, Brain, Clock, Lock, Settings as SettingsIcon, CheckCircle2, XCircle, MinusCircle } from "lucide-react";
+import {
+  classifyQuizForRankPrediction,
+  type RankEligibility,
+} from "@/lib/rankPredictorEligibility";
+import { Sparkles, Search, AlertOctagon, Crosshair, Trophy, Brain, Clock, Lock, Info, Settings as SettingsIcon, CheckCircle2, XCircle, MinusCircle } from "lucide-react";
 
-type Detail = QuizAttempt & { quiz: { name: string; code: string } | null };
+// Extended detail to carry quiz subject + family — needed by the foolproof
+// gate around the Mock Rank Predictor surface (2026-05-13). The previous
+// `Detail` type only carried name + code, which is why the rank surface
+// happily appeared on a Java quiz.
+//
+// Column note: the quizzes table stores the user-supplied topic as `subject`
+// (migration 04), not `topic`. `topic` only lives on question_bank rows.
+type Detail = QuizAttempt & { quiz: { name: string; code: string; subject: string | null; topic_family: string | null } | null };
 
 /** Per-question review row. Joined from attempt_answers + question_bank
  *  so the student can see WHICH option they picked, the correct option,
@@ -63,7 +74,17 @@ export default function ResultsPage() {
   // ----- Mock Rank Predictor state -----
   const [rankBusy, setRankBusy] = useState(false);
   const [rankErr, setRankErr] = useState<string | null>(null);
-  const [rank, setRank] = useState<{ exam_type: string; percentile: number; predicted_air: number; total_candidates: number; recommendations: string[] } | null>(null);
+  const [rank, setRank] = useState<{
+    exam_type: string;
+    percentile: number;
+    predicted_air: number;
+    total_candidates: number;
+    recommendations: string[];
+    // Server-side foolproofing: snap CAT pick → JEE_MAIN if the quiz topic
+    // was "JEE Physics" etc. Surface to the user instead of silently doing it.
+    exam_type_override?: { from: string; to: string; reason: string } | null;
+    eligibility_note?: string | null;
+  } | null>(null);
   const [examType, setExamType] = useState<"JEE_MAIN" | "NEET" | "CAT" | "CUSTOM">("JEE_MAIN");
 
   // ----- Spaced Repetition enqueue state -----
@@ -111,9 +132,14 @@ export default function ResultsPage() {
   useEffect(() => {
     (async () => {
       const sb = supabaseBrowser();
+      // Pull subject + topic_family so the rank-predictor gate can decide
+      // whether the surface should appear at all (2026-05-13). Without
+      // these fields a Java quiz looked identical to a CAT mock to the UI.
+      // Column note: quizzes.subject is the user-supplied topic; the
+      // column literally named `topic` exists only on question_bank.
       const { data: a } = await sb
         .from("quiz_attempts")
-        .select("*, quiz:quizzes(name, code)")
+        .select("*, quiz:quizzes(name, code, subject, topic_family)")
         .eq("id", id)
         .single();
       setAttempt(a as Detail);
@@ -329,6 +355,8 @@ export default function ResultsPage() {
         predicted_air: j.predicted_air,
         total_candidates: j.total_candidates,
         recommendations: j.recommendations || [],
+        exam_type_override: j.exam_type_override ?? null,
+        eligibility_note: j.eligibility_note ?? null,
       });
     } catch (e) {
       setRankErr(e instanceof Error ? e.message : "Rank prediction failed");
@@ -815,72 +843,141 @@ export default function ResultsPage() {
       {/* ============ MOCK RANK PREDICTOR ============
           Pure UX layer that converts your raw score into a competitive-exam
           AIR estimate. Sits at the bottom of the page so it feels like the
-          finishing flourish on a mock test. */}
-      {attempt.submitted_at && (
-        <div className="card mt-4">
-          <div className="flex items-center justify-between gap-3 flex-wrap">
-            <div className="flex items-start gap-2">
-              <Trophy size={20} className="text-amber-700 mt-1 shrink-0" />
-              <div>
-                <h3 className="h2">Predict my rank</h3>
-                <p className="text-sm muted mt-1 max-w-md">
-                  See an estimated All-India Rank for this score against a JEE Main, NEET, or CAT-sized cohort.
-                </p>
-              </div>
-            </div>
-            <div className="flex gap-2 items-center flex-wrap">
-              <select
-                className="select"
-                value={examType}
-                onChange={(e) => setExamType(e.target.value as typeof examType)}
-              >
-                <option value="JEE_MAIN">JEE Main</option>
-                <option value="NEET">NEET</option>
-                <option value="CAT">CAT</option>
-                <option value="CUSTOM">Custom</option>
-              </select>
-              <button type="button" className="btn btn-primary" onClick={predictRank} disabled={rankBusy}>
-                {rankBusy ? <><span className="spinner" /> Calculating…</> : <><Trophy size={16} /> Predict rank</>}
-              </button>
-            </div>
-          </div>
+          finishing flourish on a mock test.
 
-          {rankErr && (
-            <div className="mt-3 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{rankErr}</div>
-          )}
+          Foolproof gate (2026-05-13): we classify the quiz against the same
+          eligibility module the backend uses. If the quiz is a corporate
+          skill (Java, Python, AWS, …) we replace the predictor with a
+          friendly "this isn't a competitive exam mock" note instead of
+          showing a dropdown that would just trigger a 422 from the server.
+          For real exam mocks we auto-default the exam_type dropdown to
+          the matching value so the student doesn't have to think. */}
+      {(() => {
+        if (!attempt.submitted_at) return null;
+        const eligibility: RankEligibility = classifyQuizForRankPrediction({
+          topic: attempt.quiz?.subject ?? null,
+          name: attempt.quiz?.name ?? null,
+          topicFamily: attempt.quiz?.topic_family ?? null,
+        });
 
-          {rank && (
-            <div className="mt-4 grid sm:grid-cols-3 gap-3">
-              <div className="rounded-lg border border-amber-200 bg-amber-50/40 p-3">
-                <div className="text-xs muted uppercase font-semibold">Percentile</div>
-                <div className="text-2xl font-bold mt-0.5">{rank.percentile.toFixed(1)}</div>
-              </div>
-              <div className="rounded-lg border border-amber-200 bg-amber-50/40 p-3">
-                <div className="text-xs muted uppercase font-semibold">Predicted AIR</div>
-                <div className="text-2xl font-bold mt-0.5">~{rank.predicted_air.toLocaleString()}</div>
-                <div className="text-[11px] muted mt-0.5">in {rank.total_candidates.toLocaleString()} candidates</div>
-              </div>
-              <div className="rounded-lg border border-amber-200 bg-amber-50/40 p-3">
-                <Link href="/student/rank" className="btn btn-secondary w-full">All predictions →</Link>
-              </div>
-
-              {rank.recommendations.length > 0 && (
-                <div className="sm:col-span-3">
-                  <div className="text-xs muted uppercase font-semibold mb-2">Where to gain marks fastest</div>
-                  <ul className="space-y-1.5 text-sm">
-                    {rank.recommendations.map((r, i) => (
-                      <li key={i} className="flex items-start gap-2">
-                        <span className="mt-0.5 inline-flex items-center justify-center w-5 h-5 rounded-full bg-amber-600 text-white text-xs font-bold shrink-0">{i + 1}</span>
-                        <span>{r}</span>
-                      </li>
-                    ))}
-                  </ul>
+        // ─ Refusal surface for corporate skill quizzes. Keep it short,
+        //   warm, and point to where rank prediction DOES belong.
+        if (eligibility.verdict === "corporate_skill") {
+          return (
+            <div className="card mt-4 bg-slate-50/60">
+              <div className="flex items-start gap-3">
+                <Info size={20} className="text-slate-500 mt-0.5 shrink-0" />
+                <div className="flex-1">
+                  <h3 className="h2">Rank prediction not available for this test</h3>
+                  <p className="text-sm muted mt-1 max-w-xl">
+                    {eligibility.reason} If you&apos;re prepping for JEE, NEET, or CAT,
+                    take a mock on that exam and predict your rank from there — or
+                    type a score directly on the{" "}
+                    <Link href="/student/rank" className="text-emerald-700 underline">Mock Rank Predictor</Link>.
+                  </p>
                 </div>
-              )}
+              </div>
             </div>
-          )}
-        </div>
-      )}
+          );
+        }
+
+        // ─ Predictor surface for everything else. Suggest the exam_type
+        //   the topic implies (e.g., quiz topic "CAT mock 1" → default
+        //   the dropdown to CAT). The user can still override.
+        const suggestedExam =
+          eligibility.verdict === "matches_known_exam"
+            ? eligibility.suggestedExamType
+            : null;
+        // Side effect: align local state with the suggestion on first render.
+        // Guarded so the user's manual change isn't clobbered.
+        if (suggestedExam && examType === "JEE_MAIN" && suggestedExam !== "JEE_MAIN" && !rank && !rankBusy) {
+          // Defer to next tick to avoid setState-during-render.
+          queueMicrotask(() => setExamType(suggestedExam));
+        }
+
+        return (
+          <div className="card mt-4">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div className="flex items-start gap-2">
+                <Trophy size={20} className="text-amber-700 mt-1 shrink-0" />
+                <div>
+                  <h3 className="h2">Predict my rank</h3>
+                  <p className="text-sm muted mt-1 max-w-md">
+                    See an estimated All-India Rank for this score against a JEE Main, NEET, or CAT-sized cohort.
+                    {suggestedExam && (
+                      <span className="block mt-1 text-xs text-amber-800">
+                        This test looks like a {suggestedExam.replace("_", " ")} mock — we&apos;ve pre-selected it below.
+                      </span>
+                    )}
+                  </p>
+                </div>
+              </div>
+              <div className="flex gap-2 items-center flex-wrap">
+                <select
+                  className="select"
+                  value={examType}
+                  onChange={(e) => setExamType(e.target.value as typeof examType)}
+                >
+                  <option value="JEE_MAIN">JEE Main</option>
+                  <option value="NEET">NEET</option>
+                  <option value="CAT">CAT</option>
+                  <option value="CUSTOM">Custom</option>
+                </select>
+                <button type="button" className="btn btn-primary" onClick={predictRank} disabled={rankBusy}>
+                  {rankBusy ? <><span className="spinner" /> Calculating…</> : <><Trophy size={16} /> Predict rank</>}
+                </button>
+              </div>
+            </div>
+
+            {rankErr && (
+              <div className="mt-3 text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{rankErr}</div>
+            )}
+
+            {rank && (
+              <div className="mt-4 grid sm:grid-cols-3 gap-3">
+                {/* If the server snapped exam_type (e.g., user picked CAT
+                    but quiz topic was JEE Physics), surface that loudly so
+                    the student sees an honest explanation rather than a
+                    silently-different prediction. */}
+                {rank.exam_type_override && (
+                  <div className="sm:col-span-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-[13px] text-amber-900 flex items-start gap-2">
+                    <Info size={14} className="mt-0.5 shrink-0" />
+                    <div>
+                      <strong>Heads up:</strong> {rank.exam_type_override.reason}
+                    </div>
+                  </div>
+                )}
+                <div className="rounded-lg border border-amber-200 bg-amber-50/40 p-3">
+                  <div className="text-xs muted uppercase font-semibold">Percentile</div>
+                  <div className="text-2xl font-bold mt-0.5">{rank.percentile.toFixed(1)}</div>
+                </div>
+                <div className="rounded-lg border border-amber-200 bg-amber-50/40 p-3">
+                  <div className="text-xs muted uppercase font-semibold">Predicted AIR ({rank.exam_type.replace("_", " ")})</div>
+                  <div className="text-2xl font-bold mt-0.5">~{rank.predicted_air.toLocaleString()}</div>
+                  <div className="text-[11px] muted mt-0.5">in {rank.total_candidates.toLocaleString()} candidates</div>
+                </div>
+                <div className="rounded-lg border border-amber-200 bg-amber-50/40 p-3">
+                  <Link href="/student/rank" className="btn btn-secondary w-full">All predictions →</Link>
+                </div>
+
+                {rank.recommendations.length > 0 && (
+                  <div className="sm:col-span-3">
+                    <div className="text-xs muted uppercase font-semibold mb-2">Where to gain marks fastest</div>
+                    <ul className="space-y-1.5 text-sm">
+                      {rank.recommendations.map((r, i) => (
+                        <li key={i} className="flex items-start gap-2">
+                          <span className="mt-0.5 inline-flex items-center justify-center w-5 h-5 rounded-full bg-amber-600 text-white text-xs font-bold shrink-0">{i + 1}</span>
+                          <span>{r}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {/* ============ REVIEW YOUR ANSWERS ============
           Per-question walkthrough so the student can see what they got

@@ -146,7 +146,7 @@ platform-admin invite flow at `/admin/onboard-school` instead.
 
 ---
 
-## 🆕 Latest session — 2026-05-13 (Confidence Insights rewrite + Speed Trainer cross-test non-repetition + learning-context everywhere + marking schemes everywhere + soft-delete classes + post-test review)
+## 🆕 Latest session — 2026-05-13 (Confidence Insights rewrite + Speed Trainer cross-test non-repetition + learning-context everywhere + marking schemes everywhere + soft-delete classes + post-test review + Mock Rank Predictor foolproofing)
 
 A multi-day push focused on making the student-facing surfaces (a) trust-worthy on repeated attempts, (b) self-explanatory in plain English, and (c) context-aware across every AI-generated surface — not just question generators. Also added the operational gaps Vipin called out: marking-scheme persistence, soft-delete with confirmation, co-teacher invite emails, and an in-product post-test review.
 
@@ -293,6 +293,51 @@ app/teacher/quizzes/new/page.tsx                         modified — neutralize
 2. **Re-run the CICS mainframe Speed Trainer back-to-back** to verify the JSONB-source fix — dev console should show `history=N` with N>0 on the second run.
 3. **Apply migrations 77 + 78** to the pilot Supabase (`profiles.last_marking_scheme`, `classes.status` etc.) — code already lands gracefully if columns are missing, but the picker won't persist and soft-delete will throw without them.
 4. Optional: delete test attempt `307fccdd-713c-47d4-8b0c-a4aff00048ca` on `pplus.arjun` (Practice: Kubernetes pod scheduling) — leftover from session debugging.
+
+### 9. Mock Rank Predictor foolproofing — refuse rank for non-exam mocks
+
+User report: *"Users take a test on Java, but the mock rank predictor can predict rank on CAT — can you check and make it foolproof?"*
+
+Reproduced exactly: a student takes a Java (or Kubernetes, or AWS, or any corporate-skill) quiz, opens `/student/results/[id]`, picks **CAT** from the Predict-my-rank dropdown, and BloomIQ happily returns a CAT All-India Rank. A 50-question Java MCQ does not map to a CAT cohort and the resulting "AIR" was misleading. Two compounding problems:
+
+1. `/api/rank/predict` silently coerced any unknown `exam_type` to `JEE_MAIN`, hiding client bugs behind a default the student never picked.
+2. The route never looked at what the quiz was actually about, so the same Kubernetes attempt could be scored against the CAT / NEET / JEE_MAIN cohort interchangeably.
+
+**Foolproof fix at three layers, single source of truth:**
+
+* **`lib/rankPredictorEligibility.ts` (new)** — classifies a quiz by tokenising `subject + name + topic_family` into one of four verdicts:
+  * `matches_known_exam` (JEE / NEET / CAT) — auto-suggests the right `exam_type`.
+  * `competitive_exam_other` (GMAT / GATE / UPSC / IELTS / BITSAT / …) — allows with a `CUSTOM`-cohort fallback.
+  * `corporate_skill` (Java / Python / AWS / Kubernetes / Docker / React / Postgres / …) — hard refuse.
+  * `generic` — academic subject or unknown; allowed with a "rough benchmark only" note.
+  Token-boundary safety means "Javelin throw" doesn't match JAVA, "Catalysis" doesn't match CAT. Also exports `validateExamType` + `validateScorePair` helpers that reject unknown exam types, NaN / Infinity / negative / over-max scores, and zero-length tests.
+
+* **`app/api/rank/predict/route.ts`** — joins `quizzes(subject, name, topic_family)` and runs the classifier when `attempt_id` is set. Corporate-skill quizzes return **HTTP 422 `not_a_competitive_exam_mock`** with a clear, friendly explanation. When the quiz topic implies a different rank-baseline exam than the caller picked (e.g., quiz topic = "CAT mock 1" but `exam_type=JEE_MAIN`), the route auto-snaps `exam_type` to the topic-matched value and returns `exam_type_override: { from, to, reason }` so the UI can explain. Strict input validation replaces the silent JEE_MAIN coercion.
+
+* **`app/student/results/[id]/page.tsx`** — gates the **Predict my rank** surface with the same classifier (single source of truth). Corporate-skill quizzes render a friendly "Rank prediction not available for this test" card instead of the dropdown, with a link to the standalone `/student/rank` page for users who do want to type a JEE/NEET/CAT score directly. Known-exam quizzes auto-default the dropdown to the matching exam ("This test looks like a CAT mock — we've pre-selected it below"). Any server-side `exam_type_override` is surfaced loudly in an amber banner.
+
+**Column note** that bit me during testing: the `quizzes` table stores the user-supplied topic as `subject` (migration 04), **not** `topic` — the literal `topic` column lives only on `question_bank` rows. First pass used `quiz:quizzes(topic, …)` and every attempt-based call returned "Attempt not found" because the join column didn't exist. Fixed across route, types, UI fetch, and classifier call.
+
+**Verification:**
+
+* **`scripts/test-rank-predictor-eligibility.mjs`** — 55 standalone smoke tests (no test framework needed) pinning the classifier, validators, and token-boundary safety. Run with:
+  ```bash
+  node --experimental-strip-types scripts/test-rank-predictor-eligibility.mjs
+  ```
+* `tsc --noEmit -p tsconfig.check.json` clean on touched files (the `rate.retryAfterSec` narrowing warnings are pre-existing across every route in the codebase, not introduced here).
+* **Live browser test** via Claude-in-Chrome on `localhost:3000` confirmed end-to-end:
+  * Kubernetes attempt + `exam_type: CAT` → **422 refusal**, UI shows new "Rank prediction not available" card.
+  * "Practice: CAT exam" attempt + `exam_type: JEE_MAIN` → **200** with auto-snap to CAT and `exam_type_override` banner.
+  * Generic-math (LCM) + CAT → **200** with eligibility_note "general academic subject — rough benchmark only".
+  * NaN / negative / raw>max / unknown `exam_type` → **400** each with clean error codes instead of silent coercion.
+
+**Files touched:**
+```
+lib/rankPredictorEligibility.ts                          new — eligibility classifier + strict validators
+scripts/test-rank-predictor-eligibility.mjs              new — 55 smoke tests
+app/api/rank/predict/route.ts                            modified — strict validation, eligibility gate, exam_type override
+app/student/results/[id]/page.tsx                        modified — UI gate for non-exam mocks, suggested exam_type, override banner
+```
 
 ---
 

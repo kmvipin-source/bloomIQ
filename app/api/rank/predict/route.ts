@@ -3,6 +3,12 @@ import { groqJSON } from "@/lib/groq";
 import { BLOOM_LEVELS, type BloomLevel } from "@/lib/bloom";
 import { getBearer, supabaseServer } from "@/lib/supabase/server";
 import { checkRateLimit } from "@/lib/rateLimit";
+import {
+  classifyQuizForRankPrediction,
+  validateExamType,
+  validateScorePair,
+  type RankExamType,
+} from "@/lib/rankPredictorEligibility";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -19,9 +25,28 @@ export const maxDuration = 30;
 // percentile, and percentile × cohort size = AIR estimate. Then asks Groq for
 // 3 high-leverage recommendations based on the student's weakest Bloom level
 // + topic.
+//
+// Foolproofing (2026-05-13)
+// -------------------------
+// Until today, a student could take a Java quiz, hit "Predict my rank → CAT"
+// and BloomIQ would return a CAT All-India Rank. That's nonsense. The route
+// now:
+//   1. Strictly validates exam_type instead of silently coercing unknown
+//      values to JEE_MAIN.
+//   2. Strictly validates the score pair (no NaN/Infinity/negative/over-max).
+//   3. When attempt_id is supplied, joins the quiz's topic/name/topic_family
+//      and runs lib/rankPredictorEligibility.classifyQuizForRankPrediction.
+//      If the quiz is clearly a corporate / programming skill (Java, AWS,
+//      Kubernetes, etc.) → refuse with HTTP 422 and a clear message.
+//   4. If the topic strongly suggests a different rank-baseline exam than
+//      what the caller asked for (e.g. quiz topic = "JEE Physics" but
+//      exam_type = "CAT") → snap exam_type to the topic-matched value and
+//      surface exam_type_override so the UI can explain.
 // =============================================================================
 
-type ExamType = "JEE_MAIN" | "NEET" | "CAT" | "CUSTOM";
+// Re-export the type from the shared module so existing code in this file
+// keeps reading naturally. Same four values as before.
+type ExamType = RankExamType;
 
 const EXAM_BASELINES: Record<ExamType, { totalCandidates: number; meanPct: number; stdDevPct: number; label: string }> = {
   // Numbers are rough order-of-magnitude figures used purely for calibration.
@@ -104,10 +129,6 @@ Write exactly 3 directives (one sentence each, imperative). Each focused on the 
 Respond with VALID JSON only:
 { "recommendations": ["...", "...", "..."] }`;
 
-function isExamType(s: string): s is ExamType {
-  return s === "JEE_MAIN" || s === "NEET" || s === "CAT" || s === "CUSTOM";
-}
-
 export async function POST(req: Request) {
   try {
     const token = getBearer(req);
@@ -119,8 +140,23 @@ export async function POST(req: Request) {
     if (!rate.allowed) return NextResponse.json({ error: "Too many requests.", code: "rate_limited" }, { status: 429, headers: { "Retry-After": String(rate.retryAfterSec) } });
 
     const body = await req.json().catch(() => ({}));
-    const examTypeRaw = String(body.exam_type || "JEE_MAIN");
-    const exam_type: ExamType = isExamType(examTypeRaw) ? examTypeRaw : "JEE_MAIN";
+
+    // ── 1. Strict exam_type validation. Previously: silent fallback to
+    //      JEE_MAIN on any unknown value. Now: 400 with a clear message,
+    //      so a typo in the client doesn't ship a JEE prediction the
+    //      student never asked for. Empty/undefined → CUSTOM (generic
+    //      mock cohort) so the user-facing form keeps working without
+    //      forcing every caller to pick a value.
+    const examVal = validateExamType(body.exam_type);
+    if (examVal.ok !== true) {
+      return NextResponse.json({ error: examVal.error, code: "bad_exam_type" }, { status: 400 });
+    }
+    let exam_type: ExamType = examVal.value;
+    // Will be set later when we auto-snap to a topic-matched exam.
+    let exam_type_override: { from: ExamType; to: ExamType; reason: string } | null = null;
+    // Eligibility advisory — surfaced to the UI so curious students can
+    // see WHY their pick was accepted, snapped, or refused.
+    let eligibility_note: string | null = null;
     const target_air: number | null = Number.isFinite(Number(body.target_air)) ? Number(body.target_air) : null;
 
     let raw_score: number;
@@ -130,15 +166,88 @@ export async function POST(req: Request) {
 
     if (body.attempt_id) {
       attempt_id = String(body.attempt_id);
+      // ── 2. Join quizzes(subject, name, topic_family) so we can run the
+      //      eligibility classifier. Older code only loaded score+total
+      //      and trusted whatever exam_type the client sent — that's how
+      //      "Java quiz → CAT rank" slipped through.
+      //
+      //      Column note: the quizzes table stores the user-supplied topic
+      //      as `subject` (migration 04), not `topic`. (`topic` only lives
+      //      on `question_bank` rows.) The classifier tokenises whatever
+      //      labels we hand it, so subject + name + topic_family covers
+      //      every place an exam-or-skill name could surface.
       const { data: att, error: attErr } = await sb
         .from("quiz_attempts")
-        .select("id, student_id, score, total")
+        .select("id, student_id, score, total, quiz:quizzes(subject, name, topic_family)")
         .eq("id", attempt_id)
         .single();
       if (attErr || !att) return NextResponse.json({ error: "Attempt not found" }, { status: 404 });
       if (att.student_id !== user.id) return NextResponse.json({ error: "Not yours" }, { status: 403 });
       raw_score = att.score || 0;
       max_score = att.total || 0;
+
+      // ── 3. Classify the quiz. The single source of truth lives in
+      //      lib/rankPredictorEligibility — the results page UI uses the
+      //      same function to decide whether to even render the button.
+      //      Supabase's typed select returns the relation as an array OR
+      //      an object depending on inference; normalise to a flat shape.
+      const quizRel = (att as { quiz: unknown }).quiz;
+      type QuizMeta = { subject: string | null; name: string | null; topic_family: string | null };
+      const quizMeta: QuizMeta =
+        Array.isArray(quizRel)
+          ? (quizRel[0] as QuizMeta) ?? { subject: null, name: null, topic_family: null }
+          : (quizRel as QuizMeta | null) ?? { subject: null, name: null, topic_family: null };
+
+      const eligibility = classifyQuizForRankPrediction({
+        topic: quizMeta.subject,
+        name: quizMeta.name,
+        topicFamily: quizMeta.topic_family,
+      });
+
+      if (eligibility.verdict === "corporate_skill") {
+        // Hard refuse. This is the Java / Python / AWS path. We return
+        // 422 (Unprocessable Entity) rather than 400 because the request
+        // is syntactically fine — it just isn't semantically meaningful.
+        return NextResponse.json(
+          {
+            error: eligibility.reason,
+            code: "not_a_competitive_exam_mock",
+            quiz: { subject: quizMeta.subject, name: quizMeta.name },
+            eligibility,
+          },
+          { status: 422 }
+        );
+      }
+
+      if (eligibility.verdict === "matches_known_exam") {
+        // The quiz topic itself names a rank-baseline exam (e.g., "CAT mock 1").
+        // If the caller picked a *different* exam_type, snap to the topic's
+        // exam — the student is much more likely to have meant "predict
+        // against the same exam this quiz is for" than to have intentionally
+        // crossed wires. Surface the override so the UI can explain.
+        if (exam_type !== eligibility.suggestedExamType) {
+          exam_type_override = {
+            from: exam_type,
+            to: eligibility.suggestedExamType,
+            reason: `Quiz topic matched "${eligibility.matchedToken}", so the rank was computed against the ${eligibility.suggestedExamType} cohort instead of ${exam_type}.`,
+          };
+          exam_type = eligibility.suggestedExamType;
+        }
+        eligibility_note = eligibility.reason;
+      } else if (eligibility.verdict === "competitive_exam_other") {
+        // GMAT / GATE / etc. — we don't have a rank baseline for these.
+        // Force CUSTOM unless the caller explicitly picked one of the
+        // four supported exams; CUSTOM's generic cohort is more honest
+        // than pretending a GATE score maps to a JEE cohort.
+        if (exam_type === "CUSTOM") {
+          eligibility_note = eligibility.reason;
+        } else {
+          eligibility_note = `${eligibility.reason} Used ${exam_type} cohort as requested.`;
+        }
+      } else {
+        // generic / academic-subject / unknown — allow with the user's pick.
+        eligibility_note = eligibility.reason;
+      }
 
       // Bloom breakdown for the recommendations call.
       const { data: ans } = await sb
@@ -155,15 +264,28 @@ export async function POST(req: Request) {
         .filter((l) => counts[l] && counts[l].total > 0)
         .map((l) => ({ bloom_level: l, correct: counts[l].correct, total: counts[l].total }));
     } else {
-      raw_score = Number(body.raw_score);
-      max_score = Number(body.max_score);
-      if (!Number.isFinite(raw_score) || !Number.isFinite(max_score) || max_score <= 0) {
-        return NextResponse.json({ error: "Provide attempt_id or raw_score+max_score." }, { status: 400 });
+      // Ad-hoc path (/student/rank form). The user is explicitly typing a
+      // raw score + max_score against an explicitly-picked exam, so we
+      // trust their exam_type choice — but still hard-validate the numbers.
+      const scoreVal = validateScorePair(body.raw_score, body.max_score);
+      if (scoreVal.ok !== true) {
+        return NextResponse.json({ error: scoreVal.error, code: "bad_score_pair" }, { status: 400 });
       }
+      raw_score = scoreVal.raw;
+      max_score = scoreVal.max;
     }
 
+    // Belt-and-braces clamp. validateScorePair already caught these for
+    // the ad-hoc path; for the attempt path we re-check in case a corrupt
+    // attempt row slips through.
+    if (!Number.isFinite(raw_score) || !Number.isFinite(max_score)) {
+      return NextResponse.json({ error: "Attempt has non-numeric score data — cannot predict rank." }, { status: 400 });
+    }
     if (max_score <= 0) {
       return NextResponse.json({ error: "Cannot predict rank with zero questions." }, { status: 400 });
+    }
+    if (raw_score < 0 || raw_score > max_score) {
+      return NextResponse.json({ error: `Score (${raw_score}/${max_score}) is out of range.` }, { status: 400 });
     }
     const scorePct = Math.max(0, Math.min(100, (raw_score / max_score) * 100));
     const { percentile, air, total } = pctToAir(scorePct, exam_type);
@@ -224,6 +346,8 @@ Return the 3-recommendation JSON.`;
         score_margin_pp: Number(marginPct.toFixed(2)),
         total_candidates: total,
         recommendations,
+        exam_type_override,
+        eligibility_note,
         warning: insErr.message,
       });
     }
@@ -243,6 +367,8 @@ Return the 3-recommendation JSON.`;
       total_candidates: total,
       recommendations,
       weakest_areas,
+      exam_type_override,
+      eligibility_note,
       // Surface the model name + assumptions so the UI can display them
       // honestly rather than presenting AIR as if it were precise.
       model: {
