@@ -4,6 +4,7 @@ import {
   consumeLifetimeUse,
   type LifetimeFeature,
 } from "@/lib/freeQuota";
+import { checkRateLimit } from "@/lib/rateLimit";
 
 export const runtime = "nodejs";
 
@@ -29,17 +30,13 @@ export const runtime = "nodejs";
 // flexibility — callers should not abuse this to fake usage.
 // =============================================================================
 
+// Phase H: restricted to features that DON'T have a dedicated server
+// route. Allowing the full LifetimeFeature union let a logged-in user
+// pre-burn any of their lifetime slots via this cheap endpoint, e.g. to
+// grief their own quota or test bypasses. Each server-gated feature
+// now claims its own slot via consumeLifetimeUse inside its own route.
 const ALLOWED_KEYS: LifetimeFeature[] = [
   "voice_teacher",
-  // Other lifetime features are gated at their own backend routes; touching
-  // them via this endpoint is allowed but redundant. We don't reject so the
-  // client UX stays simple.
-  "xray",
-  "rank",
-  "visualizer",
-  "trap_detector",
-  "knowledge_graph",
-  "bloom_score",
 ];
 
 export async function POST(req: Request) {
@@ -49,6 +46,14 @@ export async function POST(req: Request) {
     const sb = supabaseServer(token);
     const { data: { user } } = await sb.auth.getUser();
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+    const rate = checkRateLimit(user.id, "feature.touch", { capacity: 5, refillPerHour: 20 });
+    if (!rate.allowed) {
+      return NextResponse.json(
+        { error: "Too many requests.", code: "rate_limited" },
+        { status: 429, headers: { "Retry-After": String(rate.retryAfterSec) } },
+      );
+    }
 
     const body = await req.json().catch(() => ({}));
     const key = String(body.key || "") as LifetimeFeature;

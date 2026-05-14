@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
+import MobileNav from "@/components/MobileNav";
 import { supabaseBrowser } from "@/lib/supabase/client";
 
 /**
@@ -71,7 +72,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   return (
     <div className="flex min-h-screen">
       <Sidebar role="platform_admin" />
-      <main className="flex-1 p-8 overflow-auto">{children}</main>
+      <MobileNav role="platform_admin" />
+      <main className="flex-1 p-4 md:p-8 overflow-auto">{children}</main>
     </div>
   );
 }

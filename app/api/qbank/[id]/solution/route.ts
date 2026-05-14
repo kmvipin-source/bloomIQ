@@ -73,15 +73,21 @@ export async function GET(req: Request, ctx: RouteCtx) {
     const rate = checkRateLimit(user.id, "qbank.solution", { capacity: 20, refillPerHour: 60 });
     if (!rate.allowed) return NextResponse.json({ error: "Too many requests.", code: "rate_limited" }, { status: 429, headers: { "Retry-After": String(rate.retryAfterSec) } });
 
-    const cached = cacheGet(id);
-    if (cached) return NextResponse.json(cached);
-
+    // RLS visibility check FIRST. The previous implementation served
+    // the cached solution before checking visibility, which let any
+    // authenticated user read a private teacher-bank question's
+    // worked solution as long as a prior caller had already minted
+    // it. Reading via the user-token client enforces RLS — a 404
+    // here means the caller has no policy-granted read on the row.
     const { data: q } = await sb
       .from("question_bank")
       .select("id, stem, options, correct_index, explanation, topic, bloom_level, status")
       .eq("id", id)
       .maybeSingle();
     if (!q) return NextResponse.json({ error: "Question not found." }, { status: 404 });
+
+    const cached = cacheGet(id);
+    if (cached) return NextResponse.json(cached);
     const source = q as SourceRow;
     const opts = asOptions(source.options);
     if (!opts) return NextResponse.json({ error: "Question has malformed options." }, { status: 400 });

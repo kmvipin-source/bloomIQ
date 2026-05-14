@@ -558,14 +558,21 @@ export default function TakeQuiz() {
             ))}
           </div>
           {idx < questions.length - 1 ? (
-            <button type="button" className="btn btn-primary" onClick={() => setIdx((i) => Math.min(questions.length - 1, i + 1))}>
+            <button type="button" aria-label="Go to next question" className="btn btn-primary" onClick={() => setIdx((i) => Math.min(questions.length - 1, i + 1))}>
               Next <ChevronRight size={16} />
             </button>
           ) : (
-            <button type="button" className="btn btn-primary" disabled={submitting} onClick={() => {
-              if (answered < questions.length && !confirm(`You haven't answered ${questions.length - answered} question(s). Submit anyway?`)) return;
-              submit();
-            }}>
+            <button
+              type="button"
+              aria-label={submitting ? "Submitting your answers" : "Submit quiz"}
+              aria-busy={submitting}
+              className="btn btn-primary"
+              disabled={submitting}
+              onClick={() => {
+                if (answered < questions.length && !confirm(`You haven't answered ${questions.length - answered} question(s). Submit anyway?`)) return;
+                submit();
+              }}
+            >
               {submitting ? <><span className="spinner" /> Submitting…</> : "Submit"}
             </button>
           )}

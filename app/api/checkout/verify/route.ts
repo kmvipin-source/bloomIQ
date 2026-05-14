@@ -194,6 +194,30 @@ export async function POST(req: Request) {
     };
     const legacyTier = legacyTierMap[planRow.tier] || planRow.tier;
 
+    // Reject school students from this flow. School students sit on a
+    // shared subscription keyed on school_id with user_id=null; the
+    // .eq("user_id", user.id) lookup below would miss it and the insert
+    // branch would create a second personal subscription, leaving the
+    // student with two rows and inconsistent feature resolution.
+    // School billing happens via the B2B admin flow, not self-checkout.
+    {
+      const { data: schoolProf } = await admin
+        .from("profiles")
+        .select("school_id, is_school_student")
+        .eq("id", user.id)
+        .maybeSingle();
+      if (schoolProf?.is_school_student || schoolProf?.school_id) {
+        return NextResponse.json(
+          {
+            error:
+              "School students cannot self-purchase. Speak to your school admin — they handle billing for the whole school.",
+            code: "school_student_self_checkout_blocked",
+          },
+          { status: 403 },
+        );
+      }
+    }
+
     // 4) Update-or-insert the subscription row. Pull expires_at first so
     // we can anchor the new term correctly when this is an UPGRADE on
     // top of an active subscription.

@@ -66,14 +66,27 @@ export async function POST(req: Request, ctx: Ctx) {
       const expiresMs = new Date(subRow.expires_at).getTime();
       const suspendedMs = new Date(subRow.suspended_at).getTime();
       const nowMs = Date.now();
-      // Always roll the cycle forward by the full suspension duration.
-      // The previous implementation only rolled when expiry had already
-      // elapsed — schools suspended mid-cycle and reactivated weeks
-      // later silently lost those weeks. Now: gap = now - suspended_at
-      // and the new expiry shifts forward by exactly that gap.
-      if (Number.isFinite(expiresMs) && Number.isFinite(suspendedMs) && expiresMs > suspendedMs) {
+      // Two cases the previous implementation got wrong:
+      //   (a) suspended_at < expires_at (mid-cycle suspend) — original
+      //       fix shifts by (now - suspended_at). Still correct.
+      //   (b) suspended_at >= expires_at (suspended AFTER expiry — the
+      //       common non-payment past-due case). Original skipped this
+      //       branch entirely, leaving expires_at in the past so
+      //       featureAccess treated the reactivated school as expired
+      //       immediately. Now: roll forward to nowMs + (expiresMs
+      //       - suspendedMs) which is negative-or-zero, so just snap
+      //       to now and grant one extra cycle anchor via
+      //       Math.max(now, expiresMs + gap).
+      if (Number.isFinite(expiresMs) && Number.isFinite(suspendedMs)) {
         const gapMs = Math.max(0, nowMs - suspendedMs);
-        rolledExpiresAt = new Date(expiresMs + gapMs).toISOString();
+        const candidate = expiresMs + gapMs;
+        // If the school was suspended AFTER expiry, expiresMs+gap still
+        // lands at or before suspended_at; snap to now so the school
+        // gets at minimum "reactivated NOW" as the new anchor and
+        // doesn't immediately re-expire. Operators expecting a full
+        // fresh cycle should call mark-paid (which sets the new term)
+        // — reactivate alone restores access, not the contract.
+        rolledExpiresAt = new Date(Math.max(candidate, nowMs)).toISOString();
       }
     }
 
