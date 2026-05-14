@@ -76,7 +76,9 @@ export async function POST(req: Request) {
     });
     if (!ord.ok) {
       const t = await ord.text();
-      return NextResponse.json({ error: `Could not fetch order: ${t.slice(0, 200)}` }, { status: 500 });
+      // eslint-disable-next-line no-console
+      console.error("[checkout/verify] order fetch failed:", t.slice(0, 200));
+      return NextResponse.json({ error: "Could not verify payment. Please contact support." }, { status: 502 });
     }
     const order = (await ord.json()) as {
       // The actual amount Razorpay charged the customer, in paise. We
@@ -223,10 +225,41 @@ export async function POST(req: Request) {
     // top of an active subscription.
     const { data: existing, error: selErr } = await admin
       .from("subscriptions")
-      .select("id, expires_at, school_id")
+      .select("id, expires_at, school_id, tier, status")
       .eq("user_id", user.id)
       .maybeSingle();
     if (selErr) return NextResponse.json({ error: selErr.message }, { status: 500 });
+
+    // Reject downgrade-via-checkout. The extend-on-upgrade math below
+    // anchors the new term on oldExpiresMs, so a higher-tier user
+    // paying for a lower-tier plan would keep their longer Plus window
+    // at the cheaper Premium price. Force the user to wait out their
+    // current term (or contact support for a refund/proration) instead
+    // of silently overcharging or under-charging themselves.
+    const TIER_RANK: Record<string, number> = {
+      free: 0,
+      individual: 1,
+      premium: 2,
+      premium_plus: 3,
+    };
+    const existingTier = (existing as { tier?: string | null } | null)?.tier ?? null;
+    const existingStatus = (existing as { status?: string | null } | null)?.status ?? null;
+    if (
+      existingTier &&
+      existingStatus === "active" &&
+      TIER_RANK[existingTier] !== undefined &&
+      TIER_RANK[legacyTier] !== undefined &&
+      TIER_RANK[legacyTier] < TIER_RANK[existingTier]
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "You're already on a higher-tier plan. To downgrade, contact support — checkout would extend your current plan window at the lower price.",
+          code: "downgrade_blocked",
+        },
+        { status: 409 },
+      );
+    }
 
     // ===== Upgrade-aware expiry (Model B: extension) =====
     // Anchor the new term off whichever is later — now, or the old

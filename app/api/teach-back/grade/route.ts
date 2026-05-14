@@ -83,9 +83,13 @@ function normalizeGrade(raw: Record<string, unknown>): Grade {
   const rawScores = (raw.bloom_scores as Record<string, unknown>) || {};
   const bloom_scores = {} as Record<BloomLevel, number>;
   for (const lvl of BLOOM_LEVELS) bloom_scores[lvl] = clamp05(rawScores[lvl]);
-  const strengths = Array.isArray(raw.strengths) ? (raw.strengths as unknown[]).map(String).slice(0, 6) : [];
-  const gaps = Array.isArray(raw.gaps) ? (raw.gaps as unknown[]).map(String).slice(0, 6) : [];
-  const follow_up_q = typeof raw.follow_up_q === "string" ? raw.follow_up_q : "";
+  // Per-item length cap so the LLM can't pad a single strength/gap with
+  // a paragraph that bloats teach_back_sessions rows. follow_up_q also
+  // capped — a 4KB question doesn't help anyone.
+  const capStr = (s: unknown): string => String(s).trim().replace(/[<>]/g, "").slice(0, 220);
+  const strengths = Array.isArray(raw.strengths) ? (raw.strengths as unknown[]).map(capStr).filter(Boolean).slice(0, 6) : [];
+  const gaps = Array.isArray(raw.gaps) ? (raw.gaps as unknown[]).map(capStr).filter(Boolean).slice(0, 6) : [];
+  const follow_up_q = typeof raw.follow_up_q === "string" ? capStr(raw.follow_up_q).slice(0, 400) : "";
   return { bloom_scores, strengths, gaps, follow_up_q };
 }
 

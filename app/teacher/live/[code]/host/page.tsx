@@ -56,9 +56,13 @@ export default function LiveHostPage() {
   const [copied, setCopied] = useState(false);
   const advancedRef = useRef<number>(-1); // last idx auto-advanced
 
-  // Poll state every 2s.
+  // Poll state every 2s. AbortController on each tick so in-flight
+  // requests are cancelled when the component unmounts (avoids
+  // bandwidth waste + late-resolved promises updating state on a dead
+  // tree).
   useEffect(() => {
     let stopped = false;
+    const ctl = new AbortController();
     async function tick() {
       try {
         const sb = supabaseBrowser();
@@ -66,6 +70,7 @@ export default function LiveHostPage() {
         if (!session) return;
         const res = await fetch(`/api/live/${code}/state`, {
           headers: { Authorization: `Bearer ${session.access_token}` },
+          signal: ctl.signal,
         });
         const data = await res.json();
         if (!res.ok) {
@@ -88,17 +93,18 @@ export default function LiveHostPage() {
         if ((data as State)?.session?.status === "ended") {
           const lb = await fetch(`/api/live/${code}/leaderboard`, {
             headers: { Authorization: `Bearer ${session.access_token}` },
+            signal: ctl.signal,
           });
           const ld = await lb.json();
           if (lb.ok && !stopped) setLeaderboard((ld.rows as LeaderRow[]) || []);
         }
       } catch {
-        /* polling errors are silent */
+        /* polling errors are silent — includes AbortError on unmount */
       }
     }
     tick();
     const id = setInterval(tick, 2000);
-    return () => { stopped = true; clearInterval(id); };
+    return () => { stopped = true; ctl.abort(); clearInterval(id); };
   }, [code]);
 
   // Local clock for countdown.

@@ -99,7 +99,9 @@ export async function POST(req: Request) {
     });
     if (!r.ok) {
       const errText = await r.text();
-      return NextResponse.json({ error: `Razorpay order failed: ${errText.slice(0, 200)}` }, { status: 500 });
+      // eslint-disable-next-line no-console
+      console.error("[checkout] Razorpay order create failed:", errText.slice(0, 200));
+      return NextResponse.json({ error: "Could not start checkout. Please try again." }, { status: 502 });
     }
     const order = (await r.json()) as { id: string; amount: number; currency: string };
 

@@ -209,7 +209,11 @@ export async function POST(req: Request, ctx: RouteContext) {
     // so /reactivate and /mark-paid produce the same trail. Skip for
     // pure "I'm paying my next invoice on time" flows since no
     // reactivation happened.
-    if ((sub as { status?: string | null }).status === "suspended") {
+    // Also stamp the reactivation pair when the call clears past_due —
+    // an admin marking a past_due school paid is still an unblock event
+    // and finance ops want the same audit row /reactivate would write.
+    const prevStatus = (sub as { status?: string | null }).status;
+    if (prevStatus === "suspended" || prevStatus === "past_due") {
       update.reactivated_at = new Date().toISOString();
       update.reactivated_by = user.id;
     }

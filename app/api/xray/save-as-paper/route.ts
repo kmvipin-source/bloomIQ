@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getBearer, supabaseServer } from "@/lib/supabase/server";
+import { checkRateLimit } from "@/lib/rateLimit";
 
 export const runtime = "nodejs";
 
@@ -25,6 +26,17 @@ export async function POST(req: Request) {
     const sb = supabaseServer(token);
     const { data: { user } } = await sb.auth.getUser();
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+    // X-Ray itself is lifetime-gated, but the duplicate-as-paper step was
+    // unlimited — a teacher could spam paper inserts for every saved
+    // X-Ray. Rate-limit at the cheap "save" boundary.
+    const rate = checkRateLimit(user.id, "xray.save-as-paper", { capacity: 10, refillPerHour: 30 });
+    if (!rate.allowed) {
+      return NextResponse.json(
+        { error: "Too many requests.", code: "rate_limited" },
+        { status: 429, headers: { "Retry-After": String(rate.retryAfterSec) } },
+      );
+    }
 
     const body = await req.json().catch(() => ({}));
     const xrayId: string = String(body.xray_id || "").trim();

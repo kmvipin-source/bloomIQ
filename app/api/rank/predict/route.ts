@@ -317,7 +317,14 @@ Return the 3-recommendation JSON.`;
         const raw = await groqJSON(SYSTEM, userPrompt);
         const arr = (raw as { recommendations?: unknown }).recommendations;
         if (Array.isArray(arr)) {
-          recommendations = (arr as unknown[]).map(String).map((s) => s.trim()).filter(Boolean).slice(0, 3);
+          // Cap per-item length so the LLM can't pad each bullet with
+          // a 5000-char paragraph that pollutes mock_rank_predictions.
+          // 280 chars is roughly the actionable-recommendation length.
+          recommendations = (arr as unknown[])
+            .map(String)
+            .map((s) => s.trim().slice(0, 280))
+            .filter(Boolean)
+            .slice(0, 3);
         }
       }
     } catch { /* keep recommendations empty */ }

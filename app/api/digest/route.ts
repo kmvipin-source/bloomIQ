@@ -93,9 +93,23 @@ export async function POST(req: Request) {
     void prof;
     const to = (await sb.auth.getUser()).data.user?.email;
     if (!to) return NextResponse.json({ error: "No email on account" }, { status: 400 });
-    await transporter.sendMail({ from: DIGEST_FROM || EMAIL, to, subject, html });
+    try {
+      await transporter.sendMail({ from: DIGEST_FROM || EMAIL, to, subject, html });
+    } catch (mailErr) {
+      // SMTP errors can carry the EMAIL / PASS values in their stack /
+      // message string. Don't echo them to the client — log server-side
+      // and return an opaque message.
+      // eslint-disable-next-line no-console
+      console.error("[digest] sendMail failed:", mailErr instanceof Error ? mailErr.message : mailErr);
+      return NextResponse.json(
+        { error: "Could not send digest email. Please try again later." },
+        { status: 502 },
+      );
+    }
     return NextResponse.json({ ok: true, message: `Digest sent to ${to}.` });
   } catch (e) {
-    return NextResponse.json({ error: e instanceof Error ? e.message : "Failed" }, { status: 500 });
+    // eslint-disable-next-line no-console
+    console.error("[digest] failed:", e instanceof Error ? e.message : e);
+    return NextResponse.json({ error: "Digest failed." }, { status: 500 });
   }
 }
