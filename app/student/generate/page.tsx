@@ -1,6 +1,6 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { supabaseBrowser } from "@/lib/supabase/client";
 import { toast } from "@/lib/toast";
@@ -19,6 +19,13 @@ import MarkingSchemePicker from "@/components/MarkingSchemePicker";
 import type { MarkingScheme } from "@/lib/scoring";
 import { suggestPresetForGoal, type ScoringPresetKey } from "@/lib/scoringPresets";
 import { suggestedTopics, placeholderTopic } from "@/lib/topicSuggestions";
+import { classifyQuizForRankPrediction } from "@/lib/rankPredictorEligibility";
+import { shouldUseCompetitiveExamFraming } from "@/lib/examDetectors";
+import GenerateContextChips, { type GenerateContext } from "@/components/GenerateContextChips";
+// 2026-05-13 evening: audience-level is now fully optional and starts as
+// null. No need to derive a profile-driven default — the GenerateContextChips
+// component handles its own state. Old defaultAudienceLevelFor /
+// buildLearningContext imports removed.
 
 type Source = "topic_only" | "topic_syllabus" | "notes" | "image" | "past_paper";
 
@@ -98,11 +105,32 @@ async function downscaleToDataUrl(file: File): Promise<string> {
 
 export default function StudentGeneratePage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  // Phase 4 (2026-05-13): "Generate more on..." chips on the results page
+  // deep-link here with ?topic=X&prefill_chip=Y. Pre-fill the topic input
+  // and seed the additional_focus hint so the user lands ready-to-go.
+  // Read once on mount; subsequent param changes (rare) are ignored.
+  const [prefillChip, setPrefillChip] = useState<string | null>(null);
+  useEffect(() => {
+    const t = searchParams?.get("topic") || "";
+    const chip = searchParams?.get("prefill_chip") || "";
+    if (t) setTopic(t);
+    if (chip) setPrefillChip(chip);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Default to "topic_only" so the form is immediately usable; past_paper stays
   // the first (highlighted) tile so it's visually featured.
   const [source, setSource] = useState<Source>("topic_only");
   const [topic, setTopic] = useState("");
+  // Generate-context-v2 (2026-05-13): audience level + sub-topic chips +
+  // optional focus textbox. The component owns its UI state; we just keep
+  // the latest payload here so it spreads into the request body.
+  const [genContext, setGenContext] = useState<GenerateContext>({
+    audience_level: null,
+    sub_topics: [],
+    additional_focus: "",
+  });
   const [content, setContent] = useState("");
   const [className, setClassName] = useState("");
   const [syllabus, setSyllabus] = useState("");
@@ -194,6 +222,10 @@ export default function StudentGeneratePage() {
         if (lp === "k12" || lp === "competitive_exam" || lp === "corporate") {
           setLearnerProfile(lp);
         }
+        // Derive default audience level from profile so the chip starts in
+        // the right place — school student → Beginner, JEE/CAT/corporate
+        // → Practitioner. The component lets the user override.
+        // (audience-level default removed 2026-05-13 evening — chip is now optional)
         // Sticky marking scheme — if the user has picked a scheme on any
         // surface before, pre-fill this picker with it. NULL means
         // they've never picked → picker falls back to PRACTICE + the
@@ -228,6 +260,42 @@ export default function StudentGeneratePage() {
   // which itself falls back to K-12 — same as before the goal-aware
   // pass on 2026-05-12, so legacy users see no regression.
   const [examGoal, setExamGoal] = useState<string | null>(null);
+
+  // Competitive-exam framing decision (2026-05-14 evening, fixed).
+  //
+  // Previous implementation: only checked the topic text. That meant a JEE
+  // student typing "Algebra" or "Calculus" — the most natural flow for an
+  // engineering aspirant practising a specific topic — got the CBSE/ICSE
+  // K-12 inputs because the topic alone has no JEE token. (Tester filed
+  // this as "I select JEE exam, in class/grade it displays Class 8,9 — in
+  // syllabus CBSE etc.".)
+  //
+  // New implementation: ALSO honour the student's profile signal. If their
+  // learner_profile is "competitive_exam" or their exam_goal slug names a
+  // competitive exam (jee_main, neet_prep, cat_prep, …) we use the
+  // competitive-exam framing regardless of what they typed in the topic
+  // field. Single source of truth: shouldUseCompetitiveExamFraming in
+  // lib/examDetectors.ts — same helper the backend uses.
+  const isCompetitiveExamTopic = useMemo(() => {
+    return shouldUseCompetitiveExamFraming({
+      topic,
+      learnerProfile,
+      examGoal,
+    });
+  }, [topic, learnerProfile, examGoal]);
+  // Distinguish topic-detection from profile-detection so the banner can
+  // say WHICH signal we used (helps the student understand why the inputs
+  // disappeared even when they typed a generic topic like "Algebra").
+  const compFramingReason = useMemo<"topic" | "profile" | null>(() => {
+    if (!isCompetitiveExamTopic) return null;
+    // Topic-detection (CAT/JEE/NEET in the topic text itself) is the more
+    // specific signal — it wins for the banner even if profile also matches.
+    const v = classifyQuizForRankPrediction({ topic, name: null, topicFamily: null });
+    if (v.verdict === "matches_known_exam" || v.verdict === "competitive_exam_other") {
+      return "topic";
+    }
+    return "profile";
+  }, [topic, isCompetitiveExamTopic]);
   const skillDefault = useMemo(
     () => (learnerProfile === "corporate" ? detectSkillFromTopic(topic) : null),
     [topic, learnerProfile],
@@ -332,8 +400,14 @@ export default function StudentGeneratePage() {
 
     // Per-source validation
     if (source === "topic_only" && !topic.trim()) return setErr("Enter a topic.");
-    if (source === "topic_syllabus" && (!topic.trim() || !className.trim())) {
-      return setErr("Topic and class/grade are required.");
+    if (source === "topic_syllabus" && !topic.trim()) {
+      return setErr("Topic is required.");
+    }
+    // Class/grade is only required when the topic isn't a competitive exam.
+    // CAT/JEE/NEET/etc. don't have classes or boards — we drop the fields
+    // entirely in that branch (see JSX below).
+    if (source === "topic_syllabus" && !isCompetitiveExamTopic && !className.trim()) {
+      return setErr("Class/grade is required for a syllabus-aligned test.");
     }
     if (source === "notes" && content.trim().length < 50) {
       return setErr("Paste at least a paragraph (50+ chars) of notes.");
@@ -359,6 +433,13 @@ export default function StudentGeneratePage() {
         // MarkingSchemePicker. NULL means "use legacy +1/0/0 default."
         // /api/student/quick-test persists this into quizzes.marking_scheme.
         markingScheme,
+        // Generate-context-v2 (2026-05-13): audience level + sub-topic
+        // chips + optional focus textbox. All optional; backend uses
+        // sensible defaults if missing. See lib/audienceLevel,
+        // lib/topicEnrichment.
+        audience_level: genContext.audience_level,
+        sub_topics: genContext.sub_topics,
+        additional_focus: genContext.additional_focus,
       };
       // by_time mode produces non-uniform counts (Remember gets more than
       // Create for the same time). Send the full map; the API will use it
@@ -384,6 +465,9 @@ export default function StudentGeneratePage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Generation failed.");
+      // Off-topic textbox guard (2026-05-13). If the server stripped an
+      // unrelated focus, show the user WHY before the success toast.
+      if (data.focus_warning) toast.error(data.focus_warning);
       toast.success("Test generated successfully.");
 
       // Jump straight into the test
@@ -474,23 +558,48 @@ export default function StudentGeneratePage() {
 
         {source === "topic_syllabus" && (
           <>
-            <div className="grid sm:grid-cols-2 gap-3">
+            <div className={isCompetitiveExamTopic ? "" : "grid sm:grid-cols-2 gap-3"}>
               <div>
                 <label className="label">Topic</label>
                 <input className="input" placeholder={syllabusTopicPlaceholder()}
                        value={topic} onChange={(e) => setTopic(e.target.value)} />
               </div>
+              {!isCompetitiveExamTopic && (
+                <div>
+                  <label className="label">Class / grade</label>
+                  <input className="input" placeholder="e.g. Class 9 / Grade 9"
+                         value={className} onChange={(e) => setClassName(e.target.value)} />
+                </div>
+              )}
+            </div>
+            {/* Class+syllabus fields don't apply for competitive exams (CAT /
+                JEE / NEET / GMAT / GATE / UPSC / ...). The backend infers
+                exam framing from the topic itself via learningContext. */}
+            {!isCompetitiveExamTopic ? (
               <div>
-                <label className="label">Class / grade</label>
-                <input className="input" placeholder="e.g. Class 9 / Grade 9"
-                       value={className} onChange={(e) => setClassName(e.target.value)} />
+                <label className="label">Syllabus / board <span className="muted text-xs">(optional)</span></label>
+                <input className="input" placeholder="e.g. CBSE, ICSE, Cambridge IGCSE, NCERT Chapter 9"
+                       value={syllabus} onChange={(e) => setSyllabus(e.target.value)} />
               </div>
-            </div>
-            <div>
-              <label className="label">Syllabus / board <span className="muted text-xs">(optional)</span></label>
-              <input className="input" placeholder="e.g. CBSE, ICSE, Cambridge IGCSE, NCERT Chapter 9"
-                     value={syllabus} onChange={(e) => setSyllabus(e.target.value)} />
-            </div>
+            ) : (
+              <p className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-md px-3 py-2">
+                {compFramingReason === "profile" ? (
+                  <>
+                    <strong>Competitive-exam preparation detected from your goal.</strong>{" "}
+                    Class and syllabus aren&apos;t needed — we&apos;ll generate questions in
+                    the style of the exam paper itself. If you want K-12 syllabus framing
+                    for this test instead, switch your goal in{" "}
+                    <a href="/settings" className="underline font-semibold">Settings</a>.
+                  </>
+                ) : (
+                  <>
+                    <strong>Competitive-exam topic detected.</strong> Class and syllabus
+                    aren&apos;t needed — we&apos;ll generate questions in the style of the
+                    exam paper itself.
+                  </>
+                )}
+              </p>
+            )}
           </>
         )}
 
@@ -760,6 +869,18 @@ export default function StudentGeneratePage() {
             )}
           </div>
         )}
+
+        {/* Generate-context-v2 (2026-05-13): audience-level chip +
+            auto-detected sub-topic chips + optional "Anything specific?"
+            textbox. Component owns its own UI state; we just collect the
+            payload via onChange. Topic-blank state: component renders but
+            doesn't fetch sub-topic chips until topic is at least 3 chars. */}
+        <GenerateContextChips
+          topic={topic}
+          onChange={setGenContext}
+          disabled={busy}
+          initialFocus={prefillChip ? `Focus on: ${prefillChip}` : undefined}
+        />
 
         <div>
           <label className="label flex items-center justify-between">

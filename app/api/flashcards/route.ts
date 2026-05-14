@@ -6,6 +6,7 @@ import {
   prependLearningContext,
   buildExamAwareTopic,
 } from "@/lib/learningContext";
+import { buildSkillFewShotBlock } from "@/lib/skillFewShot";
 
 export const runtime = "nodejs";
 
@@ -61,7 +62,11 @@ export async function POST(req: Request) {
     const admin = supabaseAdmin();
     const ctx = await loadLearningContext(admin, user.id);
     const contextAwareTopic = buildExamAwareTopic(topic, ctx);
-    const contextAwareSys = prependLearningContext(sys, ctx);
+    // Niche-skill few-shot grounding (2026-05-14). When the topic is a
+    // niche IT/fintech/security skill (JCL, COBOL, ISO 8583, HSM, RACF,
+    // etc.), inject 2-3 real-shape example stems so the LLM doesn't
+    // hallucinate generic CS framings. See lib/skillFewShot.ts.
+    const contextAwareSys = prependLearningContext(sys, ctx) + buildSkillFewShotBlock(topic);
 
     const prompt = (
       `Make ${count} flashcards.\n` +

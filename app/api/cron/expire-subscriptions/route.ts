@@ -46,15 +46,18 @@ export async function POST(req: Request) {
         { status: 503 }
       );
     }
-    // Accept the request only when EITHER the bearer secret matches OR
-    // the x-vercel-cron header is present (set automatically when this
-    // route runs from a Vercel Cron schedule). Without the cron header
-    // check, anyone who learned the bearer secret could keep firing
-    // GETs from arbitrary clients. The compound check tightens that.
-    const hasValidBearer = auth && auth === expected;
-    if (!hasValidBearer && !vercelCron) {
+    // 2026-05-13 evening hardening: REQUIRE the bearer secret. The
+    // x-vercel-cron header alone is NOT a sufficient check — any HTTP
+    // client can spoof an arbitrary header from outside Vercel. The bearer
+    // secret must come from `vercel.json`'s `cron` block, where Vercel
+    // attaches it server-side. Header-only access was an open hole.
+    const hasValidBearer = !!auth && auth === expected;
+    if (!hasValidBearer) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+    // Reference vercelCron only to keep the import surface stable for any
+    // observability tooling that reads the var — value not used for auth.
+    void vercelCron;
 
     const admin = supabaseAdmin();
     const nowIso = new Date().toISOString();

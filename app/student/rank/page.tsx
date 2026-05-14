@@ -41,6 +41,10 @@ type Pred = {
 
 export default function RankPage() {
   const [isSchoolStudent, setIsSchoolStudent] = useState<boolean | null>(null);
+  // 2026-05-13: also gate on exam_goal — independent students who picked
+  // a K-12 board goal don't have an AIR to predict. Treat them like school
+  // students for this surface (show the friendly "not for you" card).
+  const [isK12Goal, setIsK12Goal] = useState<boolean>(false);
   const [list, setList] = useState<Pred[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -63,11 +67,18 @@ export default function RankPage() {
     if (!user) { setLoading(false); return; }
     const { data: prof } = await sb
       .from("profiles")
-      .select("is_school_student")
+      .select("is_school_student, exam_goal")
       .eq("id", user.id)
       .single();
-    setIsSchoolStudent(!!prof?.is_school_student);
-    if (!prof?.is_school_student) {
+    const profRow = prof as { is_school_student: boolean | null; exam_goal: string | null } | null;
+    setIsSchoolStudent(!!profRow?.is_school_student);
+    // K-12 goals (board exams + class buckets) don't produce an All-India Rank.
+    const k12Goals = new Set([
+      "class10_boards", "class_10_boards", "class12_boards", "class_12_boards",
+      "class_9", "class9", "class_5_8", "class5_8",
+    ]);
+    setIsK12Goal(k12Goals.has((profRow?.exam_goal || "").toLowerCase()));
+    if (!profRow?.is_school_student) {
       const { data } = await sb
         .from("mock_rank_predictions")
         .select("id, exam_type, raw_score, max_score, percentile, predicted_air, total_candidates, recommendations, created_at")
@@ -111,7 +122,7 @@ export default function RankPage() {
 
   if (loading) return <div className="grid place-items-center py-20"><div className="spinner" /></div>;
 
-  if (isSchoolStudent) {
+  if (isSchoolStudent || isK12Goal) {
     return (
       <div className="max-w-2xl mx-auto fade-in">
         <Link href="/student" className="inline-flex items-center gap-1 text-sm text-slate-600 hover:text-emerald-700 mb-3">

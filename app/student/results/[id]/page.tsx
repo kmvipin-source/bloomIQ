@@ -19,6 +19,7 @@ import {
   classifyQuizForRankPrediction,
   type RankEligibility,
 } from "@/lib/rankPredictorEligibility";
+import ExploreMoreSubTopics from "@/components/ExploreMoreSubTopics";
 import { Sparkles, Search, AlertOctagon, Crosshair, Trophy, Brain, Clock, Lock, Info, Settings as SettingsIcon, CheckCircle2, XCircle, MinusCircle } from "lucide-react";
 
 // Extended detail to carry quiz subject + family — needed by the foolproof
@@ -840,6 +841,11 @@ export default function ResultsPage() {
         </div>
       )}
 
+      {/* "Explore more sub-topics" — Phase 4 of generate-context-v2.
+          Renders nothing if the quiz has no topic or no useful chips.
+          Click a chip → /student/generate prefilled with topic + chip. */}
+      <ExploreMoreSubTopics topic={attempt.quiz?.subject ?? attempt.quiz?.name ?? null} />
+
       {/* ============ MOCK RANK PREDICTOR ============
           Pure UX layer that converts your raw score into a competitive-exam
           AIR estimate. Sits at the bottom of the page so it feels like the
@@ -860,9 +866,18 @@ export default function ResultsPage() {
           topicFamily: attempt.quiz?.topic_family ?? null,
         });
 
-        // ─ Refusal surface for corporate skill quizzes. Keep it short,
-        //   warm, and point to where rank prediction DOES belong.
-        if (eligibility.verdict === "corporate_skill") {
+        // ─ Allowlist gate (2026-05-13 evening): the rank predictor is ONLY
+        //   meaningful when the quiz is clearly a competitive-exam mock.
+        //   Show it for matches_known_exam (JEE/NEET/CAT) and
+        //   competitive_exam_other (GMAT/GATE/UPSC/…). For corporate_skill
+        //   (Java/HSM/Kubernetes) AND generic (Photosynthesis/Algebra/anything
+        //   else), refuse — there's no All-India Rank for those tests. This
+        //   replaces the previous "blocklist of corporate skills" design,
+        //   which required adding tokens forever to stop new failure cases.
+        const isExamMock =
+          eligibility.verdict === "matches_known_exam" ||
+          eligibility.verdict === "competitive_exam_other";
+        if (!isExamMock) {
           return (
             <div className="card mt-4 bg-slate-50/60">
               <div className="flex items-start gap-3">
@@ -870,9 +885,11 @@ export default function ResultsPage() {
                 <div className="flex-1">
                   <h3 className="h2">Rank prediction not available for this test</h3>
                   <p className="text-sm muted mt-1 max-w-xl">
-                    {eligibility.reason} If you&apos;re prepping for JEE, NEET, or CAT,
-                    take a mock on that exam and predict your rank from there — or
-                    type a score directly on the{" "}
+                    The Mock Rank Predictor only works for competitive-exam mocks
+                    (JEE / NEET / CAT / GMAT / GATE / UPSC and the like). This
+                    test doesn&apos;t look like an exam mock, so there&apos;s no
+                    All-India Rank to estimate. If you want a rank against a
+                    specific exam cohort, type a score directly on the{" "}
                     <Link href="/student/rank" className="text-emerald-700 underline">Mock Rank Predictor</Link>.
                   </p>
                 </div>

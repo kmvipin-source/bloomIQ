@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { supabaseBrowser } from "@/lib/supabase/client";
@@ -57,9 +57,14 @@ export default function FlashcardsPage() {
   const [idx, setIdx] = useState(0);
   const [flipped, setFlipped] = useState(false);
 
-  // If there are query params, auto-generate on first mount.
+  // 2026-05-13: only auto-fire ONCE per mount even on browser back/forward
+  // (which can re-mount the page). Without this guard a back-then-forward
+  // doubles the LLM call → wasted tokens.
+  const autoFiredRef = useRef(false);
   useEffect(() => {
+    if (autoFiredRef.current) return;
     if (initialBloom || initialTopic) {
+      autoFiredRef.current = true;
       generate();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

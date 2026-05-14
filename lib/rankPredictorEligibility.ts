@@ -85,19 +85,46 @@ const CORPORATE_SKILL_TOKENS = new Set([
   "JAVA", "PYTHON", "JAVASCRIPT", "TYPESCRIPT", "GO", "GOLANG", "RUST",
   "C", "C++", "CPP", "C#", "CSHARP", "RUBY", "PHP", "SWIFT", "KOTLIN",
   "SCALA", "PERL", "R", "MATLAB", "DART", "ELIXIR", "HASKELL", "LUA",
+  "ASSEMBLY", "FORTRAN", "PASCAL", "OBJECTIVEC",
   // Web frameworks
   "REACT", "REACTJS", "VUE", "VUEJS", "ANGULAR", "ANGULARJS", "NEXTJS",
   "NEXT.JS", "NUXT", "SVELTE", "DJANGO", "FLASK", "FASTAPI", "RAILS",
-  "SPRING", "EXPRESS", "NESTJS", "LARAVEL",
-  // Cloud / Ops
+  "SPRING", "SPRINGBOOT", "EXPRESS", "NESTJS", "LARAVEL",
+  "BACKBONE", "EMBER", "REMIX", "ASTRO", "GATSBY",
+  // Cloud / Ops / Networking
   "AWS", "AZURE", "GCP", "KUBERNETES", "K8S", "DOCKER", "TERRAFORM",
-  "ANSIBLE", "JENKINS", "GIT", "GITHUB", "GITLAB", "LINUX", "DEVOPS",
+  "ANSIBLE", "JENKINS", "GIT", "GITHUB", "GITLAB", "BITBUCKET",
+  "LINUX", "UNIX", "DEVOPS", "DEVSECOPS",
+  "PROMETHEUS", "GRAFANA", "DATADOG", "SPLUNK",
+  "OPENSHIFT", "HELM", "ISTIO", "ENVOY", "NGINX", "APACHE",
+  "HAPROXY", "CLOUDFLARE", "FASTLY", "AKAMAI",
   // Data / DB
-  "SQL", "POSTGRES", "POSTGRESQL", "MYSQL", "MONGODB", "MONGO", "REDIS",
-  "ELASTICSEARCH", "KAFKA", "SPARK", "HADOOP", "AIRFLOW", "DBT",
-  "SNOWFLAKE", "BIGQUERY", "TABLEAU", "POWERBI",
+  "SQL", "PLSQL", "TSQL", "POSTGRES", "POSTGRESQL", "MYSQL",
+  "MONGODB", "MONGO", "REDIS", "MEMCACHED", "CASSANDRA",
+  "DYNAMODB", "FIRESTORE", "FIREBASE", "ELASTICSEARCH", "OPENSEARCH", "SOLR",
+  "KAFKA", "RABBITMQ", "PULSAR",
+  "SPARK", "HADOOP", "HIVE", "AIRFLOW", "DBT",
+  "SNOWFLAKE", "BIGQUERY", "REDSHIFT", "DATABRICKS",
+  "TABLEAU", "POWERBI", "LOOKER", "METABASE",
+  // Mainframe stack
+  "MAINFRAME", "ZOS", "JCL", "COBOL", "CICS",
+  "DB2", "IMS", "VSAM", "ISPF", "TSO", "JES2", "JES3", "RACF", "ACF2",
+  // Payments / fintech
+  "ISO8583", "EMV", "PCI", "PCIDSS", "P2PE", "DUKPT",
+  "ACQUIRER", "ISSUER", "MERCHANT", "TOKENIZATION",
+  "POS", "ATM", "EFTPOS", "PINPAD", "EFT", "ACH", "SWIFT",
+  "SEPA", "RTP", "FEDNOW", "RTGS", "NEFT", "IMPS", "UPI",
+  // Security / cryptography
+  "HSM", "HARDWARESECURITYMODULE", "KMS", "KEYMANAGEMENTSERVICE",
+  "PKI", "RSA", "ECC", "ECDSA", "AES", "DES", "TDES",
+  "OAUTH", "OAUTH2", "JWT", "OPENID", "OPENIDCONNECT",
+  "SHA", "SHA256", "HMAC", "ARQC", "ARPC", "CVV", "CVC",
+  "SAML", "SSO", "LDAP", "KERBEROS", "X509", "TLS", "SSL", "MTLS",
+  "IPSEC", "WIREGUARD", "WAF", "SIEM", "VPN", "ZEROTRUST",
   // Certs
-  "CCNA", "CCNP", "CKA", "CKAD", "OSCP", "PMP", "SCRUM", "CSM",
+  "CCNA", "CCNP", "CCIE", "CKA", "CKAD", "CKS", "OSCP", "CEH",
+  "CISSP", "CISM", "CISA", "CRISC", "CCSP",
+  "PMP", "PRINCE2", "SCRUM", "CSM", "CSPO", "SAFE", "ITIL",
 ]);
 
 /** A small subset of school/exam-prep topics we recognise as "could plausibly
@@ -111,11 +138,20 @@ const ACADEMIC_SUBJECT_TOKENS = new Set([
   "ACCOUNTING", "COMMERCE", "BUSINESS",
 ]);
 
-/** Split a free-text label into uppercase whole-word tokens. Same tokeniser
- *  shape as detectExamFromTopic in app/api/generate — keeps behaviour consistent. */
+/** Split a free-text label into uppercase whole-word tokens, then append
+ *  concatenated forms so "ISO 8583" matches "ISO8583", "PCI DSS" matches
+ *  "PCIDSS", "OAuth 2" matches "OAUTH2", etc. */
 function tokenise(s: string | null | undefined): string[] {
   if (!s) return [];
-  return s.toUpperCase().split(/[\s,;.\-/_()]+/).filter(Boolean);
+  const parts = s.toUpperCase().split(/[\s,;.\-/_()]+/).filter(Boolean);
+  if (parts.length === 0) return [];
+  const out: string[] = [...parts];
+  for (let i = 0; i + 1 < parts.length; i++) {
+    out.push(parts[i] + parts[i + 1]);
+  }
+  const fullConcat = parts.join("").replace(/[^A-Z0-9]/g, "");
+  if (fullConcat && fullConcat !== parts[0]) out.push(fullConcat);
+  return out;
 }
 
 /** Result of running the eligibility classifier against a quiz. */

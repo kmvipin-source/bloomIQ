@@ -19,8 +19,8 @@ import Link from "next/link";
 export default function ClimberRedirectPage() {
   const router = useRouter();
   useEffect(() => {
-    const t = window.setTimeout(() => router.replace("/student/memory"), 1200);
-    return () => window.clearTimeout(t);
+    // 2026-05-13: dropped the 1.2 s ceremonial delay; redirect immediately.
+    router.replace("/student/memory");
   }, [router]);
 
   return (

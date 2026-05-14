@@ -17,6 +17,9 @@ import {
   filterQuestionBatch,
   type VerifiableQuestion,
 } from "@/lib/qgen";
+import { resolveAudienceLevel } from "@/lib/audienceLevel";
+import { applyAdditionalFocus, validateFocusForTopic } from "@/lib/topicEnrichment";
+import { shouldUseCompetitiveExamFraming } from "@/lib/examDetectors";
 import {
   loadLearningContext,
   prependLearningContext,
@@ -70,7 +73,7 @@ function numericalHint(pct: number, n: number) {
 }
 
 function notesPrompt(content: string, topic: string, level: BloomLevel, n: number, numPct: number, seedBlock: string) {
-  return `Topic: ${topic || "(infer from content)"}
+  return `Topic: ${topic || "derive the topic from the content provided below — do NOT echo the words 'infer from' or any placeholder text"}
 Bloom Level: ${level} — ${BLOOM_META[level].description}
 Verb hint: ${BLOOM_META[level].verb}
 
@@ -84,7 +87,7 @@ ${jsonShape()}`;
 }
 
 function imagePrompt(topic: string, level: BloomLevel, n: number, numPct: number, seedBlock: string) {
-  return `Topic: ${topic || "(infer from the image)"}
+  return `Topic: ${topic || "derive the topic from the attached image — do NOT echo the words 'infer from' or any placeholder text"}
 Bloom Level: ${level} — ${BLOOM_META[level].description}
 Verb hint: ${BLOOM_META[level].verb}
 
@@ -114,7 +117,7 @@ ${jsonShape()}`;
 }
 
 function pastPaperPrompt(topic: string, examLabel: string, level: BloomLevel, n: number, numPct: number, seedBlock: string) {
-  return `Topic: ${topic || "(infer from the past paper)"}
+  return `Topic: ${topic || "derive the topic from the attached past paper — do NOT echo the words 'infer from' or any placeholder text"}
 Past paper / exam reference: ${examLabel || "(unspecified)"}
 Bloom Level: ${level} — ${BLOOM_META[level].description}
 Verb hint: ${BLOOM_META[level].verb}
@@ -291,11 +294,22 @@ export async function POST(req: Request) {
     const { data: { user } } = await sb.auth.getUser();
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-    // Confirm caller is a student (this route is for self-generated tests)
-    const { data: prof } = await sb.from("profiles").select("role").eq("id", user.id).single();
+    // Confirm caller is a student (this route is for self-generated tests).
+    // Also pull exam_goal + learner_profile in the same round-trip so we
+    // can decide whether to require class/grade for syllabus-aligned tests
+    // — competitive-exam students (jee_main / neet_prep / cat_prep / …) get
+    // exam-paper framing regardless of what they typed in the topic field,
+    // so requiring "Class 9" from them is a UX bug. See examDetectors.ts.
+    const { data: prof } = await sb
+      .from("profiles")
+      .select("role, exam_goal, learner_profile")
+      .eq("id", user.id)
+      .single();
     if (prof?.role !== "student") {
       return NextResponse.json({ error: "Only students can use this endpoint" }, { status: 403 });
     }
+    const profileExamGoal: string | null = (prof as { exam_goal?: string | null })?.exam_goal ?? null;
+    const profileLearnerProfile: string | null = (prof as { learner_profile?: string | null })?.learner_profile ?? null;
 
     const body = await req.json();
     const source: Source = (body.source as Source) || "topic_only";
@@ -323,6 +337,15 @@ export async function POST(req: Request) {
       return Math.max(1, Math.min(10, Math.round(v)));
     }
     const numericalPercent: number = Math.max(0, Math.min(100, Number(body.numericalPercent) || 0));
+    // Audience-level (Phase 1), additional-focus textbox (Phase 2), and
+    // selected sub-topic chips (Phase 3). All optional — fall back to
+    // sensible defaults derived from the user's profile when missing.
+    // See lib/audienceLevel.ts and lib/topicEnrichment.ts.
+    const rawAudienceLevel: unknown = body.audience_level;
+    const additionalFocus: string = typeof body.additional_focus === "string" ? body.additional_focus : "";
+    const subTopics: string[] = Array.isArray(body.sub_topics)
+      ? (body.sub_topics as unknown[]).filter((s): s is string => typeof s === "string" && s.trim().length > 0).slice(0, 12)
+      : [];
     // Per-test marking scheme (migration 76). Client sends NULL or a
     // full MarkingScheme object from <MarkingSchemePicker />. We pass
     // whatever's there straight into quizzes.marking_scheme — the
@@ -347,8 +370,22 @@ export async function POST(req: Request) {
     if (source === "past_paper" && !imageDataUrl.startsWith("data:image/")) {
       return NextResponse.json({ error: "Upload a photo of the past question paper." }, { status: 400 });
     }
-    if (source === "topic_syllabus" && (!topic.trim() || !className.trim())) {
-      return NextResponse.json({ error: "Topic and class/grade are required." }, { status: 400 });
+    if (source === "topic_syllabus" && !topic.trim()) {
+      return NextResponse.json({ error: "Topic is required." }, { status: 400 });
+    }
+    // 2026-05-14 fix: class/grade is not required when EITHER the topic
+    // names a competitive exam, OR the student's profile says they're
+    // preparing for one. Old check only inspected the topic text, which
+    // forced a JEE student typing "Algebra" to also type "Class 11" — the
+    // UI bug the tester reported on 2026-05-14. Single source of truth:
+    // lib/examDetectors.shouldUseCompetitiveExamFraming.
+    const _isExamLikeTopic = shouldUseCompetitiveExamFraming({
+      topic,
+      learnerProfile: profileLearnerProfile,
+      examGoal: profileExamGoal,
+    });
+    if (source === "topic_syllabus" && !_isExamLikeTopic && !className.trim()) {
+      return NextResponse.json({ error: "Class/grade is required for a syllabus-aligned test." }, { status: 400 });
     }
     if (source === "topic_only" && !topic.trim()) {
       return NextResponse.json({ error: "Topic is required." }, { status: 400 });
@@ -389,7 +426,15 @@ export async function POST(req: Request) {
     // context-aware versions.
     const adminForCtx = supabaseAdmin();
     const ctx = await loadLearningContext(adminForCtx, user.id);
-    const contextAwareTopic = buildExamAwareTopic(topic, ctx);
+    // Resolve audience level — fully optional (2026-05-13 evening).
+    // Returns {level:null, promptFragment:""} when the user hasn't picked.
+    const audience = resolveAudienceLevel(rawAudienceLevel);
+    // Off-topic guard (2026-05-13): textbox stripped if unrelated, warning
+    // surfaced to UI. See lib/topicEnrichment.validateFocusForTopic.
+    const focusValidation = validateFocusForTopic(topic, additionalFocus, subTopics);
+    const effectiveFocus = focusValidation.ok ? additionalFocus : "";
+    const focusWarning = focusValidation.ok ? null : focusValidation.reason;
+    const contextAwareTopic = applyAdditionalFocus(buildExamAwareTopic(topic, ctx), effectiveFocus, subTopics);
     // Cross-test non-repetition (Layer 1+2+3, lib/recentStemsExclusion.ts).
     // Pull stems the student has already answered on this topic in the
     // last 30 days. We pass bloomLevel=null because this endpoint
@@ -398,7 +443,8 @@ export async function POST(req: Request) {
     // Layer 3 (concepts already covered) is baked into the same prompt
     // block.
     const exclusion = await getRecentStemsForExclusion(adminForCtx, user.id, topic, null, 20);
-    const contextAwareSystem = prependLearningContext(SYSTEM, ctx) + exclusion.promptBlock;
+    const audiencePrefix = audience.promptFragment ? `${audience.promptFragment}\n\n` : "";
+    const contextAwareSystem = `${audiencePrefix}${prependLearningContext(SYSTEM, ctx)}${exclusion.promptBlock}`;
 
     // Generate per-level
     const genFor = async (lvl: BloomLevel) => {

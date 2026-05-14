@@ -16,6 +16,9 @@ import { Sparkles, FileText, Image as ImageIcon, GraduationCap, Tag, Zap, BookOp
 import { type LearnerProfile } from "@/components/LearnerProfilePrompt";
 import { placeholderTopic } from "@/lib/topicSuggestions";
 import { detectSkillFromTopic } from "@/lib/skillDetectors";
+import { shouldUseCompetitiveExamFraming } from "@/lib/examDetectors";
+import GenerateContextChips, { type GenerateContext } from "@/components/GenerateContextChips";
+// 2026-05-13 evening: audience-level is fully optional (no profile-driven default).
 
 type Source = "notes" | "image" | "topic_syllabus" | "topic_only";
 
@@ -163,6 +166,12 @@ export default function GeneratePage() {
 
   const [source, setSource] = useState<Source>("notes");
   const [topic, setTopic] = useState("");
+  // Generate-context-v2 (2026-05-13). Same as /student/generate.
+  const [genContext, setGenContext] = useState<GenerateContext>({
+    audience_level: null,
+    sub_topics: [],
+    additional_focus: "",
+  });
   const [content, setContent] = useState("");
   const [className, setClassName] = useState("");
   const [syllabus, setSyllabus] = useState("");
@@ -237,6 +246,11 @@ export default function GeneratePage() {
           setLearnerProfile(lp);
         }
         if (row?.exam_goal) setExamGoal(row.exam_goal);
+        // Derive default audience level for the generate-context chips.
+        // Teacher's own goal/profile is a reasonable proxy for the class
+        // they teach (school-mode teachers are typically corporate trainers
+        // or k12 teachers, both of which map sensibly via the same logic).
+        // audience-level default removed 2026-05-13 evening
       } catch { /* non-fatal — placeholders fall back to defaults */ }
     })();
   }, []);
@@ -336,7 +350,14 @@ export default function GeneratePage() {
       setErr("Please choose an image to generate from.");
       return;
     }
-    if (source === "topic_syllabus" && (!topic.trim() || !className.trim())) {
+    // 2026-05-14: don't require class/grade when the topic is a competitive
+    // exam. Uses the shared shouldUseCompetitiveExamFraming helper from
+    // lib/examDetectors so the rule stays in sync with /student/generate +
+    // the backend. Teachers don't have an exam_goal field yet, so only the
+    // topic-text branch fires for this surface — but threading the helper
+    // through means a future "coaching mode" toggle has a single seam.
+    const _isExamLikeTopic = shouldUseCompetitiveExamFraming({ topic, learnerProfile: null, examGoal: null });
+    if (source === "topic_syllabus" && (!topic.trim() || (!_isExamLikeTopic && !className.trim()))) {
       setErr("Please enter a topic and a class/grade. Syllabus is optional but helps.");
       return;
     }
@@ -361,6 +382,10 @@ export default function GeneratePage() {
         levels: mode === "all" ? BLOOM_LEVELS : pickedLevels,
         perLevel,
         numericalPercent,
+        // Generate-context-v2 (2026-05-13).
+        audience_level: genContext.audience_level,
+        sub_topics: genContext.sub_topics,
+        additional_focus: genContext.additional_focus,
       };
       if (source === "notes") body.content = content;
       if (source === "image" && imageFile) {
@@ -386,6 +411,8 @@ export default function GeneratePage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Generation failed");
+      // Off-topic textbox guard (2026-05-13).
+      if (data.focus_warning) toast.error(data.focus_warning);
       setSummary(data.summary);
       toast.success("Questions generated successfully.");
     } catch (e) {
@@ -573,28 +600,39 @@ export default function GeneratePage() {
           </>
         )}
 
-        {source === "topic_syllabus" && (
-          <>
-            <div className="grid sm:grid-cols-2 gap-3">
-              <div>
-                <label className="label">Topic</label>
-                <input className="input" placeholder={syllabusTopicPlaceholder()}
-                       value={topic} onChange={(e) => setTopic(e.target.value)} />
+        {source === "topic_syllabus" && (() => {
+          const examLike = shouldUseCompetitiveExamFraming({ topic, learnerProfile: null, examGoal: null });
+          return (
+            <>
+              <div className={examLike ? "" : "grid sm:grid-cols-2 gap-3"}>
+                <div>
+                  <label className="label">Topic</label>
+                  <input className="input" placeholder={syllabusTopicPlaceholder()}
+                         value={topic} onChange={(e) => setTopic(e.target.value)} />
+                </div>
+                {!examLike && (
+                  <div>
+                    <label className="label">Class / grade</label>
+                    <input className="input" placeholder="e.g. Class 9 / Grade 9"
+                           value={className} onChange={(e) => setClassName(e.target.value)} />
+                  </div>
+                )}
               </div>
-              <div>
-                <label className="label">Class / grade</label>
-                <input className="input" placeholder="e.g. Class 9 / Grade 9"
-                       value={className} onChange={(e) => setClassName(e.target.value)} />
-              </div>
-            </div>
-            <div>
-              <label className="label">Syllabus / board <span className="muted text-xs">(optional)</span></label>
-              <input className="input" placeholder="e.g. CBSE, ICSE, Cambridge IGCSE, NCERT Chapter 9"
-                     value={syllabus} onChange={(e) => setSyllabus(e.target.value)} />
-              <p className="text-xs muted mt-1">If provided, questions are aligned to this curriculum and class level.</p>
-            </div>
-          </>
-        )}
+              {!examLike ? (
+                <div>
+                  <label className="label">Syllabus / board <span className="muted text-xs">(optional)</span></label>
+                  <input className="input" placeholder="e.g. CBSE, ICSE, Cambridge IGCSE, NCERT Chapter 9"
+                         value={syllabus} onChange={(e) => setSyllabus(e.target.value)} />
+                  <p className="text-xs muted mt-1">If provided, questions are aligned to this curriculum and class level.</p>
+                </div>
+              ) : (
+                <p className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-md px-3 py-2">
+                  <strong>Competitive-exam topic detected.</strong> Class and syllabus aren&apos;t needed — questions will be in the style of the actual exam paper.
+                </p>
+              )}
+            </>
+          );
+        })()}
 
         {source === "topic_only" && (
           <div>
@@ -671,6 +709,15 @@ export default function GeneratePage() {
           )}
         </div>
 
+        {/* Generate-context-v2 (2026-05-13): audience-level chip +
+            auto-detected sub-topic chips + optional "Anything specific?"
+            textbox. Shared component with /student/generate. */}
+        <GenerateContextChips
+          topic={topic}
+          onChange={setGenContext}
+          disabled={busy}
+        />
+
         <div>
           <label className="label">Questions per level</label>
           <input type="number" min={1} max={10} className="input w-32"
@@ -742,7 +789,7 @@ export default function GeneratePage() {
                 {Object.values(summary).reduce((a: number, b: number) => a + b, 0)}
               </strong> question{Object.values(summary).reduce((a: number, b: number) => a + b, 0) === 1 ? "" : "s"} added to your review queue.
             </p>
-            <button
+<button
               type="button"
               className="btn btn-primary"
               onClick={() => router.push("/teacher/review")}

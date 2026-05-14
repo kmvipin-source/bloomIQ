@@ -8,6 +8,7 @@ import {
   verifyAnswerKeys,
   type VerifiableQuestion,
 } from "@/lib/qgen";
+import { detectExamFromTopic } from "@/lib/examDetectors";
 
 export const runtime = "nodejs";
 export const maxDuration = 90;
@@ -19,6 +20,21 @@ type Source = "topic_only" | "topic_syllabus" | "notes" | "image" | "past_paper"
 const SYSTEM = `You are an expert exam-paper setter. You write printable question papers that mix question
 types (MCQ, true/false, fill-in-the-blank, short answer, long answer, numerical) at the difficulty
 appropriate to the class and syllabus the teacher specified. Return STRICT JSON only.`;
+
+/**
+ * When the topic names a known competitive exam, prepend an exam-aware
+ * disambiguation + section-coverage hint to the SYSTEM prompt. Added
+ * 2026-05-14 to fix the "JEE coaching teacher generates a paper, gets
+ * generic K-12 content" gap. EXAM_DETECTORS in lib/examDetectors is the
+ * single source of truth.
+ */
+function examAwareSystem(baseSystem: string, topic: string): string {
+  const exam = detectExamFromTopic(topic);
+  if (!exam) return baseSystem;
+  return `${baseSystem}
+
+COMPETITIVE-EXAM CONTEXT: this paper is for the ${exam.name} exam — ${exam.description}. Generate questions in the STYLE, DIFFICULTY, and SECTION COVERAGE of a real ${exam.name} paper. Typical sections: ${exam.sections.join("; ")}. Match the difficulty and tone of past ${exam.name} papers — NOT introductory school-level content unless the section explicitly covers it. Do NOT interpret the acronym as any non-exam meaning.`;
+}
 
 function describeType(t: QType): string {
   switch (t) {
@@ -48,8 +64,8 @@ function buildPrompt(
     if (source === "topic_only") return `Topic: ${topic}`;
     if (source === "topic_syllabus") return `Topic: ${topic}\nClass / grade: ${className}\nSyllabus / board: ${syllabus || "(unspecified)"}`;
     if (source === "notes") return `Topic: ${topic || "(infer from notes)"}\n\nNotes:\n"""${notes.slice(0, 8000)}"""`;
-    if (source === "past_paper") return `Topic: ${topic || "(infer from the past paper)"}\nPast paper / exam reference: ${examLabel || "(unspecified)"}\n\nThe attached image is a previous exam paper. Read its questions, note the difficulty, calibration, and style. Generate NEW questions in the same pattern.`;
-    return `Topic: ${topic || "(infer from the image)"}\n\nUse the attached image as the source content.`;
+    if (source === "past_paper") return `Topic: ${topic || "derive the topic from the attached past paper — do NOT echo any placeholder text"}\nPast paper / exam reference: ${examLabel || "(unspecified)"}\n\nThe attached image is a previous exam paper. Read its questions, note the difficulty, calibration, and style. Generate NEW questions in the same pattern.`;
+    return `Topic: ${topic || "derive the topic from the attached image — do NOT echo any placeholder text"}\n\nUse the attached image as the source content.`;
   })();
 
   return `${sourceBlock}
@@ -112,6 +128,22 @@ export async function POST(req: Request) {
     const { data: prof } = await sb.from("profiles").select("role").eq("id", user.id).single();
     if (prof?.role !== "teacher") {
       return NextResponse.json({ error: "Only teachers can generate exam papers" }, { status: 403 });
+    }
+    // 2026-05-13: gate paper generation on an active plan that includes
+    // unlimited practice tests. A free-trial-expired teacher should not
+    // be able to keep generating up to 15 papers/day via direct API hits.
+    // Use the same featureAccess check the dashboard uses for parity.
+    const { requireFeature } = await import("@/lib/featureAccess.server");
+    const featureGate = await requireFeature(user.id, "practice_tests_unlimited");
+    if (!featureGate.ok) {
+      return NextResponse.json(
+        {
+          error: featureGate.reason ?? "Your plan doesn't include paper generation. Upgrade to continue.",
+          code: "feature_locked",
+          requiredTier: featureGate.requiredTier ?? "premium",
+        },
+        { status: 402 },
+      );
     }
 
     const body = await req.json();
@@ -177,13 +209,17 @@ export async function POST(req: Request) {
       console.warn(`[papers/generate] seed mining failed (non-fatal):`, e instanceof Error ? e.message : e);
     }
 
-    // Generate via Groq (vision when an image is involved)
+    // Generate via Groq (vision when an image is involved). When the topic
+    // names a competitive exam (CAT/JEE/NEET/UPSC/…) we wrap the SYSTEM
+    // prompt with an exam-aware disambiguation block so the paper carries
+    // the right register — this is what was missing for coaching schools.
     const prompt = buildPrompt(source, topic, className, syllabus, notes, examLabel, sections, totalMarks, seedBlock);
+    const sysForGen = examAwareSystem(SYSTEM, topic);
     let json: Record<string, unknown>;
     if (source === "image" || source === "past_paper") {
-      json = await groqJSONVision(SYSTEM, prompt, imageDataUrl);
+      json = await groqJSONVision(sysForGen, prompt, imageDataUrl);
     } else {
-      json = await groqJSON(SYSTEM, prompt);
+      json = await groqJSON(sysForGen, prompt);
     }
     const generated: GenSection[] = Array.isArray((json as { sections?: GenSection[] })?.sections)
       ? (json as { sections: GenSection[] }).sections
@@ -271,6 +307,7 @@ export async function POST(req: Request) {
     let verifiedCount = 0;
     let disputedCount = 0;
     if (mcqQuestions.length > 0) {
+if (mcqQuestions.length > 0) {
       try {
         const verifyResults = await verifyAnswerKeys(mcqQuestions, 5);
         for (let i = 0; i < verifyResults.length; i++) {

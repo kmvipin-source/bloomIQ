@@ -16,6 +16,9 @@ import {
   buildExamAwareTopic,
 } from "@/lib/learningContext";
 import { getRecentStemsForExclusion } from "@/lib/recentStemsExclusion";
+import { resolveAudienceLevel } from "@/lib/audienceLevel";
+import { applyAdditionalFocus, validateFocusForTopic } from "@/lib/topicEnrichment";
+import { shouldUseCompetitiveExamFraming } from "@/lib/examDetectors";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -63,7 +66,7 @@ function numericalHint(pct: number, n: number) {
 }
 
 function notesPrompt(content: string, topic: string, level: BloomLevel, n: number, numPct: number, seedBlock: string) {
-  return `Topic: ${topic || "(infer from content)"}
+  return `Topic: ${topic || "derive the topic from the content provided below — do NOT echo the words 'infer from' or any placeholder text"}
 Bloom Level: ${level} — ${BLOOM_META[level].description}
 Verb hint: ${BLOOM_META[level].verb}
 
@@ -77,7 +80,7 @@ ${jsonShape()}`;
 }
 
 function imagePrompt(topic: string, level: BloomLevel, n: number, numPct: number, seedBlock: string) {
-  return `Topic: ${topic || "(infer from the image)"}
+  return `Topic: ${topic || "derive the topic from the attached image — do NOT echo the words 'infer from' or any placeholder text"}
 Bloom Level: ${level} — ${BLOOM_META[level].description}
 Verb hint: ${BLOOM_META[level].verb}
 
@@ -414,6 +417,20 @@ export async function POST(req: Request) {
     const numericalPercent: number = Math.max(0, Math.min(100, Number(body.numericalPercent) || 0));
     const requested: string[] = Array.isArray(body.levels) ? body.levels : BLOOM_LEVELS;
     const levels: BloomLevel[] = requested.filter(isBloomLevel);
+    // Audience-level signal (Phase 1) — explicit user pick overrides the default
+    // derived from profile (exam_goal + learner_profile). Threaded into the
+    // system prompt below. See lib/audienceLevel.ts.
+    const rawAudienceLevel: unknown = body.audience_level;
+    // Optional "Anything specific to cover?" textbox (Phase 2). Free-form
+    // user hint about which sub-areas of the topic to bias toward. Threaded
+    // into the user prompt via lib/topicEnrichment.applyAdditionalFocus.
+    const additionalFocus: string = typeof body.additional_focus === "string" ? body.additional_focus : "";
+    // Optional sub-topic chips (Phase 3) — array of strings the user explicitly
+    // toggled on. Pre-joined into the user prompt the same way as
+    // additional_focus.
+    const subTopics: string[] = Array.isArray(body.sub_topics)
+      ? body.sub_topics.filter((s: unknown): s is string => typeof s === "string" && s.trim().length > 0).slice(0, 12)
+      : [];
 
     // Per-source validation
     if (source === "notes" && content.length < 20) {
@@ -422,8 +439,25 @@ export async function POST(req: Request) {
     if (source === "image" && !imageDataUrl.startsWith("data:image/")) {
       return NextResponse.json({ error: "Missing or invalid image" }, { status: 400 });
     }
-    if (source === "topic_syllabus" && (!topic.trim() || !className.trim())) {
-      return NextResponse.json({ error: "Topic and class/grade are required" }, { status: 400 });
+    if (source === "topic_syllabus" && !topic.trim()) {
+      return NextResponse.json({ error: "Topic is required" }, { status: 400 });
+    }
+    // 2026-05-14 fix: class/grade is NOT required when the topic itself is
+    // a known competitive exam OR when the caller explicitly tells us via
+    // body.learnerProfile / body.examGoal that this is a competitive-exam
+    // session (e.g. a coaching school using /api/generate from an admin
+    // tool). Old check only inspected the topic text — teachers in JEE
+    // coaching schools typing a generic topic like "Mechanics" got a
+    // bogus 400. Single source of truth: lib/examDetectors.
+    const bodyLearnerProfile: string | null = typeof body.learnerProfile === "string" ? body.learnerProfile : null;
+    const bodyExamGoal: string | null = typeof body.examGoal === "string" ? body.examGoal : null;
+    const _isExamLikeTopic = shouldUseCompetitiveExamFraming({
+      topic,
+      learnerProfile: bodyLearnerProfile,
+      examGoal: bodyExamGoal,
+    });
+    if (source === "topic_syllabus" && !_isExamLikeTopic && !className.trim()) {
+      return NextResponse.json({ error: "Class/grade is required for a syllabus-aligned test." }, { status: 400 });
     }
     if (source === "topic_only" && !topic.trim()) {
       return NextResponse.json({ error: "Topic is required" }, { status: 400 });
@@ -458,9 +492,22 @@ export async function POST(req: Request) {
     // their own quizzes); this is best-effort for teacher-side.
     const adminForCtx = supabaseAdmin();
     const ctx = await loadLearningContext(adminForCtx, user.id);
-    const contextAwareTopic = buildExamAwareTopic(topic, ctx);
+    // Resolve audience level. Returns {level:null, promptFragment:""} when
+    // the user hasn't picked — fully optional, no profile-derived default.
+    const audience = resolveAudienceLevel(rawAudienceLevel);
+    // Off-topic guard (2026-05-13): if the textbox text isn't related to the
+    // main topic (heuristic — e.g., "Krebs cycle" on a Mainframe test), STRIP
+    // it from the prompt and surface a warning the UI can show. We never
+    // silently keep an off-topic angle.
+    const focusValidation = validateFocusForTopic(topic, additionalFocus, subTopics);
+    const effectiveFocus = focusValidation.ok ? additionalFocus : "";
+    const focusWarning = focusValidation.ok ? null : focusValidation.reason;
+    const contextAwareTopic = applyAdditionalFocus(buildExamAwareTopic(topic, ctx), effectiveFocus, subTopics);
     const exclusion = await getRecentStemsForExclusion(adminForCtx, user.id, topic, null, 20);
-    const contextAwareSystem = prependLearningContext(SYSTEM, ctx) + exclusion.promptBlock;
+    // Audience fragment is empty when the user didn't pick a level — skip the
+    // double newline in that case so the prompt doesn't start with whitespace.
+    const audiencePrefix = audience.promptFragment ? `${audience.promptFragment}\n\n` : "";
+    const contextAwareSystem = `${audiencePrefix}${prependLearningContext(SYSTEM, ctx)}${exclusion.promptBlock}`;
 
     const summary = blankBloomCounts();
     type RowWithQuality = {
@@ -605,7 +652,12 @@ export async function POST(req: Request) {
               finalRows.push({ ...newRow, quality: { verified: true } });
             } else {
               // eslint-disable-next-line no-console
-              console.warn(`[generate] level=${lvl}: refinement also disputed; keeping with verified:false`);
+              console.warn(
+                `[generate] level=${lvl}: refinement also disputed.\n` +
+                `  stem="${(newRow.stem || "").slice(0, 140)}"\n` +
+                `  author_correct_index=${newRow.correct_index}, reviewer_correct_index=${v2.correctIndex}\n` +
+                `  options=${JSON.stringify(newRow.options)}`,
+              );
               finalRows.push({
                 ...newRow,
                 quality: { verified: false, reason: "answer_disputed", reviewer_index: v2.correctIndex },
@@ -614,7 +666,12 @@ export async function POST(req: Request) {
           } else {
             // Refinement returned junk — keep original, mark unverified.
             // eslint-disable-next-line no-console
-            console.warn(`[generate] level=${lvl}: refinement returned no usable question; keeping original`);
+            console.warn(
+              `[generate] level=${lvl}: refinement returned no usable question; keeping original.\n` +
+              `  stem="${(row.stem || "").slice(0, 140)}"\n` +
+              `  author_correct_index=${row.correct_index}, reviewer_correct_index=${v.correctIndex}\n` +
+              `  options=${JSON.stringify(row.options)}`,
+            );
             finalRows.push({
               ...row,
               quality: { verified: false, reason: "answer_disputed", reviewer_index: v.correctIndex },

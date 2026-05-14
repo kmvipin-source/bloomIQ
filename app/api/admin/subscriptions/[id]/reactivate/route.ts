@@ -50,10 +50,29 @@ export async function POST(req: Request, ctx: Ctx) {
     const admin = supabaseAdmin();
     const { data: sub } = await admin
       .from("subscriptions")
-      .select("id")
+      .select("id, suspended_at, expires_at")
       .eq("id", subscriptionId)
       .maybeSingle();
     if (!sub) return NextResponse.json({ error: "Subscription not found" }, { status: 404 });
+
+    // 2026-05-13 evening: when reactivating, roll `expires_at` forward by
+    // the suspension duration so a "reactivated" subscription doesn't
+    // immediately re-expire because the original cycle elapsed during
+    // suspension. Old behaviour left expires_at in the past — admin saw
+    // "active" but students still saw locked tiles via featureAccess.ts.
+    const subRow = sub as { id: string; suspended_at: string | null; expires_at: string | null };
+    let rolledExpiresAt: string | null = subRow.expires_at;
+    if (subRow.expires_at && subRow.suspended_at) {
+      const expiresMs = new Date(subRow.expires_at).getTime();
+      const suspendedMs = new Date(subRow.suspended_at).getTime();
+      const nowMs = Date.now();
+      if (Number.isFinite(expiresMs) && Number.isFinite(suspendedMs) && expiresMs > suspendedMs) {
+        if (expiresMs < nowMs) {
+          const gapMs = Math.max(0, nowMs - suspendedMs);
+          rolledExpiresAt = new Date(expiresMs + gapMs).toISOString();
+        }
+      }
+    }
 
     const { error: updErr } = await admin
       .from("subscriptions")
@@ -62,6 +81,7 @@ export async function POST(req: Request, ctx: Ctx) {
         suspended_at: null,
         suspended_by: null,
         suspended_reason: null,
+        expires_at: rolledExpiresAt,
       })
       .eq("id", subscriptionId);
     if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 });
@@ -70,6 +90,7 @@ export async function POST(req: Request, ctx: Ctx) {
       ok: true,
       subscription_id: subscriptionId,
       status: "active",
+      expires_at: rolledExpiresAt,
     });
   } catch (e) {
     return NextResponse.json(

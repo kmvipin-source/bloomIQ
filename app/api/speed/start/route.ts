@@ -10,6 +10,7 @@ import {
 } from "@/lib/learningContext";
 import { getRecentStemsForExclusion } from "@/lib/recentStemsExclusion";
 import { filterQuestionBatch } from "@/lib/qgen";
+import { detectExamFromTopic, filterBloomLevelsForExam } from "@/lib/examDetectors";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -135,7 +136,28 @@ export async function POST(req: Request) {
     const exclusion = await getRecentStemsForExclusion(admin, user.id, topic, null, 20);
     const systemPrompt = prependLearningContext(SYSTEM, ctx) + exclusion.promptBlock;
 
-    const mix = levelMix(count);
+    // 2026-05-14: when the topic names a competitive exam, redistribute
+    // the Bloom-level mix to skip levels the actual paper doesn't test —
+    // CAT doesn't ask "Remember"-level trivia, UPSC doesn't ask "Create".
+    // Same source-of-truth filter the /generate and /quick-test routes use.
+    const examMeta = detectExamFromTopic(topic);
+    let mix = levelMix(count);
+    if (examMeta) {
+      const requested = BLOOM_LEVELS.filter((l) => mix[l] > 0);
+      const { effective, omitted } = filterBloomLevelsForExam(requested, examMeta);
+      if (omitted.length > 0 && effective.length > 0) {
+        // Reallocate the omitted-level counts proportionally onto allowed levels.
+        const omittedTotal = omitted.reduce((s, l) => s + mix[l], 0);
+        const newMix: typeof mix = { remember: 0, understand: 0, apply: 0, analyze: 0, evaluate: 0, create: 0 };
+        for (const l of effective) newMix[l] = mix[l];
+        let leftover = omittedTotal;
+        for (let i = 0; leftover > 0; i = (i + 1) % effective.length) {
+          newMix[effective[i]] += 1;
+          leftover -= 1;
+        }
+        mix = newMix;
+      }
+    }
     const userPrompt = `Topic: ${examAwareTopic}
 Total questions: ${count}
 Distribution by Bloom level:

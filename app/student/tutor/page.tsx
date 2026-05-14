@@ -121,7 +121,13 @@ function TutorInner() {
     }
   }
 
-  if (!access.isLoading && !allowed) {
+  // 2026-05-13: spinner while access resolves so the chat shell doesn't
+  // briefly flash for users who'll be redirected to the paywall card.
+  if (access.isLoading) {
+    return <div className="grid place-items-center py-20"><div className="spinner" /></div>;
+  }
+
+  if (!allowed) {
     return (
       <div className="max-w-2xl mx-auto fade-in">
         <Link href="/student" className="inline-flex items-center gap-1 text-sm text-slate-600 hover:text-emerald-700 mb-3">

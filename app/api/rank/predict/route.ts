@@ -204,13 +204,19 @@ export async function POST(req: Request) {
         topicFamily: quizMeta.topic_family,
       });
 
-      if (eligibility.verdict === "corporate_skill") {
-        // Hard refuse. This is the Java / Python / AWS path. We return
-        // 422 (Unprocessable Entity) rather than 400 because the request
-        // is syntactically fine — it just isn't semantically meaningful.
+      // ── Allowlist gate (2026-05-13 evening): only matches_known_exam
+      //    (JEE/NEET/CAT) and competitive_exam_other (GMAT/GATE/UPSC/...)
+      //    are eligible. corporate_skill AND generic both refuse. This is
+      //    the inverted-default design — no token list to maintain. Any
+      //    topic that doesn't positively match an exam falls through to
+      //    refusal automatically.
+      const isExamMock =
+        eligibility.verdict === "matches_known_exam" ||
+        eligibility.verdict === "competitive_exam_other";
+      if (!isExamMock) {
         return NextResponse.json(
           {
-            error: eligibility.reason,
+            error: `This test doesn't look like a competitive-exam mock, so we can't predict an All-India Rank for it. The Mock Rank Predictor only works for JEE / NEET / CAT / GMAT / GATE / UPSC and similar exam mocks. If you want a rank estimate against an exam cohort, type a score directly on /student/rank.`,
             code: "not_a_competitive_exam_mock",
             quiz: { subject: quizMeta.subject, name: quizMeta.name },
             eligibility,
