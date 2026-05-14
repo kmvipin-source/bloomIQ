@@ -1,4 +1,8 @@
 import Groq from "groq-sdk";
+import {
+  GoogleGenerativeAI,
+  type GenerativeModel,
+} from "@google/generative-ai";
 
 // Server-side only. Do NOT use the NEXT_PUBLIC_* prefix — Next.js inlines
 // any NEXT_PUBLIC_* var as a build-time constant into the client bundle,
@@ -22,6 +26,26 @@ function groqClient(): Groq {
   });
   return _groqClient;
 }
+
+// Gemini free-tier fallback. Activates when the Groq call throws a
+// rate-limit / quota / 429 error, OR when the env explicitly forces
+// Gemini-first via LLM_PROVIDER=gemini. Falls back per-call (NOT a
+// process-wide flip) so a brief Groq outage doesn't pin us to Gemini.
+//
+// 2.5 Flash on AI Studio's free tier gives 15 RPM + 1500 req/day —
+// enough headroom to absorb a 40-tester pilot when Groq's free-tier
+// daily cap is hit. Same JSON-output shape so callers don't change.
+let _geminiClient: GoogleGenerativeAI | null = null;
+function geminiClient(): GoogleGenerativeAI | null {
+  if (_geminiClient) return _geminiClient;
+  const key = process.env.GEMINI_API_KEY || "";
+  if (!key) return null;
+  _geminiClient = new GoogleGenerativeAI(key);
+  return _geminiClient;
+}
+
+const GEMINI_TEXT_MODEL = "gemini-2.5-flash";
+const GEMINI_FALLBACK_MODEL = "gemini-2.0-flash";
 
 export const GROQ_MODEL = "llama-3.3-70b-versatile";
 // Vision-capable model on Groq for multimodal (image) prompts
@@ -68,25 +92,107 @@ export class GroqParseError extends Error {
   }
 }
 
-export async function groqJSON(systemPrompt: string, userPrompt: string) {
-  const res = await groqClient().chat.completions.create({
-    model: GROQ_MODEL,
-    temperature: 0.4,
-    max_tokens: MAX_OUTPUT_TOKENS_JSON,
-    response_format: { type: "json_object" },
-    messages: [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: userPrompt },
-    ],
-  });
-  const text = res.choices[0]?.message?.content || "{}";
-  const parsed = parseJsonStrict(text);
-  if (parsed === null) {
-    // Caller can catch GroqParseError to retry or surface 502. Returning
-    // {} previously masked this as silent bad-data into the DB.
-    throw new GroqParseError(text.slice(0, 200));
+/**
+ * Detect whether an error from the Groq SDK is a rate-limit / quota /
+ * "service unavailable" signal. We fall back to Gemini on these; we
+ * do NOT fall back on auth errors (bad key), schema errors, or
+ * timeouts, because those are likely to repeat on Gemini too.
+ */
+function shouldFallback(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const e = err as { status?: number; code?: string; message?: string };
+  if (e.status === 429 || e.status === 503) return true;
+  if (typeof e.code === "string") {
+    const c = e.code.toLowerCase();
+    if (c.includes("rate") || c.includes("quota") || c.includes("limit")) return true;
   }
+  if (typeof e.message === "string") {
+    const m = e.message.toLowerCase();
+    if (m.includes("rate limit") || m.includes("quota") || m.includes("too many requests") || m.includes("429")) return true;
+  }
+  return false;
+}
+
+/**
+ * Force-Gemini env override — lets ops flip the whole platform to
+ * Gemini without touching code (e.g. when Groq is down platform-wide).
+ * Default: Groq with Gemini fallback.
+ */
+function geminiFirst(): boolean {
+  return (process.env.LLM_PROVIDER || "").toLowerCase() === "gemini";
+}
+
+async function geminiGenerate(
+  modelName: string,
+  systemPrompt: string,
+  userPrompt: string,
+  cfg: Record<string, unknown>,
+): Promise<string> {
+  const client = geminiClient();
+  if (!client) throw new Error("Gemini not configured (set GEMINI_API_KEY).");
+  const model: GenerativeModel = client.getGenerativeModel({
+    model: modelName,
+    systemInstruction: systemPrompt,
+    generationConfig: cfg,
+  });
+  const res = await model.generateContent(userPrompt);
+  return res.response.text() || "";
+}
+
+async function geminiJSONFallback(systemPrompt: string, userPrompt: string): Promise<Record<string, unknown>> {
+  const cfg = { responseMimeType: "application/json", temperature: 0.4, maxOutputTokens: MAX_OUTPUT_TOKENS_JSON };
+  let text: string;
+  try {
+    text = await geminiGenerate(GEMINI_TEXT_MODEL, systemPrompt, userPrompt, cfg);
+  } catch {
+    text = await geminiGenerate(GEMINI_FALLBACK_MODEL, systemPrompt, userPrompt, cfg);
+  }
+  const parsed = parseJsonStrict(text || "{}");
+  if (parsed === null) throw new GroqParseError(text.slice(0, 200));
   return parsed;
+}
+
+async function geminiTextFallback(systemPrompt: string, userPrompt: string): Promise<string> {
+  const cfg = { temperature: 0.6, maxOutputTokens: MAX_OUTPUT_TOKENS_TEXT };
+  try {
+    return (await geminiGenerate(GEMINI_TEXT_MODEL, systemPrompt, userPrompt, cfg)).trim();
+  } catch {
+    return (await geminiGenerate(GEMINI_FALLBACK_MODEL, systemPrompt, userPrompt, cfg)).trim();
+  }
+}
+
+export async function groqJSON(systemPrompt: string, userPrompt: string) {
+  // If ops has pinned to Gemini, skip the Groq attempt entirely.
+  if (geminiFirst() && geminiClient()) {
+    return geminiJSONFallback(systemPrompt, userPrompt);
+  }
+  try {
+    const res = await groqClient().chat.completions.create({
+      model: GROQ_MODEL,
+      temperature: 0.4,
+      max_tokens: MAX_OUTPUT_TOKENS_JSON,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ],
+    });
+    const text = res.choices[0]?.message?.content || "{}";
+    const parsed = parseJsonStrict(text);
+    if (parsed === null) {
+      // Caller can catch GroqParseError to retry or surface 502. Returning
+      // {} previously masked this as silent bad-data into the DB.
+      throw new GroqParseError(text.slice(0, 200));
+    }
+    return parsed;
+  } catch (err) {
+    if (shouldFallback(err) && geminiClient()) {
+      // eslint-disable-next-line no-console
+      console.warn("[groq] rate-limited / 503, falling back to Gemini:", (err as Error)?.message);
+      return geminiJSONFallback(systemPrompt, userPrompt);
+    }
+    throw err;
+  }
 }
 
 export async function groqJSONVision(
@@ -94,6 +200,12 @@ export async function groqJSONVision(
   userPrompt: string,
   imageDataUrl: string
 ) {
+  // No Gemini fallback for vision yet — the Gemini SDK's vision call
+  // signature differs (inlineData base64 + mimeType) and our callers
+  // already enforce decoded-bytes caps + MIME allowlist. If the user
+  // hits Groq's vision rate limit we surface the 429; teachers can
+  // retry, and the much smaller call volume on vision endpoints
+  // makes a daily-cap hit unlikely in the 40-tester pilot.
   const res = await groqClient().chat.completions.create({
     model: GROQ_VISION_MODEL,
     temperature: 0.4,
@@ -118,16 +230,28 @@ export async function groqJSONVision(
 }
 
 export async function groqText(systemPrompt: string, userPrompt: string) {
-  const res = await groqClient().chat.completions.create({
-    model: GROQ_MODEL,
-    temperature: 0.6,
-    max_tokens: MAX_OUTPUT_TOKENS_TEXT,
-    messages: [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: userPrompt },
-    ],
-  });
-  return res.choices[0]?.message?.content?.trim() || "";
+  if (geminiFirst() && geminiClient()) {
+    return geminiTextFallback(systemPrompt, userPrompt);
+  }
+  try {
+    const res = await groqClient().chat.completions.create({
+      model: GROQ_MODEL,
+      temperature: 0.6,
+      max_tokens: MAX_OUTPUT_TOKENS_TEXT,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ],
+    });
+    return res.choices[0]?.message?.content?.trim() || "";
+  } catch (err) {
+    if (shouldFallback(err) && geminiClient()) {
+      // eslint-disable-next-line no-console
+      console.warn("[groq] rate-limited / 503, falling back to Gemini:", (err as Error)?.message);
+      return geminiTextFallback(systemPrompt, userPrompt);
+    }
+    throw err;
+  }
 }
 
 export default groqClient;
