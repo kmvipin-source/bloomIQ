@@ -132,7 +132,11 @@ export async function POST(req: Request) {
     }
 
     // Body
-    const body = (await req.json().catch(() => ({}))) as { topic?: unknown; target_bloom?: unknown };
+    const body = (await req.json().catch(() => ({}))) as {
+      topic?: unknown;
+      target_bloom?: unknown;
+      markingScheme?: unknown;
+    };
     const topic = typeof body.topic === "string" ? body.topic.trim() : "";
     // Optional caller-provided Bloom override — used by the BloomIQ Score
     // active-path Start buttons that deep-link "drill my Evaluate weak spot".

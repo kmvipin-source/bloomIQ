@@ -526,7 +526,9 @@ export async function POST(req: Request) {
         options: q.options.map((o) => String(o).trim()),
         correct_index: q.correct_index,
         explanation: q.explanation ? String(q.explanation).trim() : null,
-        status: "approved" as const, // ← students self-trust, no review step
+        // Default 'approved' for verified rows; the verifier path below
+        // may override to 'pending' for disputed rows (Phase H1.3).
+        status: "approved" as "approved" | "pending",
       }));
 
       // Self-verifying answer keys with one regeneration on dispute.
