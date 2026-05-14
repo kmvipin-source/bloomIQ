@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { supabaseBrowser } from "@/lib/supabase/client";
 import { Check, Crown, Sparkles, Mail, ArrowRight, PartyPopper, Receipt } from "lucide-react";
 import { track } from "@/lib/posthog";
+import { formatPaise } from "@/lib/money";
 
 // =============================================================================
 // PUBLIC-FIRST PRICING PAGE
@@ -219,7 +220,7 @@ function PricingInner() {
       const slug = slugMap[planId] ?? planId;
       const label = live?.label || fallback?.label || slug;
       const priceLine = live
-        ? `₹${(live.price_paise / 100).toLocaleString("en-IN")}`
+        ? formatPaise(live.price_paise)
         : (fallback?.priceLine || "");
       setGuestPlan({ slug, label, priceLine });
       return;
@@ -631,7 +632,7 @@ function PricingInner() {
                     )}
                     <div className="font-bold text-lg">{p.label}</div>
                     <div className="text-3xl font-bold mt-2">
-                      ₹{(p.price_paise / 100).toLocaleString("en-IN")}
+                      {formatPaise(p.price_paise)}
                       <span className="text-base font-normal muted"> /{periodSuffix}</span>
                     </div>
                     {p.blurb && <p className="muted text-xs mt-1">{p.blurb}</p>}
@@ -805,7 +806,7 @@ function PricingInner() {
                         <div className="text-xs muted mt-0.5">{bracket(p)} · unlimited teachers</div>
                         <div className="text-2xl font-bold mt-3">
                           {isFixed
-                            ? <>₹{(p.price_paise / 100).toLocaleString("en-IN")}<span className="text-base font-normal muted"> /{periodLabel}</span></>
+                            ? <>{formatPaise(p.price_paise)}<span className="text-base font-normal muted"> /{periodLabel}</span></>
                             : <>₹{rate.toLocaleString("en-IN")}<span className="text-base font-normal muted"> /student/{periodLabel}</span></>
                           }
                         </div>
