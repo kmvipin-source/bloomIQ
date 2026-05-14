@@ -525,6 +525,31 @@ export async function POST(req: Request, ctx: RouteContext) {
       .eq("id", subscriptionId)
       .maybeSingle();
 
+    // Soft seat-count check. contracted_students is billing fiction —
+    // the system doesn't enforce it on enrolment. Surface a warning when
+    // the actual class_members count for this school exceeds the
+    // contracted seats so admin sees the drift and can re-contract.
+    let seatWarning: { contracted: number; actual: number } | null = null;
+    const contractedNow = (written as { contracted_students?: number | null } | null)?.contracted_students ?? null;
+    if (typeof contractedNow === "number" && contractedNow > 0) {
+      const { data: schoolClasses } = await admin
+        .from("classes")
+        .select("id")
+        .eq("school_id", schoolId)
+        .eq("status", "active");
+      const classIds = (schoolClasses as Array<{ id: string }> | null)?.map((c) => c.id) ?? [];
+      if (classIds.length > 0) {
+        const { count: memberCount } = await admin
+          .from("class_members")
+          .select("student_id", { count: "exact", head: true })
+          .in("class_id", classIds);
+        const actual = memberCount ?? 0;
+        if (actual > contractedNow) {
+          seatWarning = { contracted: contractedNow, actual };
+        }
+      }
+    }
+
     return NextResponse.json({
       ok: true,
       school_id: schoolId,
@@ -533,6 +558,7 @@ export async function POST(req: Request, ctx: RouteContext) {
       tier: legacyTier,
       expires_at: expiresAt,
       override: written ?? null,
+      seat_warning: seatWarning,
     });
   } catch (e) {
     return NextResponse.json(
