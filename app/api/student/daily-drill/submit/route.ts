@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getBearer, supabaseServer } from "@/lib/supabase/server";
+import { getBearer, supabaseServer, supabaseAdmin } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -36,6 +36,27 @@ export async function POST(req: Request) {
     const { data: prof } = await sb.from("profiles").select("role").eq("id", user.id).single();
     if (prof?.role !== "student") {
       return NextResponse.json({ error: "Students only." }, { status: 403 });
+    }
+
+    // Anti-replay: one submission per UTC day. Without this gate, a user
+    // could POST the same answer set repeatedly to inflate
+    // daily_drill_attempts.score for analytics / streak gaming. The
+    // proper fix is a server-issued drill_session_id binding the
+    // question set, but that's a heavier rewrite — this closes the
+    // immediate score-inflation vector.
+    const admin = supabaseAdmin();
+    const dayStart = new Date();
+    dayStart.setUTCHours(0, 0, 0, 0);
+    const { count: alreadyToday } = await admin
+      .from("daily_drill_attempts")
+      .select("id", { count: "exact", head: true })
+      .eq("student_id", user.id)
+      .gte("created_at", dayStart.toISOString());
+    if ((alreadyToday ?? 0) > 0) {
+      return NextResponse.json(
+        { error: "You've already submitted today's drill. Come back tomorrow.", code: "drill_already_submitted" },
+        { status: 409 },
+      );
     }
 
     const body = await req.json().catch(() => ({}));

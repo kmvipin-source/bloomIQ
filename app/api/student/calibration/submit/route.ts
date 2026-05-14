@@ -16,35 +16,31 @@ export const dynamic = "force-dynamic";
 /**
  * POST /api/student/calibration/submit
  *
- * Receives the answered calibration session, scores it, persists the
+ * Receives the answered calibration session, re-loads the server-trusted
+ * questions from `calibration_sessions` (migration 82), scores against
+ * those (NOT against the client-supplied question payload), persists the
  * result (calibrations + calibration_responses + bloomiq_scores), and
  * returns the Future You payload the reveal screen consumes.
  *
  * Body shape:
  *   {
- *     session_id: string,
- *     exam_goal: string | null,
- *     groq_model: string,
+ *     session_id: string,                // server-issued; must match row
+ *     total_seconds?: number,
  *     responses: Array<{
- *       question: CalibrationQuestion,
- *       selected_index: number | null,
- *       time_taken_seconds: number
+ *       selected_index: number | null,   // ONLY trusted field per response
+ *       time_taken_seconds?: number
  *     }>
  *   }
  *
- * Why we accept the question objects in the body: the /start endpoint
- * is stateless (no DB row written); the client returns the questions it
- * was shown so we can score and log them. The only trust risk is a user
- * faking their own score — they only fool themselves.
+ * Any `question` object the client sends is IGNORED — we read everything
+ * (stem, options, correct_index, bloom_level, topic) from the persisted
+ * row. This blocks the previous self-score forge.
  */
 
 type SubmitBody = {
   session_id?: string;
-  exam_goal?: string | null;
-  groq_model?: string;
   total_seconds?: number;
   responses?: Array<{
-    question?: Partial<CalibrationQuestion>;
     selected_index?: number | null;
     time_taken_seconds?: number;
   }>;
@@ -63,8 +59,35 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Invalid body" }, { status: 400 });
     }
 
-    // Normalise + validate the responses. We tolerate a missing answer
-    // (counts as wrong) but require valid Bloom levels and indices.
+    // Re-load server-trusted questions. session_id must belong to caller
+    // AND be recent (6h TTL — abandoned sessions can't be revived later
+    // with re-mined questions). We service-role here because this table
+    // has no RLS read policy by design.
+    const adminLookup = supabaseAdmin();
+    const { data: sessionRow, error: sessionErr } = await adminLookup
+      .from("calibration_sessions")
+      .select("session_id, user_id, exam_goal, groq_model, questions, created_at")
+      .eq("session_id", body.session_id)
+      .eq("user_id", user.id)
+      .maybeSingle();
+    if (sessionErr) {
+      return NextResponse.json({ error: `Session lookup failed: ${sessionErr.message}` }, { status: 500 });
+    }
+    if (!sessionRow) {
+      return NextResponse.json({ error: "Unknown or foreign calibration session" }, { status: 404 });
+    }
+    const ageMs = Date.now() - new Date((sessionRow as { created_at: string }).created_at).getTime();
+    if (ageMs > 6 * 3600 * 1000) {
+      return NextResponse.json({ error: "Calibration session expired. Please restart." }, { status: 410 });
+    }
+    const serverQuestions = (sessionRow as { questions: CalibrationQuestion[] }).questions;
+    const sessionGroqModel = (sessionRow as { groq_model: string | null }).groq_model;
+    const sessionExamGoal = (sessionRow as { exam_goal: string | null }).exam_goal;
+
+    // Normalise responses against the SERVER-TRUSTED question list.
+    // body.responses[i] is paired with serverQuestions[i] by index. We
+    // ignore anything past the served question count and never read
+    // `question` from the body.
     const scorable: ScorableAnswer[] = [];
     const responseRows: Array<{
       user_id: string;
@@ -81,12 +104,12 @@ export async function POST(req: Request) {
       time_taken_seconds: number | null;
     }> = [];
 
-    body.responses.forEach((r) => {
-      const q = r.question;
+    serverQuestions.forEach((q, idx) => {
       if (!q || typeof q.stem !== "string" || !Array.isArray(q.options) || q.options.length !== 4) return;
       if (typeof q.correct_index !== "number" || q.correct_index < 0 || q.correct_index > 3) return;
       if (!q.bloom_level || !BLOOM_LEVELS.includes(q.bloom_level as BloomLevel)) return;
 
+      const r = body.responses?.[idx] ?? {};
       const sel = typeof r.selected_index === "number" && r.selected_index >= 0 && r.selected_index <= 3
         ? r.selected_index
         : null;
@@ -103,10 +126,6 @@ export async function POST(req: Request) {
         time_taken_seconds: taken ?? undefined,
       });
 
-      // Use the running length of accepted rows as the question_index.
-      // Using the loop index of body.responses instead would leave gaps
-      // when an entry fails validation above, which breaks any analytics
-      // keyed on (session_id, question_index) needing a dense sequence.
       responseRows.push({
         user_id: user.id,
         session_id: body.session_id!,
@@ -136,7 +155,7 @@ export async function POST(req: Request) {
     // 2026 — Phase 1") would make the banner fire on every load. The
     // normaliser collapses any variant to one of the known buckets;
     // free-text goals fall through to "other".
-    const examGoal = normalizeExamGoal(body.exam_goal ?? null);
+    const examGoal = normalizeExamGoal(sessionExamGoal);
     const prediction = predictRankAndColleges(computed.score, examGoal);
     const bestYou = computeBestYou(computed, examGoal);
 
@@ -161,7 +180,7 @@ export async function POST(req: Request) {
         total_seconds: typeof body.total_seconds === "number" ? Math.round(body.total_seconds) : null,
         completed_at: new Date().toISOString(),
         algo_version: "v1.0",
-        groq_model: body.groq_model ?? null,
+        groq_model: sessionGroqModel,
       }, { onConflict: "user_id" });
     if (calErr) {
       return NextResponse.json({ error: `calibration save failed: ${calErr.message}` }, { status: 500 });
@@ -199,6 +218,10 @@ export async function POST(req: Request) {
     if (scoreErr) {
       return NextResponse.json({ error: `score save failed: ${scoreErr.message}` }, { status: 500 });
     }
+
+    // One-shot — burn the session row so a replay returns 404. Best
+    // effort; an orphan row will be cleaned up by the 6h TTL check.
+    await admin.from("calibration_sessions").delete().eq("session_id", body.session_id);
 
     return NextResponse.json({
       ok: true,

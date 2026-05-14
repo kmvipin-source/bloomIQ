@@ -579,6 +579,7 @@ export async function POST(req: Request) {
               console.warn(`[quick-test] level=${lvl}: refinement also disputed; keeping with verified:false`);
               finalRows.push({
                 ...newRow,
+                status: "pending", // verifier disputed — hide from cross-owner pools
                 quality: { verified: false, reason: "answer_disputed", reviewer_index: v2.correctIndex },
               });
             }
@@ -587,6 +588,7 @@ export async function POST(req: Request) {
             console.warn(`[quick-test] level=${lvl}: refinement returned no usable question; keeping original`);
             finalRows.push({
               ...row,
+              status: "pending",
               quality: { verified: false, reason: "answer_disputed", reviewer_index: v.correctIndex },
             });
           }
@@ -595,6 +597,7 @@ export async function POST(req: Request) {
           console.warn(`[quick-test] level=${lvl}: refinement call failed:`, e instanceof Error ? e.message : e);
           finalRows.push({
             ...row,
+            status: "pending",
             quality: { verified: false, reason: "answer_disputed", reviewer_index: v.correctIndex },
           });
         }

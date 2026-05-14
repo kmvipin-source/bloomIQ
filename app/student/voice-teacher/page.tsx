@@ -9,6 +9,7 @@ import {
 import { suggestedTopics } from "@/lib/topicSuggestions";
 import { type LearnerProfile } from "@/components/LearnerProfilePrompt";
 import CurrentGoalChip from "@/components/CurrentGoalChip";
+import DOMPurify from "isomorphic-dompurify";
 
 // =============================================================================
 // VOICE AI TEACHER — speak your doubt, hear the answer back. The student
@@ -458,11 +459,18 @@ export default function VoiceTeacherPage() {
   );
 }
 
-// Same helper as Visualizer page — strip width/height so the SVG fills its
-// aspect-ratio container.
+// Sanitize FIRST then strip width/height. The SVG arrives from the LLM
+// and is injected via dangerouslySetInnerHTML — it can carry <script>,
+// event handlers, javascript: URLs etc. DOMPurify's SVG profile keeps
+// visual elements (path/polygon/g/text) and drops everything else.
 function wrapResponsiveSvg(svg: string): string {
-  if (!svg.startsWith("<svg")) return svg;
-  return svg.replace(/^<svg([^>]*)>/, (_m, attrs: string) => {
+  const safe = DOMPurify.sanitize(svg, {
+    USE_PROFILES: { svg: true, svgFilters: true },
+    FORBID_TAGS: ["script", "foreignObject"],
+    FORBID_ATTR: ["onerror", "onload", "onclick", "onmouseover"],
+  });
+  if (!safe.startsWith("<svg")) return safe;
+  return safe.replace(/^<svg([^>]*)>/, (_m, attrs: string) => {
     const cleaned = String(attrs)
       .replace(/\swidth\s*=\s*"[^"]*"/gi, "")
       .replace(/\sheight\s*=\s*"[^"]*"/gi, "");
