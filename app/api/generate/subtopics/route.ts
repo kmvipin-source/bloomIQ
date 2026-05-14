@@ -58,6 +58,12 @@ function topicKey(topic: string): string {
   return topic.trim().toLowerCase();
 }
 
+// Drop sub-topics that look like they're echoing PII / URLs / IDs from
+// the first user's topic. The cache is shared across users keyed by
+// lowercased topic, so anything that lands here ships to every future
+// caller of the same topic.
+const PII_LIKE = /(@|https?:\/\/|\.com\b|\.in\b|\.io\b|\d{6,}|\b[A-Z0-9]{6,}\b)/;
+
 /** Sanitise the LLM output. Returns [] if the response can't be salvaged. */
 function sanitiseSubtopics(raw: unknown): string[] {
   if (!raw || typeof raw !== "object") return [];
@@ -68,7 +74,14 @@ function sanitiseSubtopics(raw: unknown): string[] {
     .filter((s) => s.length > 0 && s.length <= 50)
     // Strip surrounding quotes / trailing punctuation the LLM sometimes adds.
     .map((s) => s.replace(/^["'`]+|["'`.;:]+$/g, "").trim())
-    .filter((s) => s.length >= 2);
+    .filter((s) => s.length >= 2)
+    // Drop angle brackets defensively (in case a future client renders
+    // as markdown / HTML).
+    .map((s) => s.replace(/[<>]/g, ""))
+    // Drop PII-shaped strings — cross-user cache means one user's
+    // "react + my-prod-server-host" leak would ship to every later
+    // caller searching "react".
+    .filter((s) => !PII_LIKE.test(s));
   // Dedupe (case-insensitive) preserving first-seen order.
   const seen = new Set<string>();
   const out: string[] = [];

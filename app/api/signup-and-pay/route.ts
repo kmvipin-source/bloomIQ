@@ -69,7 +69,8 @@ export async function POST(req: Request) {
     // Reject if email already in use — push to /login flow instead of paying.
     // Paged loop instead of a single listUsers({perPage:200}) page,
     // which silently mis-resolved emails past the first 200 auth users
-    // and allowed duplicate accounts to slip through.
+    // and allowed duplicate accounts to slip through. The O(N) cost is
+    // bounded by the per-IP rate limit at the top of this handler.
     let exists: { id: string; email?: string | null } | undefined;
     {
       const perPage = 200;

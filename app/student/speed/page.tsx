@@ -22,13 +22,29 @@ import { type LearnerProfile } from "@/components/LearnerProfilePrompt";
 // which is the single most important diagnostic in JEE/NEET-style prep.
 // =============================================================================
 
+// What /api/speed/start returns per question — correct_index intentionally
+// absent (migration 87 keeps it server-side).
 type ServerQ = {
+  idx: number;
+  stem: string;
+  options: string[];
+  bloom_level: BloomLevel;
+  target_ms: number;
+};
+
+// Per-question reveal returned by /api/speed/submit. This is the ONE place
+// the client receives correct_index — after scoring, for the explanation
+// screen.
+type RevealQ = {
   stem: string;
   options: string[];
   correct_index: number;
   bloom_level: BloomLevel;
   target_ms: number;
-  explanation?: string;
+  time_ms: number;
+  picked: number;
+  was_right: boolean;
+  explanation: string | null;
 };
 
 type SubmitResp = {
@@ -38,6 +54,7 @@ type SubmitResp = {
   total_time_ms: number;
   quadrant: { fast_right: number; slow_right: number; fast_wrong: number; slow_wrong: number };
   verdict: { title: string; coaching: string };
+  questions: RevealQ[];
 };
 
 type HistoryRow = {
@@ -82,6 +99,11 @@ export default function SpeedTrainerPage() {
 
   // Active session state
   const [questions, setQuestions] = useState<ServerQ[] | null>(null);
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  // After submit, the server returns the full reveal — render the
+  // explanation screen from this, NOT from `questions` which never had
+  // correct_index in this version.
+  const [reveal, setReveal] = useState<RevealQ[] | null>(null);
   const [activeTopic, setActiveTopic] = useState<string>("");
   const [picks, setPicks] = useState<number[]>([]);
   const [times, setTimes] = useState<number[]>([]);
@@ -195,6 +217,7 @@ export default function SpeedTrainerPage() {
       const qs: ServerQ[] = (j.questions || []).filter((q: { bloom_level: string }) => isBloomLevel(q.bloom_level));
       if (qs.length === 0) throw new Error("AI returned no usable questions.");
       setQuestions(qs);
+      setSessionId(j.session_id || null);
       setActiveTopic(j.topic || topic);
       setPicks(new Array(qs.length).fill(-1));
       setTimes(new Array(qs.length).fill(0));
@@ -259,17 +282,17 @@ export default function SpeedTrainerPage() {
       const sb = supabaseBrowser();
       const { data: { session } } = await sb.auth.getSession();
       if (!session) throw new Error("Your session expired — please sign in again.");
+      // Lean payload — server already has the issued questions
+      // (migration 87). We send only picks + per-question elapsed
+      // time, keyed by idx. correct_index never round-trips client-side.
+      if (!sessionId) throw new Error("Missing speed session — please restart.");
       const payload = {
+        session_id: sessionId,
         topic: activeTopic,
-        questions: questions.map((q, i) => ({
-          stem: q.stem,
-          options: q.options,
-          correct_index: q.correct_index,
-          bloom_level: q.bloom_level,
-          target_ms: q.target_ms,
+        answers: questions.map((q, i) => ({
+          idx: q.idx ?? i,
           time_ms: finalTimes[i] || 0,
           picked: picks[i],
-          explanation: q.explanation || null,
         })),
       };
       const r = await fetch("/api/speed/submit", {
@@ -279,7 +302,9 @@ export default function SpeedTrainerPage() {
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j?.error || "Submit failed");
-      setResult(j as SubmitResp);
+      const resp = j as SubmitResp;
+      setResult(resp);
+      setReveal(resp.questions || null);
       void loadHistory();
       // Recompute BloomIQ score after a speed-trainer round.
       void triggerScoreRecompute("drill", null);
@@ -288,14 +313,18 @@ export default function SpeedTrainerPage() {
       // session. Only events where the student actually rated their confidence
       // (>= 1) are sent. Failure is silent — calibration is non-critical.
       try {
-        const events = questions
+        // Confidence calibration only fires after submit when we have
+        // the reveal data. Use the server's was_right rather than
+        // recomputing from a now-stripped correct_index.
+        const revealArr = resp.questions || [];
+        const events = revealArr
           .map((q, i) => {
             const conf = confidences[i] || 0;
             if (conf < 1 || picks[i] < 0) return null;
             return {
               source: "speed",
               confidence: conf,
-              was_correct: picks[i] === q.correct_index,
+              was_correct: q.was_right,
               bloom_level: q.bloom_level,
               topic: activeTopic || null,
             };
@@ -318,6 +347,8 @@ export default function SpeedTrainerPage() {
 
   function reset() {
     setQuestions(null);
+    setSessionId(null);
+    setReveal(null);
     setResult(null);
     setPicks([]);
     setTimes([]);
@@ -629,11 +660,11 @@ export default function SpeedTrainerPage() {
           </Link>
 
           {/* ============ PER-QUESTION REVIEW ============
-              Now that the session is graded, show every question with the
-              correct answer + the student's pick + the explanation. This is
-              the surface the student actually learns from — the quadrant
-              card is the diagnosis, this is the cure. */}
-          {questions && (
+              Reveal data comes from the /submit response (migration 87 keeps
+              correct_index server-side until scoring completes). The reveal
+              array is per-question parallel to the issued list — same order,
+              same indices. */}
+          {reveal && (
             <div className="card">
               <h3 className="font-semibold">Review every answer</h3>
               <p className="text-xs muted mt-1 mb-4">
@@ -642,11 +673,11 @@ export default function SpeedTrainerPage() {
               </p>
 
               <div className="space-y-3">
-                {questions.map((q, qi) => {
-                  const studentPick = picks[qi];
+                {reveal.map((q, qi) => {
+                  const studentPick = q.picked;
                   const skipped = studentPick === -1;
-                  const isRight = studentPick === q.correct_index;
-                  const timeMs = times[qi] || 0;
+                  const isRight = q.was_right;
+                  const timeMs = q.time_ms || 0;
                   const fast = timeMs <= q.target_ms;
                   const overBy = timeMs - q.target_ms;
 

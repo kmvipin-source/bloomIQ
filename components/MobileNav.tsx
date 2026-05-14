@@ -150,6 +150,8 @@ export default function MobileNav({ role }: { role: Role }) {
         <button type="button"
           onClick={() => setOpen((v) => !v)}
           aria-label={open ? "Close menu" : "Open menu"}
+          aria-expanded={open}
+          aria-controls="bloomiq-mobile-nav-panel"
           className="p-2 rounded-lg"
           style={{ color: "var(--color-fg-soft)" }}
         >
@@ -159,6 +161,10 @@ export default function MobileNav({ role }: { role: Role }) {
 
       {open && (
         <div
+          id="bloomiq-mobile-nav-panel"
+          role="dialog"
+          aria-label="Navigation menu"
+          aria-modal="true"
           className="md:hidden fixed inset-0 top-[57px] z-20 overflow-y-auto"
           style={{ background: "var(--color-bg)" }}
           onClick={() => setOpen(false)}
