@@ -196,6 +196,13 @@ export async function POST(req: Request, ctx: RouteContext) {
       // first-sign-in deferral no longer applies (the cycle is locked in
       // by the explicit money-in event).
       activation_pending: false,
+      // Clear suspension columns so the row's state is internally
+      // consistent. Without this, mark-paid flipped status to 'active'
+      // but left suspended_at / suspended_by / suspended_reason set,
+      // leaving stale audit data on what is now a live subscription.
+      suspended_at: null,
+      suspended_by: null,
+      suspended_reason: null,
     };
     // Only write expires_at when the operator explicitly extended it via
     // the escape hatch. The default path leaves expires_at exactly as

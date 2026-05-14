@@ -7,6 +7,7 @@ import {
   buildExamAwareTopic,
 } from "@/lib/learningContext";
 import { buildSkillFewShotBlock } from "@/lib/skillFewShot";
+import { checkDailyQuota, recordDailyUse } from "@/lib/freeQuota";
 
 export const runtime = "nodejs";
 
@@ -32,6 +33,9 @@ export async function POST(req: Request) {
     const sb = supabaseServer(token);
     const { data: { user } } = await sb.auth.getUser();
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+    const dq = await checkDailyQuota(user.id, "flashcards");
+    if (!dq.allowed) return NextResponse.json({ error: dq.reason, code: "free_daily_cap" }, { status: 402 });
 
     const body = await req.json().catch(() => ({}));
     const topic: string = String(body.topic || "").trim();
@@ -81,6 +85,8 @@ export async function POST(req: Request) {
       .filter((c) => c && typeof c.front === "string" && typeof c.back === "string")
       .map((c) => ({ front: c.front.trim(), back: c.back.trim() }))
       .slice(0, count);
+
+    await recordDailyUse(user.id, "flashcards");
 
     return NextResponse.json({ ok: true, cards, bloom_level: bloom, topic: topic || null });
   } catch (e) {

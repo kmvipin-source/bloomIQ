@@ -3,6 +3,7 @@ import { groqJSON } from "@/lib/groq";
 import { BLOOM_LEVELS, type BloomLevel } from "@/lib/bloom";
 import { getBearer, supabaseServer } from "@/lib/supabase/server";
 import { checkRateLimit } from "@/lib/rateLimit";
+import { checkLifetimeUse, recordLifetimeUse } from "@/lib/freeQuota";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -66,6 +67,8 @@ export async function POST(req: Request) {
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     const rate = checkRateLimit(user.id, "graph.build", { capacity: 5, refillPerHour: 10 });
     if (!rate.allowed) return NextResponse.json({ error: "Too many requests.", code: "rate_limited" }, { status: 429, headers: { "Retry-After": String(rate.retryAfterSec) } });
+    const ltGate = await checkLifetimeUse(user.id, "knowledge_graph");
+    if (!ltGate.allowed) return NextResponse.json({ error: ltGate.reason, code: "free_lifetime_used" }, { status: 402 });
 
     const body = await req.json().catch(() => ({}));
     const force = body.force === true;
@@ -191,6 +194,8 @@ export async function POST(req: Request) {
       graph,
       computed_at: new Date().toISOString(),
     });
+
+    await recordLifetimeUse(user.id, "knowledge_graph");
 
     return NextResponse.json({ ok: true, cached: false, graph });
   } catch (e) {

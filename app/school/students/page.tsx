@@ -69,7 +69,8 @@ export default function SchoolStudentsPage() {
       const { data: schoolClasses } = await sb
         .from("classes")
         .select("id")
-        .eq("school_id", prof.school_id);
+        .eq("school_id", prof.school_id)
+        .eq("status", "active");
       const schoolClassIds = ((schoolClasses as Array<{ id: string }> | null) || []).map((c) => c.id);
       const schoolClassQuizIds = await loadClassQuizIdsForClasses(sb, schoolClassIds);
       const quizIdArr = Array.from(schoolClassQuizIds);

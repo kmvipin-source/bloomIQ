@@ -43,6 +43,33 @@ export async function POST(req: Request) {
 
     const admin = supabaseAdmin();
 
+    // Refuse to start an attempt against a quiz whose only enclosing
+    // class is soft-deleted (migration 78). Inactive classes are
+    // preserved for audit but should not generate new attempts. We
+    // resolve the quiz's assigned classes through quiz_assignments;
+    // if every class is inactive the attempt is blocked. Quizzes with
+    // no class assignment (personal practice) are allowed through.
+    const { data: assignments } = await admin
+      .from("quiz_assignments")
+      .select("class_id")
+      .eq("quiz_id", quizId);
+    const classIds = ((assignments as Array<{ class_id: string | null }> | null) || [])
+      .map((a) => a.class_id)
+      .filter((c): c is string => !!c);
+    if (classIds.length > 0) {
+      const { data: activeClasses } = await admin
+        .from("classes")
+        .select("id")
+        .in("id", classIds)
+        .eq("status", "active");
+      if (!activeClasses || activeClasses.length === 0) {
+        return NextResponse.json(
+          { error: "This test belongs to a class that has been deactivated.", code: "class_inactive" },
+          { status: 410 }
+        );
+      }
+    }
+
     // Best-effort: persist the per-student "track question time" preference
     // for next time. Failure is not fatal — the attempt still proceeds.
     if (trackQuestionTime !== null) {

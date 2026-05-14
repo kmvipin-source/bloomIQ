@@ -309,7 +309,8 @@ export async function buildStudentContext(studentId: string): Promise<StudentCon
       const { data: cRaw } = await admin
         .from("classes")
         .select("id, name")
-        .in("id", myClassIds);
+        .in("id", myClassIds)
+        .eq("status", "active");
       const classes = (cRaw as ClassRow[] | null) || [];
       const classNameById = new Map<string, string>();
       for (const c of classes) classNameById.set(c.id, c.name);

@@ -66,11 +66,14 @@ export async function POST(req: Request, ctx: Ctx) {
       const expiresMs = new Date(subRow.expires_at).getTime();
       const suspendedMs = new Date(subRow.suspended_at).getTime();
       const nowMs = Date.now();
+      // Always roll the cycle forward by the full suspension duration.
+      // The previous implementation only rolled when expiry had already
+      // elapsed — schools suspended mid-cycle and reactivated weeks
+      // later silently lost those weeks. Now: gap = now - suspended_at
+      // and the new expiry shifts forward by exactly that gap.
       if (Number.isFinite(expiresMs) && Number.isFinite(suspendedMs) && expiresMs > suspendedMs) {
-        if (expiresMs < nowMs) {
-          const gapMs = Math.max(0, nowMs - suspendedMs);
-          rolledExpiresAt = new Date(expiresMs + gapMs).toISOString();
-        }
+        const gapMs = Math.max(0, nowMs - suspendedMs);
+        rolledExpiresAt = new Date(expiresMs + gapMs).toISOString();
       }
     }
 

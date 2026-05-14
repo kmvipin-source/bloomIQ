@@ -151,7 +151,8 @@ export default function EngagementTrends({
       const { data: cs } = await sb
         .from("classes")
         .select("id")
-        .eq("school_id", schoolId);
+        .eq("school_id", schoolId)
+        .eq("status", "active");
       const classIds = ((cs as Cls[]) || []).map((c) => c.id);
       if (classIds.length === 0) {
         if (!cancelled) {

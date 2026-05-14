@@ -58,7 +58,8 @@ export default function ClassComparisonHeatmap({
       const { data: cs } = await sb
         .from("classes")
         .select("id, name, grade")
-        .eq("school_id", schoolId);
+        .eq("school_id", schoolId)
+        .eq("status", "active");
       const classList = (cs as Cls[]) || [];
       const classIds = classList.map((c) => c.id);
 

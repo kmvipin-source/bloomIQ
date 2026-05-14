@@ -162,7 +162,8 @@ export async function buildTeacherContext(teacherId: string): Promise<TeacherCon
     const { data: cRaw } = await admin
       .from("classes")
       .select("id, name")
-      .in("id", classIds);
+      .in("id", classIds)
+      .eq("status", "active");
     classes = (cRaw as ClassRow[] | null) || [];
   }
   const classNameById = new Map<string, string>();

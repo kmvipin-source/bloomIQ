@@ -69,7 +69,8 @@ export default function AtRiskWatchlist({
       const { data: cs } = await sb
         .from("classes")
         .select("id, name")
-        .eq("school_id", schoolId);
+        .eq("school_id", schoolId)
+        .eq("status", "active");
       const classList = (cs as Cls[]) || [];
       const classIds = classList.map((c) => c.id);
       if (classIds.length === 0) {

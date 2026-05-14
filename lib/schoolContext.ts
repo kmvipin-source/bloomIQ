@@ -124,10 +124,13 @@ export async function buildSchoolContext(schoolId: string): Promise<SchoolContex
   const studentIds = students.map((s) => s.id);
 
   // === Classes ===========================================================
+  // Filter out soft-deleted classes (migration 78). Inactive classes
+  // remain in the DB for audit but must not appear in coach contexts.
   const { data: classesData } = await admin
     .from("classes")
     .select("id, name")
-    .eq("school_id", schoolId);
+    .eq("school_id", schoolId)
+    .eq("status", "active");
   const classes: ClassRow[] = (classesData as ClassRow[] | null) || [];
   const classIds = classes.map((c) => c.id);
 
