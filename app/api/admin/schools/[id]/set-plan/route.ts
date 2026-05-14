@@ -171,6 +171,25 @@ export async function POST(req: Request, ctx: RouteContext) {
             : null)
         : null;
 
+    // Validate GSTIN format UP FRONT (matches schools_gstin_format_check
+    // from migration 74). Previously the schools update happened AFTER
+    // the subscription update — a malformed GSTIN landed as a 400 with
+    // the message "Subscription saved, but school details rejected"
+    // which left the caller's UI in a partial state (the subscription
+    // had already moved). Reject before any writes.
+    if (schoolGstinProvided && schoolGstin) {
+      const GSTIN_RE = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
+      if (!GSTIN_RE.test(schoolGstin)) {
+        return NextResponse.json(
+          {
+            error: "GSTIN must be a 15-character format (e.g. 29ABCDE1234F1Z5). Fix and re-save.",
+            code: "invalid_gstin",
+          },
+          { status: 400 },
+        );
+      }
+    }
+
     const admin = supabaseAdmin();
 
     // Verify the school exists; reject 404 cleanly rather than letting the

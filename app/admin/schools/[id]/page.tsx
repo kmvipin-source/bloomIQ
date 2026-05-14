@@ -31,6 +31,7 @@ import {
   Users, Building2, RotateCw, History, Download, Pause, Play, ShieldAlert,
 } from "lucide-react";
 import { supabaseBrowser } from "@/lib/supabase/client";
+import { formatPaise } from "@/lib/money";
 
 type SchoolDetail = {
   school: {
@@ -99,7 +100,7 @@ function formatDate(iso: string | null): string {
 }
 
 function formatINR(paise: number): string {
-  return "₹" + (paise / 100).toLocaleString("en-IN");
+  return formatPaise(paise);
 }
 
 export default function SchoolAdminPage(props: PageProps) {

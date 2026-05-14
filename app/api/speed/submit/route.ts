@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { isBloomLevel, type BloomLevel } from "@/lib/bloom";
-import { getBearer, supabaseServer } from "@/lib/supabase/server";
+import { getBearer, supabaseServer, supabaseAdmin } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
 
@@ -8,28 +8,39 @@ export const runtime = "nodejs";
 // POST /api/speed/submit
 // -----------------------------------------------------------------------------
 // Body: {
+//   session_id: string,             // server-issued; must match speed_sessions_issued row
 //   topic: string,
-//   questions: Array<{
-//     stem, options[4], correct_index, bloom_level, target_ms,
-//     time_ms, picked, explanation?
+//   answers: Array<{
+//     idx: number,                  // index into the original issued question array
+//     time_ms: number,
+//     picked: number | null
 //   }>
 // }
 //
-// Computes the speed-accuracy quadrant counts and persists the session. The
-// client could compute these locally, but we recompute server-side so the row
-// is the source of truth (no way to fake a leaderboard / streak by editing
-// the request).
+// Server re-loads the issued questions (incl. stem / options / correct_index /
+// bloom_level) from speed_sessions_issued (migration 87) by session_id, then
+// scores against THAT — ignores any question object the client returns. This
+// blocks the previous fabrication path where a client could send arbitrary
+// correct_index values.
 // =============================================================================
 
-type SubmitQ = {
+type IssuedQ = {
   stem: string;
   options: string[];
   correct_index: number;
-  bloom_level: "remember" | "understand" | "apply" | "analyze" | "evaluate" | "create";
+  bloom_level: BloomLevel;
+  explanation?: string | null;
+};
+
+type ServerQ = {
+  stem: string;
+  options: string[];
+  correct_index: number;
+  bloom_level: BloomLevel;
   target_ms: number;
   time_ms: number;
   picked: number;
-  explanation: string;
+  explanation: string | null;
 };
 
 type Quadrant = {
@@ -39,7 +50,19 @@ type Quadrant = {
   slow_wrong: number;
 };
 
-function computeQuadrant(qs: SubmitQ[]): Quadrant {
+// Same target_ms map as /start. Keep in sync — the JSON shape exchanged
+// between /start and the client doesn't carry target_ms any more, so we
+// re-derive it here when scoring.
+const TARGET_MS: Record<BloomLevel, number> = {
+  remember: 15_000,
+  understand: 30_000,
+  apply: 60_000,
+  analyze: 90_000,
+  evaluate: 120_000,
+  create: 180_000,
+};
+
+function computeQuadrant(qs: ServerQ[]): Quadrant {
   let fast_right = 0, slow_right = 0, fast_wrong = 0, slow_wrong = 0;
   for (const q of qs) {
     const right = q.picked === q.correct_index;
@@ -61,45 +84,75 @@ export async function POST(req: Request) {
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const body = await req.json().catch(() => ({}));
+    const sessionId: string = String(body.session_id || "").trim();
+    if (!sessionId) {
+      return NextResponse.json({ error: "session_id is required" }, { status: 400 });
+    }
     const topic: string = String(body.topic || "").slice(0, 200);
-    const qsRaw = Array.isArray(body.questions) ? (body.questions as unknown[]) : [];
+    const ansRaw = Array.isArray(body.answers) ? (body.answers as unknown[]) : [];
 
-    const questions: SubmitQ[] = qsRaw
-      .map((q) => {
-        const o = (q || {}) as Record<string, unknown>;
-        const stem = String(o.stem || "").trim();
-        const options = Array.isArray(o.options) ? (o.options as unknown[]).map(String) : [];
-        const ci = Number(o.correct_index);
-        const bl = String(o.bloom_level || "");
-        const target_ms = Math.max(5_000, Math.min(300_000, Number(o.target_ms) || 60_000));
-        const time_ms = Math.max(0, Math.min(600_000, Number(o.time_ms) || 0));
-        const picked = Number(o.picked);
-        if (!stem || options.length !== 4 || !Number.isInteger(ci) || ci < 0 || ci > 3) return null;
-        if (!isBloomLevel(bl)) return null;
-        if (!Number.isInteger(picked) || picked < 0 || picked > 3) {
-          // Skipped/timeout: still record but mark wrong with a sentinel pick.
-          return {
-            stem, options, correct_index: ci, bloom_level: bl, target_ms, time_ms,
-            picked: -1, explanation: typeof o.explanation === "string" ? o.explanation : "",
-          } satisfies SubmitQ;
-        }
-        return {
-          stem, options, correct_index: ci, bloom_level: bl, target_ms, time_ms, picked,
-          explanation: typeof o.explanation === "string" ? o.explanation : undefined,
-        } satisfies SubmitQ;
-      })
-      .filter((q): q is SubmitQ => q !== null);
+    // Re-load server-trusted issued questions. Must belong to the caller
+    // and be recent (6h TTL — abandoned sessions can't be revived later
+    // with re-mined questions).
+    const admin = supabaseAdmin();
+    const { data: sessionRow, error: sessionErr } = await admin
+      .from("speed_sessions_issued")
+      .select("session_id, user_id, questions, created_at")
+      .eq("session_id", sessionId)
+      .eq("user_id", user.id)
+      .maybeSingle();
+    if (sessionErr) {
+      return NextResponse.json({ error: `Session lookup failed: ${sessionErr.message}` }, { status: 500 });
+    }
+    if (!sessionRow) {
+      return NextResponse.json({ error: "Unknown or foreign speed session" }, { status: 404 });
+    }
+    const ageMs = Date.now() - new Date((sessionRow as { created_at: string }).created_at).getTime();
+    if (ageMs > 6 * 3600 * 1000) {
+      return NextResponse.json({ error: "Speed session expired. Please restart." }, { status: 410 });
+    }
+    const issued = (sessionRow as { questions: IssuedQ[] }).questions;
+
+    // Map answers by idx — client may not return one entry per issued
+    // question (skip/timeout case). We rebuild the per-question record
+    // from the server's issued list, defaulting picked=-1 / time_ms=target
+    // when missing so scoring still counts them as wrong-and-slow.
+    const ansByIdx = new Map<number, { picked: number; time_ms: number }>();
+    for (const a of ansRaw as Array<Record<string, unknown>>) {
+      const idx = Number(a.idx);
+      if (!Number.isInteger(idx) || idx < 0 || idx >= issued.length) continue;
+      const picked = Number(a.picked);
+      const time_ms = Math.max(0, Math.min(600_000, Number(a.time_ms) || 0));
+      ansByIdx.set(idx, {
+        picked: Number.isInteger(picked) && picked >= 0 && picked <= 3 ? picked : -1,
+        time_ms,
+      });
+    }
+
+    const questions: ServerQ[] = issued.map((q) => {
+      const a = ansByIdx.get(issued.indexOf(q)) ?? { picked: -1, time_ms: 0 };
+      const bl = (typeof q.bloom_level === "string" && isBloomLevel(q.bloom_level) ? q.bloom_level : "remember") as BloomLevel;
+      return {
+        stem: q.stem,
+        options: q.options,
+        correct_index: q.correct_index,
+        bloom_level: bl,
+        target_ms: TARGET_MS[bl],
+        time_ms: a.time_ms,
+        picked: a.picked,
+        explanation: q.explanation ?? null,
+      };
+    });
 
     if (questions.length === 0) {
-      return NextResponse.json({ error: "No valid questions in submission" }, { status: 400 });
+      return NextResponse.json({ error: "Issued question set is empty" }, { status: 400 });
     }
 
     const correct_count = questions.reduce((acc, q) => acc + (q.picked === q.correct_index ? 1 : 0), 0);
     const total_time_ms = questions.reduce((acc, q) => acc + q.time_ms, 0);
     const quad = computeQuadrant(questions);
 
-    // Persist. We store the questions as jsonb so we don't need a separate
-    // table for per-question rows.
+    // Persist the final scored session.
     const { data: row, error: insErr } = await sb
       .from("speed_sessions")
       .insert({
@@ -128,10 +181,16 @@ export async function POST(req: Request) {
       .single();
     if (insErr) return NextResponse.json({ error: insErr.message }, { status: 500 });
 
-    // Build the human-readable verdict the page renders into the celebratory card.
+    // One-shot — burn the issued row.
+    await admin.from("speed_sessions_issued").delete().eq("session_id", sessionId);
+
     const total = questions.length;
     const verdict = buildVerdict(quad, total);
 
+    // Include the full per-question reveal in the response so the
+    // client can render its post-submit explanation screen WITHOUT
+    // ever having had correct_index in its session memory. This is the
+    // only place the client receives the correct answers.
     return NextResponse.json({
       ok: true,
       id: row.id,
@@ -141,6 +200,17 @@ export async function POST(req: Request) {
       total_time_ms,
       quadrant: quad,
       verdict,
+      questions: questions.map((q) => ({
+        stem: q.stem,
+        options: q.options,
+        correct_index: q.correct_index,
+        bloom_level: q.bloom_level,
+        target_ms: q.target_ms,
+        time_ms: q.time_ms,
+        picked: q.picked,
+        was_right: q.picked === q.correct_index,
+        explanation: q.explanation,
+      })),
     });
   } catch (e) {
     return NextResponse.json(

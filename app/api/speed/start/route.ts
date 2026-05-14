@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { randomUUID } from "node:crypto";
 import { groqJSON } from "@/lib/groq";
 import { BLOOM_LEVELS, type BloomLevel } from "@/lib/bloom";
 import { getBearer, supabaseServer, supabaseAdmin } from "@/lib/supabase/server";
@@ -203,9 +204,40 @@ Generate the JSON now.`;
       return NextResponse.json({ error: "No usable questions came back. Try a different topic." }, { status: 502 });
     }
 
-    // Attach target_ms based on bloom level. Send everything to client; the
-    // client times the answer interaction and reports back via /submit.
-    const enriched = valid.map((q) => ({ ...q, target_ms: TARGET_MS[q.bloom_level] }));
+    // Persist the issued questions (incl. correct_index) server-side so
+    // /submit can score against the trusted copy. Migration 87 added
+    // speed_sessions_issued for this. Client gets a session_id + the
+    // questions MINUS correct_index — they're useless to the scorer
+    // because /submit reads from the persisted row.
+    const sessionId = randomUUID();
+    {
+      const adminInsert = supabaseAdmin();
+      const { error: persistErr } = await adminInsert
+        .from("speed_sessions_issued")
+        .insert({
+          session_id: sessionId,
+          user_id: user.id,
+          topic,
+          questions: valid,
+        });
+      if (persistErr) {
+        return NextResponse.json(
+          { error: `Could not persist speed session: ${persistErr.message}` },
+          { status: 500 },
+        );
+      }
+    }
+
+    // Attach target_ms based on bloom level. Send the questions MINUS
+    // correct_index/explanation — /submit re-reads the server-trusted
+    // copy by session_id.
+    const enriched = valid.map((q, i) => ({
+      idx: i,
+      stem: q.stem,
+      options: q.options,
+      bloom_level: q.bloom_level,
+      target_ms: TARGET_MS[q.bloom_level],
+    }));
 
     // Sticky marking-scheme persistence (migration 77). Speed Trainer is a
     // transient session — it doesn't create a quizzes row — but we still
@@ -217,7 +249,7 @@ Generate the JSON now.`;
       await writeLastMarkingScheme(admin, user.id, resolveScheme(body.markingScheme));
     }
 
-    return NextResponse.json({ ok: true, topic, count: enriched.length, questions: enriched });
+    return NextResponse.json({ ok: true, session_id: sessionId, topic, count: enriched.length, questions: enriched });
   } catch (e) {
     return NextResponse.json(
       { error: e instanceof Error ? e.message : "Could not start speed session" },
