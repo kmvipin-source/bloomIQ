@@ -6,6 +6,7 @@ import { supabaseBrowser } from "@/lib/supabase/client";
 import { Layers, Users, AlertCircle, CheckCircle2, Pencil, GitBranch, Copy, ShieldAlert, ArrowRight } from "lucide-react";
 import type { Plan } from "@/lib/types";
 import { FEATURES_BY_KEY } from "@/lib/features";
+import { formatPaise } from "@/lib/money";
 
 /**
  * /admin/plans
@@ -30,9 +31,7 @@ import { FEATURES_BY_KEY } from "@/lib/features";
 type PlanRow = Plan & { active_subscriber_count: number };
 
 function rupees(paise: number): string {
-  if (paise === 0) return "₹0";
-  if (paise % 100 === 0) return `₹${(paise / 100).toLocaleString("en-IN")}`;
-  return `₹${(paise / 100).toFixed(2)}`;
+  return formatPaise(paise);
 }
 
 function periodLabel(days: number): string {

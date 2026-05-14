@@ -315,6 +315,7 @@ export async function POST(req: Request) {
 
     let verifiedCount = 0;
     let disputedCount = 0;
+    const disputedPositions: Array<{ section: string; position: number }> = [];
     if (mcqQuestions.length > 0) {
       try {
         const verifyResults = await verifyAnswerKeys(mcqQuestions, 5);
@@ -325,9 +326,20 @@ export async function POST(req: Request) {
           } else {
             disputedCount++;
             const rowIdx = mcqIndices[i];
+            const row = rows[rowIdx];
+            // Stamp the dispute on the explanation field so teachers
+            // editing / printing the paper see the warning even if the
+            // UI hasn't surfaced the verification.disputed count. The
+            // schema doesn't have a dedicated quality column on
+            // exam_paper_questions, so we piggyback on explanation.
+            const marker = `[⚠ ANSWER DISPUTED — AI re-solve picked option ${"ABCD"[v.correctIndex] ?? "?"}; please verify before printing.]`;
+            row.explanation = row.explanation
+              ? `${marker}\n\n${row.explanation}`
+              : marker;
+            disputedPositions.push({ section: row.section_name, position: row.position });
             // eslint-disable-next-line no-console
             console.warn(
-              `[papers/generate] MCQ at row ${rowIdx} answer disputed by re-solve. Stored: ${rows[rowIdx].correct_answer}, reviewer chose index: ${v.correctIndex}`
+              `[papers/generate] MCQ at row ${rowIdx} answer disputed by re-solve. Stored: ${row.correct_answer}, reviewer chose index: ${v.correctIndex}`
             );
           }
         }
@@ -349,6 +361,7 @@ export async function POST(req: Request) {
         mcq_total: mcqQuestions.length,
         verified: verifiedCount,
         disputed: disputedCount,
+        disputed_positions: disputedPositions,
       },
     });
   } catch (e) {

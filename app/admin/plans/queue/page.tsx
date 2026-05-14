@@ -9,6 +9,7 @@ import type {
   PlanProposalKind,
   PlanProposalStatus,
 } from "@/lib/types";
+import { formatPaise } from "@/lib/money";
 
 /**
  * /admin/plans/queue
@@ -60,9 +61,7 @@ function tabQuery(tab: Tab): string {
 }
 
 function rupees(paise: number): string {
-  if (paise === 0) return "₹0";
-  if (paise % 100 === 0) return `₹${(paise / 100).toLocaleString("en-IN")}`;
-  return `₹${(paise / 100).toFixed(2)}`;
+  return formatPaise(paise);
 }
 
 function relativeTime(iso: string): string {

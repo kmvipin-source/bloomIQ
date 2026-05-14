@@ -81,9 +81,17 @@ export async function POST(req: Request) {
     );
 
     const json = (await groqJSON(contextAwareSys, prompt)) as { cards?: Array<{ front: string; back: string }> };
+    // Per-field length caps + angle-bracket strip. Without caps the LLM
+    // could pad cards with multi-KB blocks; without bracket strip the
+    // client (which currently renders as text) is one render-as-markdown
+    // change away from XSS.
+    const stripAngles = (s: string): string => s.replace(/[<>]/g, "");
     const cards = (json.cards || [])
       .filter((c) => c && typeof c.front === "string" && typeof c.back === "string")
-      .map((c) => ({ front: c.front.trim(), back: c.back.trim() }))
+      .map((c) => ({
+        front: stripAngles(c.front.trim()).slice(0, 280),
+        back: stripAngles(c.back.trim()).slice(0, 700),
+      }))
       .slice(0, count);
 
     return NextResponse.json({ ok: true, cards, bloom_level: bloom, topic: topic || null });

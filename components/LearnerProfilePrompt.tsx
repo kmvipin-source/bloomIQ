@@ -41,7 +41,14 @@ import { GraduationCap, Trophy, Briefcase } from "lucide-react";
 
 export type LearnerProfile = "k12" | "competitive_exam" | "corporate";
 
-const STORAGE_KEY = "bloomiq:learner-profile-prompt-seen";
+// User-namespaced key. The previous single shared key meant that on a
+// shared device, the first student dismissing the prompt suppressed it
+// for everyone after them. We now key by uid so each user sees the
+// rich-mode prompt once. The "bloomiq:" prefix matches the wipe-on-
+// logout sweep in Sidebar.tsx / MobileNav.tsx.
+function storageKey(uid: string): string {
+  return `bloomiq:learner-profile-prompt-seen:${uid}`;
+}
 
 type Props = {
   /** Notified whenever the user picks a value (including initial fetch). */
@@ -79,17 +86,17 @@ export default function LearnerProfilePrompt({ onChange }: Props) {
   const [richMode, setRichMode] = useState<boolean>(false);
 
   useEffect(() => {
-    let prevSeen = false;
-    if (typeof window !== "undefined") {
-      try {
-        prevSeen = localStorage.getItem(STORAGE_KEY) === "1";
-      } catch { /* ignore */ }
-    }
-
     (async () => {
       const sb = supabaseBrowser();
       const { data: { user } } = await sb.auth.getUser();
       if (!user) return;
+
+      let prevSeen = false;
+      if (typeof window !== "undefined") {
+        try {
+          prevSeen = localStorage.getItem(storageKey(user.id)) === "1";
+        } catch { /* ignore */ }
+      }
 
       try {
         const { data, error } = await sb
@@ -112,7 +119,7 @@ export default function LearnerProfilePrompt({ onChange }: Props) {
         // reload, they get compact mode next time even if they didn't
         // pick anything.
         if (typeof window !== "undefined") {
-          try { localStorage.setItem(STORAGE_KEY, "1"); } catch { /* ignore */ }
+          try { localStorage.setItem(storageKey(user.id), "1"); } catch { /* ignore */ }
         }
       } catch {
         setCurrentProfile("k12");
