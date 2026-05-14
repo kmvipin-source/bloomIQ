@@ -332,7 +332,8 @@ export async function POST(req: Request) {
             // UI hasn't surfaced the verification.disputed count. The
             // schema doesn't have a dedicated quality column on
             // exam_paper_questions, so we piggyback on explanation.
-            const marker = `[⚠ ANSWER DISPUTED — AI re-solve picked option ${"ABCD"[v.correctIndex] ?? "?"}; please verify before printing.]`;
+            const reviewerLetter = typeof v.correctIndex === "number" ? "ABCD"[v.correctIndex] ?? "?" : "?";
+            const marker = `[⚠ ANSWER DISPUTED — AI re-solve picked option ${reviewerLetter}; please verify before printing.]`;
             row.explanation = row.explanation
               ? `${marker}\n\n${row.explanation}`
               : marker;
