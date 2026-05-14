@@ -35,10 +35,16 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Roll number must be alphanumeric (letters and digits only)." }, { status: 400 });
     }
 
-    // 1) Caller must own the target class
-    const { data: cls } = await sb.from("classes").select("id, owner_id").eq("id", classId).single();
+    // 1) Caller must own the target class, and the class must be active.
+    const { data: cls } = await sb.from("classes").select("id, owner_id, status").eq("id", classId).single();
     if (!cls || cls.owner_id !== user.id) {
       return NextResponse.json({ error: "Class not found or not yours" }, { status: 403 });
+    }
+    if ((cls as { status?: string | null }).status !== "active") {
+      return NextResponse.json(
+        { error: "Class is archived. Restore the class before adding students." },
+        { status: 409 },
+      );
     }
 
     const admin = supabaseAdmin();

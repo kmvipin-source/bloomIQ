@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
 import { getBearer, supabaseServer } from "@/lib/supabase/server";
 import {
-  checkLifetimeUse,
-  recordLifetimeUse,
+  consumeLifetimeUse,
   type LifetimeFeature,
 } from "@/lib/freeQuota";
 
@@ -57,15 +56,13 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Unknown feature key." }, { status: 400 });
     }
 
-    const gate = await checkLifetimeUse(user.id, key);
+    const gate = await consumeLifetimeUse(user.id, key);
     if (!gate.allowed) {
       return NextResponse.json(
         { error: gate.reason, code: "free_lifetime_used" },
         { status: 402 }
       );
     }
-
-    await recordLifetimeUse(user.id, key);
 
     return NextResponse.json({ ok: true, key });
   } catch (e) {

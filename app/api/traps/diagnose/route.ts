@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { groqJSON } from "@/lib/groq";
 import { getBearer, supabaseServer, supabaseAdmin } from "@/lib/supabase/server";
 import { checkRateLimit } from "@/lib/rateLimit";
-import { checkLifetimeUse, recordLifetimeUse } from "@/lib/freeQuota";
+import { consumeLifetimeUse } from "@/lib/freeQuota";
 import {
   loadLearningContext,
   prependLearningContext,
@@ -87,7 +87,7 @@ export async function POST(req: Request) {
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     const rate = checkRateLimit(user.id, "traps.diagnose", { capacity: 10, refillPerHour: 20 });
     if (!rate.allowed) return NextResponse.json({ error: "Too many requests.", code: "rate_limited" }, { status: 429, headers: { "Retry-After": String(rate.retryAfterSec) } });
-    const ltGate = await checkLifetimeUse(user.id, "trap_detector");
+    const ltGate = await consumeLifetimeUse(user.id, "trap_detector");
     if (!ltGate.allowed) return NextResponse.json({ error: ltGate.reason, code: "free_lifetime_used" }, { status: 402 });
 
     const body = await req.json().catch(() => ({}));
@@ -182,8 +182,6 @@ export async function POST(req: Request) {
       };
     });
     await sb.from("distractor_traps").insert(rows);
-
-    await recordLifetimeUse(user.id, "trap_detector");
 
     return NextResponse.json({
       ok: true,

@@ -89,19 +89,22 @@ export default function ClassDetailPage() {
     if (!cls) return;
     const expected = cls.name;
     const typed = prompt(
-      `This will PERMANENTLY delete the class "${cls.name}", remove all student memberships, and delete all assignments tied to it. ` +
-      `Student accounts and quiz results are kept. ` +
+      `This will ARCHIVE the class "${cls.name}". Students will lose live access, but all attempts, ` +
+      `assignments, and grade history are preserved (audit + reporting requirement). ` +
       `\n\nType the class name exactly to confirm:`
     );
     if (typed === null) return;
     if (typed.trim() !== expected) {
-      alert("Class name didn't match. Nothing was deleted.");
+      alert("Class name didn't match. Nothing was changed.");
       return;
     }
     const sb = supabaseBrowser();
-    const { error } = await sb.from("classes").delete().eq("id", cls.id);
+    const { error } = await sb
+      .from("classes")
+      .update({ status: "inactive" })
+      .eq("id", cls.id);
     if (error) {
-      alert(`Could not delete: ${error.message}`);
+      alert(`Could not archive: ${error.message}`);
       return;
     }
     router.push("/teacher/classes");
@@ -1011,15 +1014,15 @@ export default function ClassDetailPage() {
       )}
 
       {/* ========== Danger zone (primary only) ========== */}
-      {isPrimary && (
+      {isPrimary && cls?.status === "active" && (
         <div className="mt-12 border border-red-200 rounded-xl p-4 bg-red-50/40">
           <h3 className="font-semibold text-red-800 mb-1">Danger zone</h3>
           <div className="flex items-center justify-between gap-4 flex-wrap">
             <div className="text-sm text-red-900/80">
-              Delete this class permanently. Student accounts and quiz results are kept; only this class, its memberships and assignments are removed.
+              Archive this class. Students lose live access, but all attempts, assignments and grade history are preserved for audit and reporting.
             </div>
             <button type="button" className="btn btn-danger" onClick={deleteClass}>
-              <Trash2 size={14} /> Delete class
+              <Trash2 size={14} /> Archive class
             </button>
           </div>
         </div>
