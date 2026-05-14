@@ -135,7 +135,7 @@ export async function POST(req: Request) {
     // Use the same featureAccess check the dashboard uses for parity.
     const { requireFeature } = await import("@/lib/featureAccess.server");
     const featureGate = await requireFeature(user.id, "practice_tests_unlimited");
-    if (!featureGate.ok) {
+    if (!featureGate.allowed) {
       return NextResponse.json(
         {
           error: featureGate.reason ?? "Your plan doesn't include paper generation. Upgrade to continue.",
@@ -307,7 +307,6 @@ export async function POST(req: Request) {
     let verifiedCount = 0;
     let disputedCount = 0;
     if (mcqQuestions.length > 0) {
-if (mcqQuestions.length > 0) {
       try {
         const verifyResults = await verifyAnswerKeys(mcqQuestions, 5);
         for (let i = 0; i < verifyResults.length; i++) {
@@ -347,3 +346,4 @@ if (mcqQuestions.length > 0) {
     return NextResponse.json({ error: e instanceof Error ? e.message : "Generation failed" }, { status: 500 });
   }
 }
+
