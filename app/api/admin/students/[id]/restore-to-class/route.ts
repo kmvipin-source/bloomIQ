@@ -43,10 +43,17 @@ export async function POST(
 
     const { data: cls } = await admin
       .from("classes")
-      .select("id, school_id")
+      .select("id, school_id, status")
       .eq("id", classId)
       .maybeSingle();
     if (!cls) return NextResponse.json({ error: "Class not found" }, { status: 404 });
+    // Archived class — no new enrolments. Audit/reporting only.
+    if ((cls as { status?: string | null }).status !== "active") {
+      return NextResponse.json(
+        { error: "Class is archived. Restore the class before adding students." },
+        { status: 409 },
+      );
+    }
 
     const { data: ct } = await admin
       .from("class_teachers")

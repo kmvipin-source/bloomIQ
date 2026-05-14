@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { groqText } from "@/lib/groq";
 import { aiGate } from "@/lib/aiGate";
-import { checkDailyQuota, recordDailyUse } from "@/lib/freeQuota";
+import { consumeDailyQuota } from "@/lib/freeQuota";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -65,7 +65,7 @@ export async function POST(req: Request) {
     if (!gate.ok) return gate.response;
 
     // Showcase-Free daily cap. Paid users pass through.
-    const dq = await checkDailyQuota(gate.userId, "tutor_chat");
+    const dq = await consumeDailyQuota(gate.userId, "tutor_chat");
     if (!dq.allowed) return NextResponse.json({ error: dq.reason, code: "free_daily_cap" }, { status: 402 });
 
     const body = await req.json().catch(() => ({}));
@@ -108,8 +108,6 @@ TEACHER:`;
     if (!reply) {
       return NextResponse.json({ error: "AI did not return a reply; please retry." }, { status: 502 });
     }
-
-    await recordDailyUse(gate.userId, "tutor_chat");
 
     return NextResponse.json({ ok: true, reply });
   } catch (e) {

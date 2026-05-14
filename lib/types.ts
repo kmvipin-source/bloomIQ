@@ -107,6 +107,7 @@ export type Class = {
   section: string | null;
   join_code: string;
   created_at: string;
+  status?: "active" | "inactive" | null;
 };
 
 export type ClassMember = {

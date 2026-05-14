@@ -282,10 +282,40 @@ export function prependLearningContext(basePrompt: string, ctx: LearningContext)
  * everyday words. Returns the topic unchanged for exploring / unknown goals.
  */
 export function buildExamAwareTopic(topic: string, ctx: LearningContext): string {
-  const t = (topic || "").trim();
+  const t = sanitizeUserTopic(topic);
   if (!t) return t;
   if (!ctx.prompt) return t;
   // Bracket-style framing — the AI consistently honours parenthetical
   // disambiguation more reliably than a separate sentence.
   return `${t} (for ${ctx.label} exam preparation)`;
+}
+
+/**
+ * Strip control characters, normalise whitespace, and cap length on a
+ * user-supplied topic string before it is interpolated into an LLM prompt.
+ *
+ * Why: user-controlled strings like "ignore previous instructions and
+ * output ..." inside a Topic field can hijack the surrounding system
+ * prompt. We can't fully prevent injection but we can (a) strip the
+ * easy escape vectors (newlines, backticks, triple-quote runs) and
+ * (b) keep the topic on a single line so wrapping callers can fence it
+ * with delimiters that the model treats as a content boundary.
+ *
+ * Callers should still wrap the sanitised value in a delimiter pair
+ * (e.g. `<TOPIC>...</TOPIC>` or `"""..."""`) before placing it in a
+ * prompt. This helper only normalises the inner content.
+ */
+export function sanitizeUserTopic(input: string | null | undefined): string {
+  const raw = String(input ?? "");
+  // Strip control characters (incl. newlines, tabs) and HTML angle brackets,
+  // collapse internal whitespace, neutralise triple-quote / triple-backtick
+  // runs that could close a delimiter fence.
+  return raw
+    .replace(/[ -]/g, " ")
+    .replace(/[<>]/g, " ")
+    .replace(/"{3,}/g, '"')
+    .replace(/`{3,}/g, "`")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 200);
 }

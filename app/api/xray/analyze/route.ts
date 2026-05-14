@@ -3,7 +3,7 @@ import { groqJSON, groqJSONVision } from "@/lib/groq";
 import { BLOOM_LEVELS, isBloomLevel, type BloomLevel } from "@/lib/bloom";
 import { getBearer, supabaseServer, supabaseAdmin } from "@/lib/supabase/server";
 import { checkRateLimit, checkDailyCap } from "@/lib/rateLimit";
-import { checkLifetimeUse, recordLifetimeUse } from "@/lib/freeQuota";
+import { consumeLifetimeUse } from "@/lib/freeQuota";
 import {
   loadLearningContext,
   prependLearningContext,
@@ -100,8 +100,9 @@ export async function POST(req: Request) {
     if (!daily.allowed) return NextResponse.json({ error: `Daily limit reached (${daily.limit}).`, code: "daily_cap" }, { status: 429 });
 
     // Showcase-Free lifetime gate: one taste of X-Ray for Free users.
-    // Paid users pass through (checkLifetimeUse short-circuits on tier).
-    const ltGate = await checkLifetimeUse(user.id, "xray");
+    // Atomic check + claim — paid users short-circuit on tier. Slot is
+    // burned up-front; transient LLM failure below does not refund.
+    const ltGate = await consumeLifetimeUse(user.id, "xray");
     if (!ltGate.allowed) {
       return NextResponse.json(
         { error: ltGate.reason, code: "free_lifetime_used" },
@@ -214,11 +215,6 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: qInsErr.message }, { status: 500 });
       }
     }
-
-    // Burn the lifetime slot after the LLM round-trip succeeded. Failures
-    // above return early so a transient AI hiccup never costs the user's
-    // one free taste.
-    await recordLifetimeUse(user.id, "xray");
 
     return NextResponse.json({
       ok: true,

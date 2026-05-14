@@ -3,7 +3,7 @@ import { groqJSON } from "@/lib/groq";
 import { BLOOM_LEVELS, type BloomLevel } from "@/lib/bloom";
 import { getBearer, supabaseServer } from "@/lib/supabase/server";
 import { checkRateLimit } from "@/lib/rateLimit";
-import { checkLifetimeUse, recordLifetimeUse } from "@/lib/freeQuota";
+import { consumeLifetimeUse } from "@/lib/freeQuota";
 import {
   classifyQuizForRankPrediction,
   validateExamType,
@@ -139,7 +139,7 @@ export async function POST(req: Request) {
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     const rate = checkRateLimit(user.id, "rank.predict", { capacity: 10, refillPerHour: 20 });
     if (!rate.allowed) return NextResponse.json({ error: "Too many requests.", code: "rate_limited" }, { status: 429, headers: { "Retry-After": String(rate.retryAfterSec) } });
-    const ltGate = await checkLifetimeUse(user.id, "rank");
+    const ltGate = await consumeLifetimeUse(user.id, "rank");
     if (!ltGate.allowed) return NextResponse.json({ error: ltGate.reason, code: "free_lifetime_used" }, { status: 402 });
 
     const body = await req.json().catch(() => ({}));
@@ -360,8 +360,6 @@ Return the 3-recommendation JSON.`;
         warning: insErr.message,
       });
     }
-
-    await recordLifetimeUse(user.id, "rank");
 
     return NextResponse.json({
       ok: true,
