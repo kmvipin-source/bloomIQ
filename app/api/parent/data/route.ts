@@ -1,23 +1,17 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/server";
-
-// Rate limit by token to deter brute-force enumeration. 30 lookups per
-// 10-minute window per token; bad-token responses still cost a slot.
-const RATE_WINDOW_MS = 10 * 60 * 1000;
-const RATE_LIMIT = 30;
-const attemptsByToken = new Map<string, number[]>();
-function shouldThrottle(key: string): boolean {
-  const now = Date.now();
-  const recent = (attemptsByToken.get(key) || []).filter((t) => now - t < RATE_WINDOW_MS);
-  if (recent.length >= RATE_LIMIT) {
-    attemptsByToken.set(key, recent);
-    return true;
-  }
-  recent.push(now);
-  attemptsByToken.set(key, recent);
-  return false;
-}
+import { checkRateLimit } from "@/lib/rateLimit";
 import { BLOOM_LEVELS, BLOOM_META, type BloomLevel } from "@/lib/bloom";
+
+// Rate limit by token to deter brute-force enumeration. Use the shared
+// token-bucket helper so the cap is consistent with the rest of the API
+// (in-process per-instance — same trade-off as every other route. A
+// distributed limiter is a known follow-up).
+function shouldThrottle(token: string): { throttled: boolean; retryAfterSec: number } {
+  const r = checkRateLimit(token, "parent.data", { capacity: 10, refillPerHour: 60 });
+  if (r.allowed) return { throttled: false, retryAfterSec: 0 };
+  return { throttled: true, retryAfterSec: r.retryAfterSec };
+}
 
 export const runtime = "nodejs";
 
@@ -57,8 +51,12 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: "Invalid link" }, { status: 400 });
     }
 
-    if (shouldThrottle(token)) {
-      return NextResponse.json({ error: "Too many requests. Try again in a few minutes." }, { status: 429 });
+    const rate = shouldThrottle(token);
+    if (rate.throttled) {
+      return NextResponse.json(
+        { error: "Too many requests. Try again in a few minutes." },
+        { status: 429, headers: { "Retry-After": String(rate.retryAfterSec) } },
+      );
     }
 
     const sb = supabaseAdmin();

@@ -225,10 +225,28 @@ export async function POST(req: Request, ctx: RouteContext) {
     if (paymentMethod !== undefined) update.payment_method = paymentMethod;
     if (poNumber !== undefined) update.po_number = poNumber;
 
-    const { error: updErr } = await admin
-      .from("subscriptions")
-      .update(update)
-      .eq("id", subscriptionId);
+    // Retry loop on 23505 (unique-violation) for invoice_number — two
+    // parallel mark-paid calls could compute the same maxSeq+1. The
+    // /invoice endpoint has this loop; mark-paid was missing it and
+    // returned 500 on collision, leaving status partially updated.
+    let updErr: { message: string; code?: string } | null = null;
+    let finalInvoiceNumber = update.invoice_number as string | null | undefined;
+    let currentSeq = autoInvoiceNumber
+      ? parseInt(autoInvoiceNumber.replace(/^BLM\/\d+\//, ""), 10)
+      : null;
+    for (let attempt = 0; attempt < 10; attempt++) {
+      const r = await admin.from("subscriptions").update(update).eq("id", subscriptionId);
+      if (!r.error) { updErr = null; break; }
+      updErr = r.error as { message: string; code?: string };
+      // Only auto-allocated invoice numbers are bumpable; if the caller
+      // supplied invoice_number explicitly, surface the collision.
+      if (updErr.code !== "23505" || !autoInvoiceNumber || currentSeq === null) break;
+      currentSeq += 1;
+      const year = new Date().getFullYear();
+      const bumped = `BLM/${year}/${String(currentSeq).padStart(4, "0")}`;
+      update.invoice_number = bumped;
+      finalInvoiceNumber = bumped;
+    }
     if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 });
 
     return NextResponse.json({
@@ -237,7 +255,7 @@ export async function POST(req: Request, ctx: RouteContext) {
       payment_received_at: receivedAt,
       payment_recorded_at: update.payment_recorded_at,
       payment_recorded_by: user.id,
-      invoice_number: invoiceNumber ?? autoInvoiceNumber ?? subRow.invoice_number ?? null,
+      invoice_number: finalInvoiceNumber ?? invoiceNumber ?? autoInvoiceNumber ?? subRow.invoice_number ?? null,
       po_number: poNumber ?? null,
       // Both fields returned so the UI can confirm what (if anything)
       // changed. When no escape-hatch extension was applied, both are

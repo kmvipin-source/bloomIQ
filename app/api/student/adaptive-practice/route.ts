@@ -321,7 +321,11 @@ export async function POST(req: Request) {
     const verifiedCount = verifyResults.filter((v) => v.ok).length;
     const disputedCount = verifyResults.length - verifiedCount;
 
-    // 5) Persist: question_bank rows owned by the student
+    // 5) Persist: question_bank rows owned by the student.
+    // Disputed rows land with status='pending' so cross-owner reads
+    // (RLS policies that surface 'approved' to other students) don't
+    // see them, and analytics can filter them out. Verified rows are
+    // 'approved' so the practice session itself runs as expected.
     type QuestionInsertRow = {
       owner_id: string;
       topic: string;
@@ -330,9 +334,9 @@ export async function POST(req: Request) {
       options: string[];
       correct_index: number;
       explanation: string | null;
-      status: "approved";
+      status: "approved" | "pending";
     };
-    const insertRows: QuestionInsertRow[] = valid.map((q) => ({
+    const insertRows: QuestionInsertRow[] = valid.map((q, i) => ({
       owner_id: user.id,
       topic,
       bloom_level: targetedLevel,
@@ -340,7 +344,7 @@ export async function POST(req: Request) {
       options: q.options.map((o) => String(o).trim()),
       correct_index: q.correct_index,
       explanation: q.explanation ? String(q.explanation).trim() : null,
-      status: "approved",
+      status: verifyResults[i]?.ok ? "approved" : "pending",
     }));
 
     const { data: insertedQs, error: qErr } = await sb

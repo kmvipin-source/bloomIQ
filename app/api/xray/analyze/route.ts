@@ -135,11 +135,28 @@ export async function POST(req: Request) {
       raw = await groqJSON(contextAwareSystem, `Paper text:\n"""\n${paper_text}\n"""\n\nReturn the JSON now.`);
     } else if (kind === "image") {
       const image_data_url = String(body.image_data_url || "");
-      if (!image_data_url.startsWith("data:image/")) {
-        return NextResponse.json({ error: "Provide a base64 image data URL (data:image/png;base64,...)." }, { status: 400 });
+      // MIME allowlist — `data:image/svg+xml` smuggles inline JS via
+      // event handlers and is accepted by `data:image/`-prefix checks.
+      // PNG / JPEG / WEBP / HEIC are the formats Groq vision actually
+      // consumes; anything else is rejected before reaching the model.
+      const ALLOWED_MIME = /^data:image\/(png|jpe?g|webp|heic|heif);base64,/i;
+      if (!ALLOWED_MIME.test(image_data_url)) {
+        return NextResponse.json(
+          { error: "Image must be PNG, JPEG, WEBP, or HEIC (base64 data URL)." },
+          { status: 400 },
+        );
       }
       if (image_data_url.length > 8_000_000) {
         return NextResponse.json({ error: "Image too large (max ~6 MB)." }, { status: 400 });
+      }
+      // Estimate decoded byte length and reject anything > 6 MiB after
+      // base64 decode. Base64 inflates by ~4/3; the data URL prefix
+      // adds ~30 chars. A precise length check stops a small data URL
+      // string from decoding into a huge buffer at the Groq edge.
+      const b64Body = image_data_url.split(",", 2)[1] || "";
+      const approxBytes = Math.floor((b64Body.length * 3) / 4);
+      if (approxBytes > 6 * 1024 * 1024) {
+        return NextResponse.json({ error: "Decoded image exceeds 6 MB." }, { status: 400 });
       }
       // Same context wrap on the vision path so the recommendations
       // adapt regardless of upload format (text vs image).

@@ -24,15 +24,15 @@ import { useRouter } from "next/navigation";
 import { supabaseBrowser } from "@/lib/supabase/client";
 import { Sparkles, ArrowRight, RefreshCw, AlertTriangle } from "lucide-react";
 
+// correct_index is intentionally NOT returned by /start — see migration 82.
+// The server scores against its persisted copy; client only needs to render.
 type Q = {
   index: number;
   stem: string;
   options: [string, string, string, string];
-  correct_index: 0 | 1 | 2 | 3;
   bloom_level: string;
   topic: string;
   benchmark_seconds: number;
-  explanation?: string;
 };
 
 type StartResp = {
@@ -43,8 +43,9 @@ type StartResp = {
   questions: Q[];
 };
 
+// Server reads the question payload from calibration_sessions; the client
+// only ever sends what the user clicked + how long they took.
 type ResponseRow = {
-  question: Q;
   selected_index: number | null;
   time_taken_seconds: number;
 };
@@ -56,8 +57,9 @@ export default function BloomScoreCalibrationPage() {
   const [errMsg, setErrMsg] = useState<string | null>(null);
 
   const [sessionId, setSessionId] = useState<string | null>(null);
-  const [examGoal, setExamGoal] = useState<string | null>(null);
-  const [groqModel, setGroqModel] = useState<string | null>(null);
+  // Kept in state for future analytics surfacing; not sent on submit.
+  const [, setExamGoal] = useState<string | null>(null);
+  const [, setGroqModel] = useState<string | null>(null);
   const [questions, setQuestions] = useState<Q[]>([]);
 
   const [current, setCurrent] = useState(0);
@@ -110,7 +112,6 @@ export default function BloomScoreCalibrationPage() {
     if (!q) return;
     const elapsed = Math.max(1, Math.round((Date.now() - questionStartRef.current) / 1000));
     const row: ResponseRow = {
-      question: q,
       selected_index: selected,
       time_taken_seconds: elapsed,
     };
@@ -141,8 +142,6 @@ export default function BloomScoreCalibrationPage() {
         },
         body: JSON.stringify({
           session_id: sessionId,
-          exam_goal: examGoal,
-          groq_model: groqModel,
           total_seconds: totalSeconds,
           responses: rows,
         }),

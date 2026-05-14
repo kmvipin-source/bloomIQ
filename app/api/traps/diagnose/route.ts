@@ -181,7 +181,10 @@ export async function POST(req: Request) {
         detail: d.detail,
       };
     });
-    await sb.from("distractor_traps").insert(rows);
+    const { error: trapInsErr } = await sb.from("distractor_traps").insert(rows);
+    if (trapInsErr) {
+      return NextResponse.json({ error: trapInsErr.message }, { status: 500 });
+    }
 
     return NextResponse.json({
       ok: true,

@@ -6,6 +6,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { supabaseBrowser } from "@/lib/supabase/client";
 import katex from "katex";
 import "katex/dist/katex.min.css";
+import DOMPurify from "isomorphic-dompurify";
 import {
   Film, Sparkles, ArrowLeft, Loader2, Play, Pause,
   ChevronLeft, ChevronRight, History, RotateCcw,
@@ -439,7 +440,19 @@ function FrameRenderer({ frame, idx }: { frame: Frame; idx: number }) {
 
 function stripSizeAttrs(svg: string): string {
   if (!svg.startsWith("<svg")) return svg;
-  return svg.replace(/^<svg([^>]*)>/, (_m, attrs: string) => {
+  // Sanitize FIRST: the LLM-generated SVG can carry <script>, event
+  // handlers (onclick / onerror / onload), <foreignObject> with embedded
+  // HTML, javascript: URLs, etc. DOMPurify with SVG profile strips those
+  // while preserving the visual elements (path / polygon / g / text).
+  // After sanitization we then drop the outer width/height so the
+  // viewport scales to its parent box.
+  const safe = DOMPurify.sanitize(svg, {
+    USE_PROFILES: { svg: true, svgFilters: true },
+    FORBID_TAGS: ["script", "foreignObject"],
+    FORBID_ATTR: ["onerror", "onload", "onclick", "onmouseover"],
+  });
+  if (!safe.startsWith("<svg")) return safe;
+  return safe.replace(/^<svg([^>]*)>/, (_m, attrs: string) => {
     const cleaned = String(attrs)
       .replace(/\swidth\s*=\s*"[^"]*"/gi, "")
       .replace(/\sheight\s*=\s*"[^"]*"/gi, "");

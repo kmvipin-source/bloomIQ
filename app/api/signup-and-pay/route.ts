@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { supabaseAdmin } from "@/lib/supabase/server";
+import { checkRateLimit } from "@/lib/rateLimit";
 
 export const runtime = "nodejs";
 
@@ -18,6 +19,26 @@ export const runtime = "nodejs";
  */
 export async function POST(req: Request) {
   try {
+    // Rate-limit by source IP — this is the only unauthenticated
+    // create-user surface, so without a per-IP cap an attacker can
+    // mass-create accounts (Supabase auth admin API does not rate-
+    // limit) or use the email-exists 409 as an enumeration oracle.
+    // 5 burst, 10/hour steady — generous for retries, hostile to
+    // automation. Per-instance cap; Vercel Fluid Compute means a
+    // single client gets the same instance hot, but a determined
+    // attacker fans across instances. Good enough for deterrence.
+    const ip =
+      req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+      req.headers.get("x-real-ip") ||
+      "unknown";
+    const rate = checkRateLimit(ip, "signup-and-pay", { capacity: 5, refillPerHour: 10 });
+    if (!rate.allowed) {
+      return NextResponse.json(
+        { error: "Too many sign-up attempts. Try again later.", code: "rate_limited" },
+        { status: 429, headers: { "Retry-After": String(rate.retryAfterSec) } },
+      );
+    }
+
     const body = await req.json().catch(() => ({}));
     const email = String(body.email || "").trim().toLowerCase();
     const password = String(body.password || "");

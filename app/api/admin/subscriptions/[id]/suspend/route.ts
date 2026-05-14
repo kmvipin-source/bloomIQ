@@ -65,16 +65,39 @@ export async function POST(req: Request, ctx: Ctx) {
       return NextResponse.json({ error: "Already suspended" }, { status: 400 });
     }
 
-    const { error: updErr } = await admin
+    // Idempotent under concurrent admin clicks: filter the UPDATE on
+    // status != 'suspended' so a second racing call no-ops cleanly and
+    // doesn't overwrite the winning admin's suspended_by / reason.
+    // .select() lets us detect whether THIS call actually flipped the
+    // row vs. lost the race (in which case we re-read and surface the
+    // winning state).
+    const nowIso = new Date().toISOString();
+    const { data: updatedRow, error: updErr } = await admin
       .from("subscriptions")
       .update({
         status: "suspended",
-        suspended_at: new Date().toISOString(),
+        suspended_at: nowIso,
         suspended_by: user.id,
         suspended_reason: reason,
       })
-      .eq("id", subscriptionId);
+      .eq("id", subscriptionId)
+      .neq("status", "suspended")
+      .select("id, status, suspended_at, suspended_by, suspended_reason")
+      .maybeSingle();
     if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 });
+    if (!updatedRow) {
+      const { data: current } = await admin
+        .from("subscriptions")
+        .select("status, suspended_at, suspended_by, suspended_reason")
+        .eq("id", subscriptionId)
+        .maybeSingle();
+      return NextResponse.json({
+        ok: true,
+        subscription_id: subscriptionId,
+        already_suspended: true,
+        ...(current ?? {}),
+      });
+    }
 
     return NextResponse.json({
       ok: true,
