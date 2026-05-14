@@ -195,6 +195,19 @@ export function classifyQuizForRankPrediction(input: {
   topic?: string | null;
   name?: string | null;
   topicFamily?: string | null;
+  /**
+   * The student's own profile.exam_goal slug (e.g. "neet_prep", "jee_main",
+   * "cat_prep"). Added 2026-05-14 so the predictor can fall back to the
+   * student's stated goal when the quiz's topic/name don't carry an
+   * explicit exam token. Without this, a NEET student practising "blood
+   * group" got refused because the topic alone has no NEET keyword.
+   *
+   * Corporate-skill matches on the TOPIC still win over this profile
+   * fallback — we never claim a Java test is a NEET mock just because
+   * the student is preparing for NEET. The fallback only applies when
+   * topic-based detection is silent (neither exam nor corporate skill).
+   */
+  studentExamGoal?: string | null;
 }): RankEligibility {
   // Pool every label string the quiz carries so a single match anywhere
   // (topic, name, or canonical family) is enough.
@@ -204,7 +217,7 @@ export function classifyQuizForRankPrediction(input: {
     ...tokenise(input.topicFamily),
   ];
 
-  // 1. Known rank-baseline exam.
+  // 1. Known rank-baseline exam token in the quiz metadata.
   for (const t of allTokens) {
     if (EXAM_TOKEN_MAP[t]) {
       return {
@@ -216,7 +229,7 @@ export function classifyQuizForRankPrediction(input: {
     }
   }
 
-  // 2. Other competitive exam (no rank-baseline yet → fall through to CUSTOM later).
+  // 2. Other competitive exam token in the quiz metadata.
   for (const t of allTokens) {
     if (OTHER_EXAM_TOKENS.has(t)) {
       return {
@@ -227,7 +240,10 @@ export function classifyQuizForRankPrediction(input: {
     }
   }
 
-  // 3. Corporate / programming / IT skill — refuse.
+  // 3. Corporate / programming / IT skill in the quiz metadata. This
+  //    refuse-path takes precedence over the studentExamGoal fallback —
+  //    a Java test is never a NEET mock no matter what the student's
+  //    profile says.
   for (const t of allTokens) {
     if (CORPORATE_SKILL_TOKENS.has(t)) {
       return {
@@ -238,8 +254,66 @@ export function classifyQuizForRankPrediction(input: {
     }
   }
 
-  // 4. Generic / academic / unknown — let the user pick exam_type, but at
-  //    least we know this is not a corporate skill.
+  // 4. Topic was silent on exam type but we can lean on the student's
+  //    own profile. If their goal is NEET-prep / JEE-prep / CAT-prep /
+  //    etc., treat the quiz as a mock of that exam. This unblocks the
+  //    "blood group + NEET student" case — the test was GENERATED for
+  //    the student's NEET prep, even though the topic name doesn't
+  //    contain "NEET". Mirrors the same profile-aware pattern used in
+  //    examDetectors.shouldUseCompetitiveExamFraming.
+  if (input.studentExamGoal) {
+    const g = String(input.studentExamGoal).toLowerCase().trim();
+    if (g.startsWith("jee")) {
+      return {
+        verdict: "matches_known_exam",
+        suggestedExamType: "JEE_MAIN",
+        matchedToken: g,
+        reason: `Quiz was generated as part of your JEE preparation (exam_goal = "${g}").`,
+      };
+    }
+    if (g.startsWith("neet")) {
+      return {
+        verdict: "matches_known_exam",
+        suggestedExamType: "NEET",
+        matchedToken: g,
+        reason: `Quiz was generated as part of your NEET preparation (exam_goal = "${g}").`,
+      };
+    }
+    if (g === "cat" || g === "cat_prep") {
+      return {
+        verdict: "matches_known_exam",
+        suggestedExamType: "CAT",
+        matchedToken: g,
+        reason: `Quiz was generated as part of your CAT preparation (exam_goal = "${g}").`,
+      };
+    }
+    // Other competitive-exam goals fall through to "competitive_exam_other"
+    // — the predictor will use the CUSTOM cohort baseline.
+    if (
+      g === "upsc" || g === "upsc_prep" ||
+      g === "gmat" || g === "gmat_prep" ||
+      g === "gre"  || g === "gre_prep"  ||
+      g === "gate" || g === "gate_prep" ||
+      g === "clat" || g === "clat_prep" ||
+      g === "bitsat" || g === "bitsat_prep" ||
+      g === "sat"  || g === "sat_prep"  ||
+      g === "nda"  || g === "nda_prep"  ||
+      g === "cuet" || g === "cuet_prep" ||
+      g === "bank_exams" || g === "bank_prep" ||
+      g === "ielts" || g === "ielts_prep" ||
+      g === "toefl" || g === "toefl_prep"
+    ) {
+      return {
+        verdict: "competitive_exam_other",
+        matchedToken: g,
+        reason: `Quiz was generated as part of your ${g.replace(/_/g, " ")} preparation — predictor will use the CUSTOM cohort baseline.`,
+      };
+    }
+  }
+
+  // 5. Generic / academic / unknown — neither the quiz metadata nor
+  //    the student's profile resolves to a competitive exam. The
+  //    caller (UI or backend) will refuse rank prediction.
   const hasAcademic = allTokens.some((t) => ACADEMIC_SUBJECT_TOKENS.has(t));
   return {
     verdict: "generic",

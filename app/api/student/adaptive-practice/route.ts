@@ -21,6 +21,7 @@
 // =============================================================================
 import { NextResponse } from "next/server";
 import { groqJSON } from "@/lib/groq";
+import { buildSkillFewShotBlock } from "@/lib/skillFewShot";
 import {
   BLOOM_LEVELS,
   BLOOM_META,
@@ -67,7 +68,16 @@ questions calibrated precisely to a single Bloom's Taxonomy level. Each question
 - include a brief explanation of why it's correct
 - match the requested Bloom level's cognitive demand (don't drift up or down)
 - be unambiguous, grammatically correct, and free of trick wording
-Return STRICT JSON only.`;
+Return STRICT JSON only.
+
+GENERIC DOMAIN AWARENESS (applies to ANY topic — no local lookup):
+If the topic is a specialized professional / technical / niche domain
+(payment switches, mainframe stack, networking protocols, cloud platforms,
+legal codes, medical specialties, regulatory frameworks, ERP modules,
+industrial control systems, etc.) — USE the precise real-world terminology.
+NEVER invent identifiers, opcodes, parameters, syntax, or product features
+that don\'t exist. If you don\'t have confident knowledge of a specific
+aspect, write content that AVOIDS that aspect rather than fabricating.`;
 
 function buildPrompt(
   topic: string,
@@ -254,7 +264,7 @@ export async function POST(req: Request) {
     const contextAwareSystem = prependLearningContext(SYSTEM, ctx) + exclusion.promptBlock;
     let raw: Record<string, unknown>;
     try {
-      raw = await groqJSON(contextAwareSystem, buildPrompt(contextAwareTopic, targetedLevel, QUESTION_COUNT, seedBlock));
+      raw = await groqJSON((contextAwareSystem) + buildSkillFewShotBlock(topic), buildPrompt(contextAwareTopic, targetedLevel, QUESTION_COUNT, seedBlock));
     } catch (e) {
       // eslint-disable-next-line no-console
       console.error(`[adaptive-practice] groqJSON failed:`, e instanceof Error ? e.message : e);

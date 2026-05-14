@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { AnimatePresence, motion } from "motion/react";
 import { supabaseBrowser } from "@/lib/supabase/client";
@@ -13,6 +13,11 @@ import {
 } from "lucide-react";
 import { type LearnerProfile } from "@/components/LearnerProfilePrompt";
 import { suggestedTopics, placeholderTopic } from "@/lib/topicSuggestions";
+import {
+  detectExamFromTopic,
+  EXAM_DETECTORS,
+  type ExamMeta,
+} from "@/lib/examDetectors";
 
 // =============================================================================
 // Concept Visualizer — data-driven, motion-powered renderer.
@@ -495,6 +500,94 @@ export default function VisualizerPage() {
   // exam aspirants. Vipin 2026-05-12.
   const [examGoal, setExamGoal] = useState<string | null>(null);
 
+  // 2026-05-14: LLM-validated topic-vs-syllabus warning (same pattern as
+  // /student/generate, /teacher/generate, /student/speed, /student/flashcards).
+  // Visualizer is most useful for in-syllabus concepts — flagging a
+  // mismatch before the animation generates saves the user a wasted spin.
+  const examMeta = useMemo<ExamMeta | null>(() => {
+    const fromTopic = detectExamFromTopic(topic);
+    if (fromTopic) return fromTopic;
+    if (!examGoal) return null;
+    const g = examGoal.toLowerCase().trim();
+    if (g.startsWith("jee")) return EXAM_DETECTORS.JEE;
+    if (g.startsWith("neet")) return EXAM_DETECTORS.NEET;
+    if (g === "cat" || g === "cat_prep") return EXAM_DETECTORS.CAT;
+    if (g === "upsc" || g === "upsc_prep") return EXAM_DETECTORS.UPSC;
+    if (g === "gmat" || g === "gmat_prep") return EXAM_DETECTORS.GMAT;
+    if (g === "gre"  || g === "gre_prep")  return EXAM_DETECTORS.GRE;
+    if (g === "gate" || g === "gate_prep") return EXAM_DETECTORS.GATE;
+    if (g === "clat" || g === "clat_prep") return EXAM_DETECTORS.CLAT;
+    if (g === "bitsat" || g === "bitsat_prep") return EXAM_DETECTORS.BITSAT;
+    if (g === "sat"  || g === "sat_prep")  return EXAM_DETECTORS.SAT;
+    if (g === "nda"  || g === "nda_prep")  return EXAM_DETECTORS.NDA;
+    if (g === "cuet" || g === "cuet_prep") return EXAM_DETECTORS.CUET;
+    return null;
+  }, [topic, examGoal]);
+  const [topicValidation, setTopicValidation] = useState<{
+    loading: boolean;
+    result: { valid: boolean; reason: string; suggestedExam: string | null } | null;
+  }>({ loading: false, result: null });
+  useEffect(() => {
+    // eslint-disable-next-line no-console
+    console.log("[topic-validate/visualizer] effect run", {
+      examMeta: examMeta ? examMeta.name : null,
+      topic,
+      topicLen: (topic || "").trim().length,
+    });
+    if (!examMeta || (topic || "").trim().length < 3) {
+      // eslint-disable-next-line no-console
+      console.log("[topic-validate/visualizer] early-return — clearing result");
+      setTopicValidation({ loading: false, result: null });
+      return;
+    }
+    const controller = new AbortController();
+    setTopicValidation((s) => ({ ...s, loading: true }));
+    const handle = setTimeout(async () => {
+      try {
+        const sb = supabaseBrowser();
+        const { data: { session } } = await sb.auth.getSession();
+        if (!session) return;
+        const res = await fetch("/api/topic-validate", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${session.access_token}`,
+          },
+          body: JSON.stringify({
+            topic: topic.trim(),
+            examName: examMeta.name,
+            examDescription: examMeta.description,
+            examSections: examMeta.sections,
+          }),
+          signal: controller.signal,
+        });
+        const j = (await res.json()) as {
+          valid?: boolean;
+          reason?: string;
+          suggestedExam?: string | null;
+        };
+        // eslint-disable-next-line no-console
+        console.log("[topic-validate/visualizer] response", j);
+        setTopicValidation({
+          loading: false,
+          result: {
+            valid: j.valid !== false,
+            reason: String(j.reason || ""),
+            suggestedExam: j.suggestedExam ? String(j.suggestedExam) : null,
+          },
+        });
+      } catch (e) {
+        if ((e as Error)?.name !== "AbortError") {
+          setTopicValidation({ loading: false, result: null });
+        }
+      }
+    }, 800);
+    return () => {
+      clearTimeout(handle);
+      controller.abort();
+    };
+  }, [topic, examMeta]);
+
   useEffect(() => {
     (async () => {
       try {
@@ -683,6 +776,27 @@ export default function VisualizerPage() {
           </p>
         </div>
       </div>
+
+      {/* 2026-05-14: LLM-validated topic-vs-syllabus warning. Helps an
+          exam-prep student spot off-syllabus animation requests before
+          burning a generation. Non-blocking. */}
+      {topicValidation.result &&
+        !topicValidation.result.valid &&
+        examMeta && (
+          <div className="card mt-6 bg-amber-50/60 border-amber-200">
+            <div className="flex items-start gap-2 text-xs text-amber-900">
+              <span className="font-bold">⚠</span>
+              <div className="flex-1">
+                <strong>{topicValidation.result.reason}</strong>
+                {topicValidation.result.suggestedExam ? (
+                  <>{" "}This topic fits <strong>{topicValidation.result.suggestedExam}</strong> better — switch your goal in <a href="/settings" className="underline font-semibold">Settings</a> if needed.</>
+                ) : (
+                  <>{" "}If this is intentional, proceed — the animation will still be generated.</>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
       <div className="card mt-6">
         <label className="label">What do you want explained?</label>

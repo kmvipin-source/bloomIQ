@@ -1,9 +1,14 @@
 import { NextResponse } from "next/server";
 import { groqJSON } from "@/lib/groq";
-import { getBearer, supabaseServer } from "@/lib/supabase/server";
+import { getBearer, supabaseServer, supabaseAdmin } from "@/lib/supabase/server";
 import { checkRateLimit } from "@/lib/rateLimit";
 import { isBloomLevel, type BloomLevel, BLOOM_META } from "@/lib/bloom";
 import { verifyAnswerKeys, type VerifiableQuestion } from "@/lib/qgen";
+import {
+  loadLearningContext,
+  prependLearningContext,
+} from "@/lib/learningContext";
+import { buildSkillFewShotBlock } from "@/lib/skillFewShot";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -45,7 +50,16 @@ Given a source MCQ, you generate variants that:
 - Have exactly 4 options with a single unambiguous correct answer
 - Are not trivial paraphrases of the original
 
-Return STRICT JSON only.`;
+Return STRICT JSON only.
+
+GENERIC DOMAIN AWARENESS (applies to ANY topic — no local lookup):
+If the topic is a specialized professional / technical / niche domain
+(payment switches, mainframe stack, networking protocols, cloud platforms,
+legal codes, medical specialties, regulatory frameworks, ERP modules,
+industrial control systems, etc.) — USE the precise real-world terminology.
+NEVER invent identifiers, opcodes, parameters, syntax, or product features
+that don\'t exist. If you don\'t have confident knowledge of a specific
+aspect, write content that AVOIDS that aspect rather than fabricating.`;
 
 function asOptions(x: unknown): string[] | null {
   if (!Array.isArray(x)) return null;
@@ -100,9 +114,20 @@ Generate exactly 3 ISOMORPHIC variants — same concept, same Bloom level, diffe
 Return JSON of the form:
 { "variants": [ { "stem": "...", "options": ["A","B","C","D"], "correct_index": 0, "explanation": "..." } ] }`;
 
+    // 2026-05-14: thread learning-context + niche-skill few-shot through this
+    // route. Previously qbank/variants ran a vanilla SYSTEM prompt — a NEET
+    // student's variant request got generic biology questions instead of
+    // NEET-shaped ones, a Mainframe COBOL question got generic CS variants
+    // instead of WORKING-STORAGE/PIC-clause-shaped variants. Same source-of-
+    // truth helpers used by every other generator route.
+    const admin = supabaseAdmin();
+    const ctx = await loadLearningContext(admin, user.id);
+    const contextAwareSystem =
+      prependLearningContext(SYSTEM, ctx) + buildSkillFewShotBlock(source.topic || "");
+
     let raw: Record<string, unknown>;
     try {
-      raw = await groqJSON(SYSTEM, userPrompt);
+      raw = await groqJSON(contextAwareSystem, userPrompt);
     } catch (e) {
       return NextResponse.json({ error: e instanceof Error ? e.message : "Generation failed" }, { status: 502 });
     }

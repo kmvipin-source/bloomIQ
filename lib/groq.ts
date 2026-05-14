@@ -114,12 +114,26 @@ function shouldFallback(err: unknown): boolean {
 }
 
 /**
- * Force-Gemini env override — lets ops flip the whole platform to
- * Gemini without touching code (e.g. when Groq is down platform-wide).
- * Default: Groq with Gemini fallback.
+ * Should we go to Gemini before Groq for this call?
+ *
+ * Two trigger paths:
+ *  1. Explicit env override LLM_PROVIDER=gemini — set when Groq is down
+ *     platform-wide and ops wants to pin everything to Gemini.
+ *  2. Auto-detection: GROQ_API_KEY is missing but GEMINI_API_KEY is set.
+ *     Added 2026-05-14 after a Gemini-only deployment got 401 from Groq
+ *     with no helpful fallback (shouldFallback() deliberately ignores
+ *     auth errors). Now we never even attempt Groq when its key isn't
+ *     configured — Gemini-only deployments work out of the box.
+ *
+ * Default: Groq with Gemini fallback on 429/503 (unchanged behaviour
+ * for deployments that have both keys set).
  */
 function geminiFirst(): boolean {
-  return (process.env.LLM_PROVIDER || "").toLowerCase() === "gemini";
+  if ((process.env.LLM_PROVIDER || "").toLowerCase() === "gemini") return true;
+  const hasGroq = !!(process.env.GROQ_API_KEY || process.env.NEXT_PUBLIC_GROQ_API_KEY);
+  const hasGemini = !!process.env.GEMINI_API_KEY;
+  if (!hasGroq && hasGemini) return true;
+  return false;
 }
 
 async function geminiGenerate(

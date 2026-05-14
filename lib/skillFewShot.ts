@@ -260,6 +260,35 @@ export const SKILL_FEW_SHOT: Record<string, SkillFewShot> = {
   },
 
   // ── Certs / governance ─────────────────────────────────────────────────
+  POSTILION: {
+    label: "Postilion Realtime (payment switch — BPC Banking Technologies)",
+    disambiguation:
+      "Postilion is BPC's payment-switch / authorization platform for ATM, " +
+      "POS, and online card-acquiring traffic. It handles ISO 8583 message " +
+      "switching, BIN-based routing between acquirer / issuer / scheme " +
+      "endpoints, format translation, and integrates with HSMs for PIN/key " +
+      "operations. NOT a database, NOT a card scheme, NOT generic " +
+      "middleware. Core concepts: source interface, sink interface, network " +
+      "MIP (Multiple Interface Processor), device handler, stand-in (STIP), " +
+      "format mapping rules, transaction routing, RTPS (Realtime Payments " +
+      "Server). Closely related to Base24, OpenWay, ACI Postilion (now BPC " +
+      "after spin-off). Common in banks across India, Africa, Middle East.",
+    exampleStems: [
+      "In a Postilion deployment, what determines whether an inbound 0100 from an acquiring source interface is routed to the issuer host, to stand-in (STIP), or declined locally?",
+      "Which Postilion component is responsible for protocol translation between an acquirer's TPDU-framed ISO 8583 and a scheme network's MASTRO / VAP variant?",
+      "When configuring a Postilion sink interface to Visa V.I.P., which message-format-mapping and key-block parameters must be aligned with the acquirer's certification?",
+    ],
+  },
+  BASE24: {
+    label: "Base24 / Base24-eps (ACI Worldwide payment switch)",
+    disambiguation:
+      "Base24 is ACI's classic / EPS payment-switch product (now ACI Acquirer/Issuer). Same domain as Postilion. Handles ISO 8583, BIN routing, ATM/POS authorization, network interfaces to Visa/MC. Concepts: PathFinder, AAR (Acquirer Authorization Routine), IAR (Issuer Authorization Routine), JCL-driven batch interfaces on Tandem/HP NonStop in classic Base24.",
+    exampleStems: [
+      "In Base24-eps, what is the role of the AAR vs. the IAR when processing a card-not-present authorization?",
+      "Which Base24 component handles routing of an 0100 message to the correct outbound network interface based on PAN BIN?",
+      "A Tandem-based Base24 classic installation is being migrated to Base24-eps — which integration points typically require the most rework?",
+    ],
+  },
   CISSP: {
     label: "CISSP (Certified Information Systems Security Professional)",
     disambiguation:

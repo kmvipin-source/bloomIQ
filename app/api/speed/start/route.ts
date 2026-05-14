@@ -12,6 +12,7 @@ import {
 import { getRecentStemsForExclusion } from "@/lib/recentStemsExclusion";
 import { filterQuestionBatch } from "@/lib/qgen";
 import { detectExamFromTopic, filterBloomLevelsForExam } from "@/lib/examDetectors";
+import { buildSkillFewShotBlock } from "@/lib/skillFewShot";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -36,6 +37,22 @@ You will be given a topic and a target count. Generate exactly that many MCQs, d
 - has correct_index 0..3
 - has bloom_level (one of: remember, understand, apply, analyze, evaluate, create)
 - has a 1-sentence explanation
+
+5. GENERIC DOMAIN AWARENESS (applies to ANY topic — no local lookup):
+   If the topic is a specialized professional / technical / niche domain
+   (payment switches like Postilion or Base24, mainframe stack like JCL /
+   COBOL / CICS / DB2, networking protocols like BGP / MPLS, cloud platforms,
+   legal codes, medical specialties, regulatory frameworks, ERP modules,
+   industrial control systems, etc.) — USE the precise real-world terminology
+   of that domain. Real product names, real parameter names, real syntax,
+   real field numbers, real API verbs, real configuration keys. NEVER invent
+   identifiers, opcodes, field bits, function names, or product features
+   that don\'t exist. If you don\'t have confident knowledge of a specific
+   aspect, write a question that AVOIDS that aspect rather than fabricating.
+6. ALWAYS produce EXACTLY the requested number of questions. If you run
+   short of obvious angles, vary the sub-area, scenario, difficulty, or
+   level of abstraction — but hit the requested count. Returning fewer
+   than requested wastes the student\'s quota and time.
 
 Respond with VALID JSON only:
 {
@@ -135,7 +152,7 @@ export async function POST(req: Request) {
     // pass null for bloomLevel — exclusion considers any level the
     // student has seen on this topic recently.
     const exclusion = await getRecentStemsForExclusion(admin, user.id, topic, null, 20);
-    const systemPrompt = prependLearningContext(SYSTEM, ctx) + exclusion.promptBlock;
+    const systemPrompt = prependLearningContext(SYSTEM, ctx) + exclusion.promptBlock + buildSkillFewShotBlock(topic);
 
     // 2026-05-14: when the topic names a competitive exam, redistribute
     // the Bloom-level mix to skip levels the actual paper doesn't test —
@@ -229,31 +246,3 @@ Generate the JSON now.`;
     }
 
     // Attach target_ms based on bloom level. Send the questions MINUS
-    // correct_index/explanation — /submit re-reads the server-trusted
-    // copy by session_id.
-    const enriched = valid.map((q, i) => ({
-      idx: i,
-      stem: q.stem,
-      options: q.options,
-      bloom_level: q.bloom_level,
-      target_ms: TARGET_MS[q.bloom_level],
-    }));
-
-    // Sticky marking-scheme persistence (migration 77). Speed Trainer is a
-    // transient session — it doesn't create a quizzes row — but we still
-    // honour the user's pick and remember it for the next surface. If the
-    // client sent a scheme, write it to profile.last_marking_scheme.
-    if (body && body.markingScheme && typeof body.markingScheme === "object") {
-      const { writeLastMarkingScheme } = await import("@/lib/markingSchemeMemory");
-      const { resolveScheme } = await import("@/lib/scoring");
-      await writeLastMarkingScheme(admin, user.id, resolveScheme(body.markingScheme));
-    }
-
-    return NextResponse.json({ ok: true, session_id: sessionId, topic, count: enriched.length, questions: enriched });
-  } catch (e) {
-    return NextResponse.json(
-      { error: e instanceof Error ? e.message : "Could not start speed session" },
-      { status: 500 }
-    );
-  }
-}

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { buildSkillFewShotBlock } from "@/lib/skillFewShot";
 import { groqJSON, groqJSONVision } from "@/lib/groq";
 import { BLOOM_LEVELS, isBloomLevel, type BloomLevel } from "@/lib/bloom";
 import { getBearer, supabaseServer, supabaseAdmin } from "@/lib/supabase/server";
@@ -39,7 +40,16 @@ Respond with VALID JSON only:
   "recommendations": ["...", "...", "...", "...", "..."]
 }
 
-If the paper text is junk or contains no recognizable questions, return an empty questions array and an empty recommendations array. If a question's correct answer is genuinely ambiguous or context-dependent, set answer to a representative model answer and explanation to a brief rationale.`;
+If the paper text is junk or contains no recognizable questions, return an empty questions array and an empty recommendations array. If a question's correct answer is genuinely ambiguous or context-dependent, set answer to a representative model answer and explanation to a brief rationale.
+
+GENERIC DOMAIN AWARENESS (applies to ANY topic — no local lookup):
+If the topic is a specialized professional / technical / niche domain
+(payment switches, mainframe stack, networking protocols, cloud platforms,
+legal codes, medical specialties, regulatory frameworks, ERP modules,
+industrial control systems, etc.) — USE the precise real-world terminology.
+NEVER invent identifiers, opcodes, parameters, syntax, or product features
+that don\'t exist. If you don\'t have confident knowledge of a specific
+aspect, write content that AVOIDS that aspect rather than fabricating.`;
 
 type Q = {
   position: number;

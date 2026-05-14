@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { supabaseBrowser } from "@/lib/supabase/client";
 import { BLOOM_META, isBloomLevel, type BloomLevel } from "@/lib/bloom";
@@ -14,6 +14,11 @@ import { type MarkingScheme } from "@/lib/scoring";
 import { suggestPresetForGoal, type ScoringPresetKey } from "@/lib/scoringPresets";
 import { suggestedTopics, placeholderTopic } from "@/lib/topicSuggestions";
 import { type LearnerProfile } from "@/components/LearnerProfilePrompt";
+import {
+  detectExamFromTopic,
+  EXAM_DETECTORS,
+  type ExamMeta,
+} from "@/lib/examDetectors";
 
 // =============================================================================
 // SPEED-ACCURACY TRAINER — competitive-exam pacing tool. Each question has a
@@ -92,6 +97,85 @@ export default function SpeedTrainerPage() {
   const [examGoal, setExamGoal] = useState<string | null>(null);
   const [learnerProfile, setLearnerProfile] = useState<LearnerProfile | null>(null);
   const [markingScheme, setMarkingScheme] = useState<MarkingScheme | null>(null);
+
+  // 2026-05-14: same topic-vs-syllabus LLM warning that landed on
+  // /student/generate. examMeta is derived from topic-text OR exam_goal
+  // (Speed Trainer is mostly used by competitive-exam students, so the
+  // goal fallback matters here just like it does on the generate page).
+  // Debounced 800 ms POST to /api/topic-validate; fail-open on errors.
+  const examMeta = useMemo<ExamMeta | null>(() => {
+    const fromTopic = detectExamFromTopic(topic);
+    if (fromTopic) return fromTopic;
+    if (!examGoal) return null;
+    const g = examGoal.toLowerCase().trim();
+    if (g.startsWith("jee")) return EXAM_DETECTORS.JEE;
+    if (g.startsWith("neet")) return EXAM_DETECTORS.NEET;
+    if (g === "cat" || g === "cat_prep") return EXAM_DETECTORS.CAT;
+    if (g === "upsc" || g === "upsc_prep") return EXAM_DETECTORS.UPSC;
+    if (g === "gmat" || g === "gmat_prep") return EXAM_DETECTORS.GMAT;
+    if (g === "gre"  || g === "gre_prep")  return EXAM_DETECTORS.GRE;
+    if (g === "gate" || g === "gate_prep") return EXAM_DETECTORS.GATE;
+    if (g === "clat" || g === "clat_prep") return EXAM_DETECTORS.CLAT;
+    if (g === "bitsat" || g === "bitsat_prep") return EXAM_DETECTORS.BITSAT;
+    if (g === "sat"  || g === "sat_prep")  return EXAM_DETECTORS.SAT;
+    if (g === "nda"  || g === "nda_prep")  return EXAM_DETECTORS.NDA;
+    if (g === "cuet" || g === "cuet_prep") return EXAM_DETECTORS.CUET;
+    return null;
+  }, [topic, examGoal]);
+  const [topicValidation, setTopicValidation] = useState<{
+    loading: boolean;
+    result: { valid: boolean; reason: string; suggestedExam: string | null } | null;
+  }>({ loading: false, result: null });
+  useEffect(() => {
+    if (!examMeta || (topic || "").trim().length < 3) {
+      setTopicValidation({ loading: false, result: null });
+      return;
+    }
+    const controller = new AbortController();
+    setTopicValidation((s) => ({ ...s, loading: true }));
+    const handle = setTimeout(async () => {
+      try {
+        const sb = supabaseBrowser();
+        const { data: { session } } = await sb.auth.getSession();
+        if (!session) return;
+        const res = await fetch("/api/topic-validate", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${session.access_token}`,
+          },
+          body: JSON.stringify({
+            topic: topic.trim(),
+            examName: examMeta.name,
+            examDescription: examMeta.description,
+            examSections: examMeta.sections,
+          }),
+          signal: controller.signal,
+        });
+        const j = (await res.json()) as {
+          valid?: boolean;
+          reason?: string;
+          suggestedExam?: string | null;
+        };
+        setTopicValidation({
+          loading: false,
+          result: {
+            valid: j.valid !== false,
+            reason: String(j.reason || ""),
+            suggestedExam: j.suggestedExam ? String(j.suggestedExam) : null,
+          },
+        });
+      } catch (e) {
+        if ((e as Error)?.name !== "AbortError") {
+          setTopicValidation({ loading: false, result: null });
+        }
+      }
+    }, 800);
+    return () => {
+      clearTimeout(handle);
+      controller.abort();
+    };
+  }, [topic, examMeta]);
   const [suggestedPreset, setSuggestedPreset] = useState<ScoringPresetKey>("PRACTICE");
 
   const [busy, setBusy] = useState(false);
@@ -385,6 +469,27 @@ export default function SpeedTrainerPage() {
       {/* SETUP */}
       {!questions && !result && (
         <div className="card mt-6 space-y-4">
+          {/* 2026-05-14: LLM-validated topic-vs-syllabus warning. Speed
+              Trainer is mostly used by competitive-exam students; if they
+              type an off-syllabus topic ("history" for a NEET student),
+              the questions won't be exam-shaped no matter how good the
+              generator is. Surface the mismatch BEFORE they burn a
+              generation. Non-blocking — they can still proceed. */}
+          {topicValidation.result &&
+            !topicValidation.result.valid &&
+            examMeta && (
+              <div className="flex items-start gap-2 rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-900">
+                <span className="font-bold">⚠</span>
+                <div className="flex-1">
+                  <strong>{topicValidation.result.reason}</strong>
+                  {topicValidation.result.suggestedExam ? (
+                    <>{" "}This topic fits <strong>{topicValidation.result.suggestedExam}</strong> better — if that&apos;s what you&apos;re preparing for, switch your goal in <a href="/settings" className="underline font-semibold">Settings</a>.</>
+                  ) : (
+                    <>{" "}If this is intentional (cross-prep, curiosity), proceed — the session will still be generated.</>
+                  )}
+                </div>
+              </div>
+            )}
           <div>
             <label className="label">Topic</label>
             <input

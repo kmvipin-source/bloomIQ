@@ -9,6 +9,7 @@ import {
   type VerifiableQuestion,
 } from "@/lib/qgen";
 import { detectExamFromTopic } from "@/lib/examDetectors";
+import { buildSkillFewShotBlock } from "@/lib/skillFewShot";
 import { loadLearningContext, prependLearningContext } from "@/lib/learningContext";
 
 export const runtime = "nodejs";
@@ -20,7 +21,25 @@ type Source = "topic_only" | "topic_syllabus" | "notes" | "image" | "past_paper"
 
 const SYSTEM = `You are an expert exam-paper setter. You write printable question papers that mix question
 types (MCQ, true/false, fill-in-the-blank, short answer, long answer, numerical) at the difficulty
-appropriate to the class and syllabus the teacher specified. Return STRICT JSON only.`;
+appropriate to the class and syllabus the teacher specified.
+
+5. GENERIC DOMAIN AWARENESS (applies to ANY topic — no local lookup):
+   If the topic is a specialized professional / technical / niche domain
+   (payment switches like Postilion or Base24, mainframe stack like JCL /
+   COBOL / CICS / DB2, networking protocols like BGP / MPLS, cloud platforms,
+   legal codes, medical specialties, regulatory frameworks, ERP modules,
+   industrial control systems, etc.) — USE the precise real-world terminology
+   of that domain. Real product names, real parameter names, real syntax,
+   real field numbers, real API verbs, real configuration keys. NEVER invent
+   identifiers, opcodes, field bits, function names, or product features
+   that don\'t exist. If you don\'t have confident knowledge of a specific
+   aspect, write a question that AVOIDS that aspect rather than fabricating.
+6. ALWAYS produce EXACTLY the requested number of questions. If you run
+   short of obvious angles, vary the sub-area, scenario, difficulty, or
+   level of abstraction — but hit the requested count. Returning fewer
+   than requested wastes the student\'s quota and time.
+
+Return STRICT JSON only.`;
 
 /**
  * When the topic names a known competitive exam, prepend an exam-aware
@@ -223,7 +242,7 @@ export async function POST(req: Request) {
     // current paper; the learner-context wrapper applies above it.
     const adminForCtx = supabaseAdmin();
     const learnerCtx = await loadLearningContext(adminForCtx, user.id);
-    const sysForGen = prependLearningContext(examAwareSystem(SYSTEM, topic), learnerCtx);
+    const sysForGen = prependLearningContext(examAwareSystem(SYSTEM, topic), learnerCtx) + buildSkillFewShotBlock(topic);
     let json: Record<string, unknown>;
     if (source === "image" || source === "past_paper") {
       json = await groqJSONVision(sysForGen, prompt, imageDataUrl);
@@ -326,47 +345,3 @@ export async function POST(req: Request) {
           } else {
             disputedCount++;
             const rowIdx = mcqIndices[i];
-            const row = rows[rowIdx];
-            // Stamp the dispute on the explanation field so teachers
-            // editing / printing the paper see the warning even if the
-            // UI hasn't surfaced the verification.disputed count. The
-            // schema doesn't have a dedicated quality column on
-            // exam_paper_questions, so we piggyback on explanation.
-            const reviewerLetter = typeof v.correctIndex === "number" ? "ABCD"[v.correctIndex] ?? "?" : "?";
-            const marker = `[⚠ ANSWER DISPUTED — AI re-solve picked option ${reviewerLetter}; please verify before printing.]`;
-            row.explanation = row.explanation
-              ? `${marker}\n\n${row.explanation}`
-              : marker;
-            disputedPositions.push({ section: row.section_name, position: row.position });
-            // eslint-disable-next-line no-console
-            console.warn(
-              `[papers/generate] MCQ at row ${rowIdx} answer disputed by re-solve. Stored: ${row.correct_answer}, reviewer chose index: ${v.correctIndex}`
-            );
-          }
-        }
-      } catch (e) {
-        // eslint-disable-next-line no-console
-        console.warn(`[papers/generate] verification pass failed (non-fatal):`, e instanceof Error ? e.message : e);
-      }
-    }
-    const { error: qErr } = await sb.from("exam_paper_questions").insert(rows);
-    if (qErr) {
-      await sb.from("exam_papers").delete().eq("id", paper.id);
-      return NextResponse.json({ error: qErr.message }, { status: 500 });
-    }
-
-    return NextResponse.json({
-      ok: true,
-      paperId: paper.id,
-      verification: {
-        mcq_total: mcqQuestions.length,
-        verified: verifiedCount,
-        disputed: disputedCount,
-        disputed_positions: disputedPositions,
-      },
-    });
-  } catch (e) {
-    return NextResponse.json({ error: e instanceof Error ? e.message : "Generation failed" }, { status: 500 });
-  }
-}
-

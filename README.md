@@ -146,7 +146,139 @@ platform-admin invite flow at `/admin/onboard-school` instead.
 
 ---
 
-## 🆕 Latest session — 2026-05-13 (Confidence Insights rewrite + Speed Trainer cross-test non-repetition + learning-context everywhere + marking schemes everywhere + soft-delete classes + post-test review + Mock Rank Predictor foolproofing)
+## 🆕 Latest session — 2026-05-14 (End-to-end audit & quality stack — profile-aware competitive-exam framing, LLM topic validation, dynamic topic grounding, semantic dedup, auto-retry, shortfall transparency, world-class SYSTEM prompts)
+
+A full-day audit + fix marathon driven by tester feedback. The crux of the
+session: **make question quality reliable on any topic the user types — no
+local lists, no maintenance burden, no silent failures.** Below is what
+landed and how the pieces work together.
+
+> **Pilot-data safety rule still applies.** This session touched generator
+> routes and UI but did not modify any user-data tables. Migration 80 adds
+> a nullable column; legacy rows are untouched.
+
+### Headline fixes — bugs the tester filed
+
+1. **JEE student → "Class 8/9" + CBSE syllabus shown** when they typed a generic topic like "Algebra".
+   - Root cause: every gate was inspecting **topic text only**, never the student's `exam_goal` / `learner_profile`.
+   - Fix: new shared helper `shouldUseCompetitiveExamFraming({topic, learnerProfile, examGoal})` in `lib/examDetectors.ts`. Used by `/student/generate`, `/teacher/generate`, `/api/student/quick-test`, `/api/generate`. Covers 15+ goal slugs (jee_main, neet_prep, cat_prep, upsc_prep, bank_exams, gmat, gre, gate, clat, cuet, bitsat, sat, nda, etc.).
+   - Net: the class/grade and syllabus inputs are correctly hidden for competitive-exam students, with a clear banner explaining which signal (profile or topic) was used.
+
+2. **Rank predictor refused legitimate competitive-exam tests** when the student's chosen topic wasn't itself a known exam name (e.g. NEET student practising "blood group").
+   - Root cause: `classifyQuizForRankPrediction()` only inspected the quiz's `topic` / `name` / `topic_family`, ignoring the student's `exam_goal`.
+   - Fix: added `studentExamGoal?` parameter to the classifier; wired through both callers (`/api/rank/predict` route + `/student/results/[id]` page). Corporate-skill matches on the topic still win over profile (a Java test is never a NEET mock no matter the goal).
+
+3. **"Blood Group" + NEET → wrong suggestion** ("This topic fits CAT better").
+   - Root cause: the original keyword-list approach to topic-vs-syllabus matching is inherently brittle. CAT had "BLOOD" as a single token (because of CAT's "blood relation" puzzles in LR), and NEET's keyword list didn't include "BLOOD" / "GROUP" / typical medical body-system terms.
+   - **Architectural pivot:** replaced the keyword-list approach entirely with an LLM-based validator. New route `/api/topic-validate` (`groqJSON`-backed) decides per-topic if the topic belongs to the exam's syllabus — and if not, which exam it would fit. Works for ANY topic with zero local maintenance. Fail-open on errors; debounced 800ms; ~$0.0001 per check.
+
+4. **Numerical % slider showed misleading "Use suggested" button** even when the user's value already matched the suggested value (delta = 0). Fixed conditional + added a quiet "your slider is aligned" caption.
+
+5. **Generation shortfall was silent** — user picked 8 questions, got 2, no explanation. Fixed:
+   - Frontend now reads `data.total` + `data.summary` (which the backend has always returned) and renders an amber toast: *"Generated 2 of 8 (short by 6). Per level: Understand: 1, Apply: 1, Analyze: 0, Evaluate: 0. Likely causes: niche topic / dedup / answer-leaks. Try a more specific topic or fewer levels."*
+   - When ALL questions came back zero, the redirect is blocked and a hard error explains why.
+
+### The new quality stack (what runs on every generation)
+
+```
+1. Dynamic topic grounding         lib/topicGrounding.ts (NEW)
+   ↓  one Groq call decomposes the topic into 6-10 sub-areas,
+   ↓  4-8 real-world anchors, 3-6 common misconceptions, and a
+   ↓  "tough question" difficulty anchor. Zero local data.
+
+2. learningContext + examDetectors  lib/learningContext.ts + lib/examDetectors.ts
+   ↓  exam-aware framing for known goals (CAT/JEE/NEET/UPSC/…)
+
+3. World-class SYSTEM prompt        Clauses 5 + 6 added to every generator
+   ↓  "Use real terminology, never fabricate, hit exact count, vary
+   ↓  sub-area/scenario/difficulty if needed."
+
+4. filterQuestionBatch              lib/qgen.ts (existing)
+   ↓  Jaccard dedup: answer-leak, in-batch dupes, cross-session history.
+
+5. In-batch cosine dedup            lib/embeddings.ts (NEW) + migration 80
+   ↓  Gemini text-embedding-004 (768-dim) catches paraphrases Jaccard
+   ↓  misses ("How does HCl ionise?" vs "Explain dissociation of HCl").
+   ↓  pgvector column ready; cross-session cosine query is next session.
+
+6. Auto-retry on shortfall          Per-level loop in /api/generate + /api/student/quick-test
+   ↓  If delivered < requested, fires ONE more groqJSON with explicit
+   ↓  feedback ("you gave N, give K more on different sub-areas: …").
+
+7. verifyAnswerKeys + refinement    lib/qgen.ts (existing)
+   ↓  Second LLM re-solve; one refinement attempt on dispute.
+
+8. Shortfall transparency toast     /student/generate page
+   ↓  If anything is still short, user sees per-level breakdown — no
+   ↓  silent partial deliveries.
+```
+
+### UX improvements landed
+
+On **`/student/generate`** (the most-changed page):
+
+- "Topic + class + syllabus" tile hidden for competitive-exam students
+- Smart Bloom auto-pick on first load from `typicalTestShape` (e.g. JEE → U/A/A/E pre-picked)
+- "Typical for X" caption showing recommended count + minutes + Bloom levels with rationale
+- Bloom-level chip greying for levels the exam doesn't test (strike-through + tooltip)
+- "Customise per level" toggle in by-count mode (non-destructive — total survives the toggle)
+- Recently-used topics chips (localStorage-backed, FIFO 8)
+- First-time empty-state tooltip (auto-dismiss)
+- Mobile grid 2-up
+- "More instructions" upgraded from single-line input → 3-row textarea (800 char max). Length-aware: ≤150 chars treated as a sub-area; >150 chars wrapped as explicit "ADDITIONAL INSTRUCTIONS FROM THE STUDENT" block in the prompt.
+- Disabled Generate when invalid + inline amber reason
+- Pre-flight pill: *"Will generate 8 questions · ~25 min"*
+- LLM topic-vs-syllabus warning (debounced 800ms) when topic is off-syllabus for the detected exam
+
+On **`/teacher/generate`** — same pattern applied:
+- topic-vs-syllabus LLM warning
+- Bloom chip greying
+- Numerical % deviation + no-op fix
+- Disabled Generate + pre-flight pill
+
+On **`/student/speed`** + **`/student/flashcards`** + **`/student/visualizer`** — topic-vs-syllabus LLM warning wired with same debounced pattern.
+
+### Resilience changes
+
+- **`lib/groq.ts` — auto-route Gemini-first** when `GROQ_API_KEY` is missing but `GEMINI_API_KEY` is set. Previously the dispatcher only respected `LLM_PROVIDER=gemini`; now it also detects key-only configs. Restored after the file was truncated by a linter pass mid-session.
+- **Topic-validate route fail-open**: any error or rate-limit returns `{valid: true, reason: "validator_unavailable"}` so the UI never blocks generation on validator flakes.
+
+### New files
+
+| File | Purpose |
+|---|---|
+| `app/api/topic-validate/route.ts` | LLM-based topic-vs-exam-syllabus validator |
+| `lib/examDetectors.ts` (extended) | `shouldUseCompetitiveExamFraming`, `isCompetitiveExamGoal` |
+| `lib/skillFewShot.ts` | Niche-skill few-shot bank (fallback for the few topics where the LLM has weak priors). Auto-injection still active but secondary to topic grounding. |
+| `lib/testShapeDefaults.ts` | `typicalTestShape({examGoal, learnerProfile})` for every goal — drives the "Typical for X" caption + smart Bloom defaults. |
+| `lib/topicGrounding.ts` | `groundTopic(topic, context)` — dynamic LLM-driven topic decomposition. |
+| `lib/embeddings.ts` | Gemini text-embedding-004 wrapper + cosine helpers (`cosineSim`, `cosineDedupInBatch`, `cosineDedupAgainstHistory`). |
+| `supabase/migrations/80_question_bank_embedding.sql` | Adds `stem_embedding vector(768)` + IVFFlat cosine index. Backfill is optional / deferred. |
+| `docs/AUDIT_2026_05_13_EVENING.md` (yesterday) | Original 45-item audit doc this session built on. |
+| `docs/AUDIT_2026_05_14_FULL_SWEEP.md` | Mid-session audit checkpoint (Round 1 fixes). |
+
+### Configuration notes
+
+- **Required env**: `GROQ_API_KEY` (generation) or `GEMINI_API_KEY` (auto-routes). At least one.
+- **Recommended env for full quality**: `GEMINI_API_KEY` (free tier on AI Studio) — enables semantic embedding dedup + grounding fallback.
+- **Migration 80** can be applied at any time; legacy rows stay NULL and the cosine dedup helper falls back to Jaccard for them. New questions get embeddings on insert immediately.
+
+### Process notes (transparency)
+
+- The Edit tool repeatedly truncated long files during this session (11 separate occurrences). All recoverable via Python heredoc splice from `git HEAD`. Workaround used throughout: small surgical Edits + immediate tail check + restore-and-retry when corruption detected.
+- Sandbox `tsc` execution times out on this project size, so type-check verification must happen on the developer's local machine before deploy.
+
+### Deferred for follow-up
+
+- Wire `buildSkillFewShotBlock` into 3 remaining secondary routes (climber, teach-back, qbank/solution) — imports present, concat sites need per-route topic-variable identification.
+- `/teacher/papers/new` UX rebuild — 393-LOC sections-and-question-types form needs its own design pass; today's `/teacher/generate` patterns don't copy-paste cleanly.
+- Extend `lib/recentStemsExclusion.ts` to fetch + return `stem_embedding` from `question_bank`, enabling true cross-session cosine dedup using the column populated this session.
+- `/api/qbank/[id]/solution` — currently no learning context; add when next touched.
+- Yesterday's open audit items #15-#41 (UX polish bugs) — batch into a single follow-up PR.
+
+---
+
+## 🆕 Earlier session — 2026-05-13 (Confidence Insights rewrite + Speed Trainer cross-test non-repetition + learning-context everywhere + marking schemes everywhere + soft-delete classes + post-test review + Mock Rank Predictor foolproofing)
 
 A multi-day push focused on making the student-facing surfaces (a) trust-worthy on repeated attempts, (b) self-explanatory in plain English, and (c) context-aware across every AI-generated surface — not just question generators. Also added the operational gaps Vipin called out: marking-scheme persistence, soft-delete with confirmation, co-teacher invite emails, and an in-product post-test review.
 

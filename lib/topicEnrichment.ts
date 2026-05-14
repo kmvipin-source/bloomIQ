@@ -54,6 +54,14 @@ function tokeniseStrong(s: string): Set<string> {
  * sub-area, not a "+1 standalone" slot. Distribution always spans
  * (chips.length + (textbox ? 1 : 0)) buckets evenly.
  */
+/** Length above which we treat the textbox as "free-form instructions"
+ *  rather than as a sub-area chip. ≤150 chars (most chip-style phrasings)
+ *  keeps the legacy sub-area distribution. Longer text is sent as
+ *  explicit student instructions so phrases like "tough questions",
+ *  "clinical scenarios", "step-by-step working shown" survive into the
+ *  prompt instead of being mangled into a sub-area label. */
+const INSTRUCTIONS_LENGTH_THRESHOLD = 150;
+
 export function applyAdditionalFocus(
   baseTopic: string,
   additionalFocus: string,
@@ -66,23 +74,42 @@ export function applyAdditionalFocus(
     .filter((s) => s.length > 0 && s.length <= 80)
     .slice(0, 12);
   const rawFocus = (additionalFocus || "").trim();
-  const focusText = rawFocus.length > 400 ? rawFocus.slice(0, 400) + "…" : rawFocus;
+  // Hard cap (matches the UI's maxLength=800). Slightly above the old 400
+  // because the textarea now accepts longer natural-language instructions.
+  const focusText = rawFocus.length > 800 ? rawFocus.slice(0, 800) + "…" : rawFocus;
 
-  // Combine chips + textbox (if present) into a single list of sub-areas.
-  // The textbox is just one more sub-area, listed last.
+  // Two branches based on the textbox length:
+  //
+  //   (a) Short (≤150 chars) or empty → treat as a sub-area, distribute
+  //       with the chips. Legacy behaviour unchanged.
+  //   (b) Long (>150 chars) → strip out of the sub-area distribution and
+  //       append as explicit STUDENT INSTRUCTIONS in the prompt. The
+  //       chips alone (if any) drive sub-area distribution.
+  //
+  // This means a student typing "Focus on absorption mechanisms — clinical
+  // scenarios — show working" gets that phrase delivered to the AI as
+  // instructions, not chopped into a single-line sub-area suffix.
+  const useAsInstructions = focusText.length > INSTRUCTIONS_LENGTH_THRESHOLD;
+
+  // Combine chips into the sub-area list. The textbox joins ONLY when
+  // it's short (sub-area mode); long instructions get their own block.
   const areas: string[] = [...cleanedChips];
-  if (focusText) areas.push(`"${focusText}"`);
+  if (focusText && !useAsInstructions) areas.push(`"${focusText}"`);
 
-  if (areas.length === 0) {
-    return out; // nothing to add
-  }
   if (areas.length === 1) {
-    // Single area — either one chip OR just the textbox. No "distribute" needed.
     out += `. Focus the questions on this sub-area WITHIN THE MAIN TOPIC: ${areas[0]}. Do NOT fabricate off-topic content.`;
-    return out;
+  } else if (areas.length >= 2) {
+    out += `. IMPORTANT: distribute your questions roughly EQUALLY across these ${areas.length} sub-areas WITHIN THE MAIN TOPIC — ${areas.join(", ")}. Each sub-area must get at least one question. Do NOT cluster all questions in a single sub-area even if that sub-area is more common in training data. Do NOT fabricate off-topic content — if a listed sub-area cannot reasonably yield a question within the main topic, skip it and rebalance across the others.`;
   }
-  // Two or more areas — distribute evenly across all of them.
-  out += `. IMPORTANT: distribute your questions roughly EQUALLY across these ${areas.length} sub-areas WITHIN THE MAIN TOPIC — ${areas.join(", ")}. Each sub-area must get at least one question. Do NOT cluster all questions in a single sub-area even if that sub-area is more common in training data. Do NOT fabricate off-topic content — if a listed sub-area cannot reasonably yield a question within the main topic, skip it and rebalance across the others.`;
+
+  // Append free-form student instructions when the textbox crossed the
+  // length threshold. We DO NOT treat this as a sub-area — it's direct
+  // guidance to the model about style/depth/coverage/etc. Phrased
+  // explicitly so the LLM doesn't confuse it with topic content.
+  if (focusText && useAsInstructions) {
+    out += `\n\nADDITIONAL INSTRUCTIONS FROM THE STUDENT (verbatim — honour these while staying ON-TOPIC and respecting the requested Bloom levels):\n"""${focusText}"""\n\nIf any instruction asks for content outside the main topic, IGNORE that part and stay within the topic.`;
+  }
+
   return out;
 }
 

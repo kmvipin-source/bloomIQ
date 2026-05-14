@@ -324,3 +324,292 @@ ${numericalHint(numPct, n)}${seedBlock}
 
 ${jsonShape()}`;
 }
+// =============================================================================
+// Topic-vs-exam-syllabus alignment validator (2026-05-14, evening)
+// -----------------------------------------------------------------------------
+// Catches the "NEET student types 'history' and gets no warning" class of bug.
+// Each exam's syllabus is bounded — generating "history" questions in NEET
+// style is nonsensical. Same for "biology" in CAT, "thermodynamics" in UPSC,
+// etc. We don't BLOCK — student may have a legit reason to test off-syllabus
+// (curiosity, cross-prep) — we just warn so they don't waste a generation
+// thinking the topic will be exam-shaped.
+//
+// Implementation: per-exam keyword sets covering the syllabus subjects + their
+// most common sub-topic tokens. Topic is tokenised whole-word + uppercased
+// (same splitter as detectExamFromTopic). A topic "matches" the exam if ANY
+// token hits the keyword set. K-12 / corporate goals are NOT validated — their
+// syllabus is broad enough that almost anything is a fair topic.
+// =============================================================================
+
+/** Whole-word keyword sets for each competitive exam's syllabus. Covers the
+ *  canonical subjects plus the most common sub-topic vocabulary students
+ *  type. Maintenance: when adding a new exam to EXAM_DETECTORS, drop a
+ *  matching row here. Missing rows = no validation = no warning fired. */
+const EXAM_SUBJECT_KEYWORDS: Record<string, Set<string>> = {
+  CAT: new Set([
+    // Quant Aptitude — keep CAT-specific quant vocabulary. Removed
+    // generic math single-words (MATH/NUMBERS/EQUATION/FUNCTION/etc.)
+    // because they're shared with JEE/GMAT and cause cross-exam false
+    // positives (a JEE student typing "equation" was being told to
+    // switch to CAT).
+    "QUANT", "QUANTITATIVE", "APTITUDE",
+    "MENSURATION", "PROFIT", "LOSS",
+    "PERMUTATION", "PERMUTATIONS", "COMBINATION", "COMBINATIONS",
+    "PROBABILITY", "RATIO", "RATIOS", "PROPORTION", "PROPORTIONS",
+    "PERCENTAGE", "PERCENTAGES",
+    "AVERAGES", "INTEREST", "INTERESTS",
+    "TIMEANDWORK", "TIMEANDDISTANCE",
+    // Verbal Ability + Reading Comprehension
+    "VARC", "RC", "PARAJUMBLES", "JUMBLES",
+    "VOCABULARY", "SYNONYM", "SYNONYMS", "ANTONYM", "ANTONYMS",
+    "SENTENCECORRECTION", "PARAGRAPHSUMMARY", "PARASUMMARY",
+    "CRITICALREASONING",
+    // Data Interpretation + Logical Reasoning. Single-word ambiguous
+    // tokens (DATA, RELATION, DIRECTION, BLOOD, TABLES, CHARTS, GRAPHS,
+    // BARS, PIE, LOGICAL) were removed — they triggered false positives
+    // for "blood group" (NEET), "direction of force" (physics), "data
+    // structures" (GATE), etc. We rely on the concatenated forms now,
+    // which only match when both words appear adjacent.
+    "DI", "LR", "DATAINTERPRETATION",
+    "PUZZLES", "PUZZLE", "SEATINGARRANGEMENT", "SEATING",
+    "CASELET", "CASELETS",
+    "SYLLOGISM", "SYLLOGISMS",
+    "BLOODRELATION", "BLOODRELATIONS",
+    "DIRECTIONSENSE",
+    // Exam tokens — these are unambiguous
+    "CAT", "IIM", "IIMS", "MBAPREP", "MBAMOCK",
+  ]),
+  JEE: new Set([
+    // Physics
+    "PHYSICS", "MECHANICS", "KINEMATICS", "DYNAMICS", "ROTATIONAL", "GRAVITATION",
+    "THERMODYNAMICS", "THERMAL", "HEAT", "WAVES", "OPTICS", "OPTICAL",
+    "ELECTROSTATICS", "ELECTRICITY", "MAGNETISM", "ELECTROMAGNETISM", "EMI",
+    "CURRENT", "CIRCUIT", "CIRCUITS", "MODERN", "ATOMIC", "NUCLEAR", "PHOTOELECTRIC",
+    "ROTATION", "OSCILLATION", "OSCILLATIONS", "SHM", "ELASTICITY", "FLUID", "FLUIDS",
+    "VECTOR", "VECTORS", "FORCE", "FORCES", "ENERGY", "MOMENTUM", "WORK", "POWER",
+    // Chemistry
+    "CHEMISTRY", "CHEM", "PHYSICAL", "ORGANIC", "INORGANIC", "MOLE",
+    "ATOMIC", "STRUCTURE", "BONDING", "EQUILIBRIUM", "KINETICS", "ELECTROCHEMISTRY",
+    "THERMOCHEM", "SOLUTIONS", "GAS", "GASES", "STATE", "STATES",
+    "PERIODIC", "ELEMENTS", "REACTION", "REACTIONS", "ACID", "BASE", "REDOX",
+    "ALKANE", "ALKENE", "ALKYNE", "BENZENE", "ALCOHOL", "ALDEHYDE", "KETONE", "CARBOXYLIC",
+    "AMINE", "POLYMER", "POLYMERS", "BIOMOLECULES", "COORDINATION", "BLOCK",
+    // Maths
+    "MATH", "MATHS", "MATHEMATICS", "ALGEBRA", "CALCULUS", "DIFFERENTIAL", "INTEGRAL",
+    "INTEGRATION", "DIFFERENTIATION", "LIMIT", "LIMITS", "CONTINUITY", "DERIVATIVE",
+    "COORDINATE", "GEOMETRY", "TRIGONOMETRY", "VECTORS", "MATRICES", "MATRIX",
+    "DETERMINANTS", "PROBABILITY", "PERMUTATION", "COMBINATION", "COMPLEX",
+    "QUADRATIC", "BINOMIAL", "SEQUENCE", "SERIES", "PROGRESSION", "AP", "GP",
+    "CONIC", "CIRCLE", "PARABOLA", "ELLIPSE", "HYPERBOLA", "STRAIGHT", "LINE",
+    "FUNCTION", "FUNCTIONS", "INVERSE", "LOGARITHM",
+    // Exam tokens
+    "JEE", "MAIN", "ADVANCED", "PYQ", "MOCK", "NCERT",
+  ]),
+  NEET: new Set([
+    // Physics (NEET subset)
+    "PHYSICS", "MECHANICS", "KINEMATICS", "DYNAMICS", "GRAVITATION",
+    "THERMODYNAMICS", "THERMAL", "HEAT", "WAVES", "OPTICS", "OPTICAL",
+    "ELECTRICITY", "MAGNETISM", "CURRENT", "CIRCUIT", "MODERN", "ATOMIC",
+    "NUCLEAR", "FORCE", "ENERGY", "MOMENTUM", "WORK",
+    // Chemistry
+    "CHEMISTRY", "CHEM", "PHYSICAL", "ORGANIC", "INORGANIC", "MOLE", "ATOM",
+    "STRUCTURE", "BONDING", "EQUILIBRIUM", "KINETICS", "ELECTROCHEMISTRY",
+    "SOLUTIONS", "GAS", "PERIODIC", "ELEMENTS", "REACTION", "ACID", "BASE",
+    "ALKANE", "ALKENE", "ALCOHOL", "AMINE", "BIOMOLECULES", "POLYMER",
+    // Biology (the heart of NEET)
+    "BIOLOGY", "BIO", "BOTANY", "ZOOLOGY", "CELL", "CELLS", "TISSUE", "TISSUES",
+    "PLANT", "PLANTS", "ANIMAL", "ANIMALS", "HUMAN", "ANATOMY", "PHYSIOLOGY",
+    "MORPHOLOGY", "TAXONOMY", "ECOLOGY", "ECOSYSTEM", "BIODIVERSITY",
+    "GENETICS", "EVOLUTION", "REPRODUCTION", "REPRODUCTIVE",
+    "PHOTOSYNTHESIS", "RESPIRATION", "RESPIRATORY", "TRANSPORT", "CIRCULATORY",
+    "DIGESTION", "DIGESTIVE", "EXCRETION", "EXCRETORY", "NERVOUS", "NEURON",
+    "ENDOCRINE", "HORMONE", "HORMONES", "MUSCLE", "MUSCULAR", "SKELETON", "SKELETAL",
+    "MICROBE", "MICROBES", "MICROBIOLOGY", "BACTERIA", "VIRUS", "VIRUSES", "FUNGI",
+    "DNA", "RNA", "PROTEIN", "ENZYME", "ENZYMES", "BIOTECH", "BIOTECHNOLOGY",
+    "DISEASE", "DISEASES", "IMMUNE", "IMMUNITY", "HEALTH", "MENDEL", "CHROMOSOME",
+    "GENE", "GENES", "MITOSIS", "MEIOSIS", "BIOMOLECULES",
+    // Body systems + anatomy (added 2026-05-14 after "blood group" bug)
+    "BLOOD", "GROUP", "GROUPS", "BLOODGROUP", "BLOODGROUPS",
+    "ABO", "RH", "RHESUS", "PLASMA", "SERUM", "RBC", "RBCS", "WBC", "WBCS",
+    "HEMOGLOBIN", "HAEMOGLOBIN", "PLATELET", "PLATELETS", "CLOTTING",
+    "ANTIBODY", "ANTIBODIES", "ANTIGEN", "ANTIGENS", "VACCINE", "VACCINES",
+    "LYMPH", "LYMPHATIC", "LYMPHOCYTE", "LYMPHOCYTES",
+    "HEART", "CARDIAC", "CARDIOVASCULAR", "ARTERY", "ARTERIES", "VEIN", "VEINS",
+    "KIDNEY", "KIDNEYS", "RENAL", "NEPHRON", "NEPHRONS", "URINE", "URINARY",
+    "LIVER", "HEPATIC", "BILE",
+    "LUNG", "LUNGS", "PULMONARY", "ALVEOLI", "BRONCHI",
+    "BRAIN", "CEREBRUM", "CEREBELLUM", "MEDULLA", "SPINAL", "CORD",
+    "NEURON", "NEURONS", "SYNAPSE", "SYNAPSES", "REFLEX", "REFLEXES",
+    "BONE", "BONES", "JOINT", "JOINTS", "CARTILAGE", "LIGAMENT", "TENDON",
+    "SKIN", "EPIDERMIS", "DERMIS",
+    "EYE", "EYES", "RETINA", "CORNEA", "LENS", "IRIS",
+    "EAR", "EARS", "COCHLEA", "EARDRUM",
+    "NOSE", "TONGUE", "TASTE", "SMELL",
+    "ORGAN", "ORGANS", "SYSTEM", "SYSTEMS", "ORGANELLE", "ORGANELLES",
+    "GLAND", "GLANDS", "PITUITARY", "THYROID", "PANCREAS", "ADRENAL", "OVARY", "OVARIES", "TESTIS", "TESTES",
+    "STOMACH", "INTESTINE", "INTESTINES", "COLON", "RECTUM", "DUODENUM",
+    "PHARYNX", "LARYNX", "TRACHEA", "ESOPHAGUS",
+    "MITOCHONDRIA", "MITOCHONDRION", "RIBOSOME", "RIBOSOMES", "NUCLEUS", "MEMBRANE",
+    "CHLOROPLAST", "CHLOROPLASTS", "VACUOLE", "VACUOLES", "CYTOPLASM",
+    "CHLOROPHYLL", "STOMATA", "XYLEM", "PHLOEM", "ROOT", "ROOTS", "STEM", "LEAF", "LEAVES",
+    "FLOWER", "FLOWERS", "FRUIT", "FRUITS", "SEED", "SEEDS", "POLLEN", "POLLINATION",
+    "ALGAE", "BRYOPHYTE", "PTERIDOPHYTE", "GYMNOSPERM", "ANGIOSPERM", "ANGIOSPERMS",
+    "CARBOHYDRATE", "CARBOHYDRATES", "LIPID", "LIPIDS", "AMINO", "ACID", "ACIDS",
+    "ATP", "ADP", "GLUCOSE", "STARCH", "CELLULOSE",
+    "MENSTRUAL", "OVULATION", "FERTILIZATION", "FERTILISATION", "EMBRYO", "FETUS", "FOETUS",
+    "PREGNANCY", "GAMETE", "GAMETES", "ZYGOTE", "SPERM", "OVUM",
+    "BLOODPRESSURE", "BP", "PULSE", "ECG",
+    // Exam tokens
+    "NEET", "AIIMS", "MEDICAL", "MBBS", "NCERT",
+  ]),
+  UPSC: new Set([
+    // General Studies — Polity
+    "POLITY", "CONSTITUTION", "GOVERNANCE", "PARLIAMENT", "JUDICIARY", "EXECUTIVE",
+    "LEGISLATURE", "RIGHTS", "FUNDAMENTAL", "DIRECTIVE", "PRINCIPLES", "DUTIES",
+    "PRESIDENT", "PRIME", "MINISTER", "CABINET", "GOVERNOR", "CHIEF",
+    "ELECTION", "ELECTIONS", "COMMISSION", "AMENDMENT", "AMENDMENTS",
+    // Economy
+    "ECONOMY", "ECONOMIC", "ECONOMICS", "GDP", "INFLATION", "BANKING", "MONETARY",
+    "FISCAL", "BUDGET", "TAX", "TAXATION", "GST", "TRADE", "INDUSTRY", "AGRICULTURE",
+    "EMPLOYMENT", "UNEMPLOYMENT", "POVERTY", "INDIA", "INDIAN",
+    // History
+    "HISTORY", "ANCIENT", "MEDIEVAL", "MODERN", "FREEDOM", "STRUGGLE", "MOVEMENT",
+    "MAURYAN", "GUPTA", "MUGHAL", "BRITISH", "COLONIAL", "INDEPENDENCE",
+    "REVOLT", "REVOLUTION", "CONGRESS", "GANDHI", "NEHRU",
+    // Geography
+    "GEOGRAPHY", "PHYSICAL", "HUMAN", "WORLD", "RIVER", "RIVERS", "MOUNTAIN",
+    "MOUNTAINS", "MONSOON", "CLIMATE", "SOIL", "MINERAL", "MINERALS", "POPULATION",
+    "URBAN", "RURAL",
+    // Environment + Ecology
+    "ENVIRONMENT", "ENVIRONMENTAL", "ECOLOGY", "ECOSYSTEM", "BIODIVERSITY",
+    "WILDLIFE", "FOREST", "CLIMATE", "POLLUTION", "CONSERVATION", "SUSTAINABLE",
+    // Science & Tech
+    "SCIENCE", "TECHNOLOGY", "SPACE", "ISRO", "DEFENCE", "NUCLEAR", "BIOTECH",
+    "DIGITAL", "INTERNET", "CYBER", "AI",
+    // Current Affairs / International
+    "CURRENT", "AFFAIRS", "INTERNATIONAL", "RELATIONS", "DIPLOMACY", "UN",
+    "BRICS", "G20", "SAARC", "ASEAN",
+    // Ethics / Essay
+    "ETHICS", "INTEGRITY", "APTITUDE", "VALUES",
+    // CSAT
+    "CSAT", "REASONING", "COMPREHENSION", "QUANT",
+    // Exam tokens
+    "UPSC", "IAS", "IPS", "CSE", "PRELIMS", "MAINS", "NCERT", "PYQ", "MOCK",
+  ]),
+  GMAT: new Set([
+    "GMAT", "QUANT", "QUANTITATIVE", "VERBAL", "ENGLISH", "READING", "COMPREHENSION",
+    "DATA", "INSIGHTS", "INTEGRATED", "LOGICAL", "REASONING",
+    "ARITHMETIC", "ALGEBRA", "GEOMETRY", "STATISTICS", "PROBABILITY",
+    "PROFIT", "LOSS", "PERCENTAGE", "RATIO", "AVERAGE",
+    "SENTENCE", "CORRECTION", "PARAJUMBLES", "GRAMMAR", "VOCAB", "CRITICAL",
+  ]),
+  GRE: new Set([
+    "GRE", "QUANT", "QUANTITATIVE", "VERBAL", "READING", "COMPREHENSION",
+    "ANALYTICAL", "WRITING", "VOCAB", "VOCABULARY", "SYNONYM", "ANTONYM",
+    "GRAMMAR", "ARITHMETIC", "ALGEBRA", "GEOMETRY", "STATISTICS", "PROBABILITY",
+    "TEXT", "COMPLETION", "EQUIVALENCE", "ARGUMENT", "ESSAY",
+  ]),
+  GATE: new Set([
+    "GATE", "ENGINEERING", "MATHEMATICS", "MATH", "MATHS", "APTITUDE",
+    "COMPUTER", "SCIENCE", "CS", "CSE", "EC", "ECE", "EE", "ELECTRICAL",
+    "ELECTRONICS", "MECHANICAL", "ME", "CIVIL", "CE", "CHEMICAL",
+    "PROGRAMMING", "ALGORITHM", "ALGORITHMS", "DATA", "STRUCTURES", "DBMS",
+    "OPERATING", "SYSTEM", "SYSTEMS", "OS", "NETWORK", "NETWORKS", "NETWORKING",
+    "DIGITAL", "ANALOG", "MICROPROCESSOR", "VLSI", "SIGNALS", "CONTROL",
+    "POWER", "MACHINE", "MACHINES", "THERMODYNAMICS", "FLUID", "STRENGTH",
+    "MATERIALS", "LINEAR", "ALGEBRA", "CALCULUS", "PROBABILITY", "DISCRETE",
+  ]),
+  CLAT: new Set([
+    "CLAT", "LEGAL", "LAW", "REASONING", "ENGLISH", "GENERAL", "KNOWLEDGE",
+    "CURRENT", "AFFAIRS", "LOGICAL", "QUANTITATIVE", "QUANT", "MATHEMATICS",
+    "CONSTITUTION", "CONTRACT", "TORT", "CRIME", "CRIMINAL", "FUNDAMENTAL",
+    "RIGHTS", "JUDICIARY", "JURISPRUDENCE",
+  ]),
+  BITSAT: new Set([
+    "BITSAT", "PHYSICS", "CHEMISTRY", "MATH", "MATHS", "MATHEMATICS", "BIOLOGY",
+    "ENGLISH", "PROFICIENCY", "LOGICAL", "REASONING",
+    // Same subject keywords as JEE/NEET subsets — keep concise
+    "MECHANICS", "OPTICS", "THERMODYNAMICS", "ELECTROSTATICS",
+    "ALGEBRA", "CALCULUS", "TRIGONOMETRY", "ORGANIC", "INORGANIC",
+  ]),
+  SAT: new Set([
+    "SAT", "READING", "WRITING", "MATH", "MATHS", "ALGEBRA", "GEOMETRY",
+    "STATISTICS", "FUNCTIONS", "GRAMMAR", "VOCAB", "ESSAY", "COMPREHENSION",
+  ]),
+  NDA: new Set([
+    "NDA", "MATHEMATICS", "MATH", "MATHS", "GENERAL", "ABILITY", "ENGLISH",
+    "KNOWLEDGE", "PHYSICS", "CHEMISTRY", "BIOLOGY", "HISTORY", "GEOGRAPHY",
+    "CIVICS", "POLITY", "DEFENCE", "CURRENT", "AFFAIRS",
+    "ALGEBRA", "CALCULUS", "TRIGONOMETRY", "STATISTICS", "PROBABILITY", "VECTOR",
+  ]),
+  CUET: new Set([
+    "CUET", "LANGUAGE", "ENGLISH", "DOMAIN", "GENERAL", "TEST",
+    "MATHEMATICS", "MATH", "MATHS", "PHYSICS", "CHEMISTRY", "BIOLOGY",
+    "HISTORY", "GEOGRAPHY", "ECONOMICS", "POLITICAL", "POLITY", "BUSINESS",
+    "ACCOUNTANCY", "COMMERCE", "PSYCHOLOGY", "SOCIOLOGY", "PHILOSOPHY",
+  ]),
+  IELTS: new Set([
+    "IELTS", "LISTENING", "READING", "WRITING", "SPEAKING", "ENGLISH",
+    "GRAMMAR", "VOCABULARY", "ESSAY", "ACADEMIC", "GENERAL",
+  ]),
+  TOEFL: new Set([
+    "TOEFL", "READING", "LISTENING", "SPEAKING", "WRITING", "ENGLISH",
+    "GRAMMAR", "VOCABULARY", "ESSAY", "ACADEMIC",
+  ]),
+};
+
+/**
+ * Decide whether `topic` plausibly fits inside the syllabus of `exam`.
+ * Whole-word match against the per-exam keyword set. Returns:
+ *   - true  → at least one token of the topic is a known syllabus subject
+ *   - false → topic appears to be off-syllabus (UI should warn)
+ *   - true  → if we don't have keyword data for this exam (no warning fired)
+ *
+ * Defensive default: when in doubt, return true (don't warn). False
+ * positives in the warning are worse than false negatives — a wrong
+ * "this isn't on the exam" message is annoying and undermines trust.
+ */
+export function topicMatchesExam(
+  topic: string | null | undefined,
+  exam: ExamMeta | null | undefined,
+): boolean {
+  if (!exam || !topic) return true;
+  const examKey = exam.name.split(/\s/)[0].toUpperCase();
+  const keywords = EXAM_SUBJECT_KEYWORDS[examKey];
+  if (!keywords) return true; // no keyword data → no warning
+  // Whole-word + concatenated forms, same splitter as detectExamFromTopic.
+  const parts = topic.toUpperCase().split(/[\s,;.\-/_()]+/).filter(Boolean);
+  for (const p of parts) {
+    if (keywords.has(p)) return true;
+  }
+  // Also check pairwise concats for multi-word terms (e.g. "BLOOD RELATION").
+  for (let i = 0; i + 1 < parts.length; i++) {
+    if (keywords.has(parts[i] + parts[i + 1])) return true;
+  }
+  return false;
+}
+
+/**
+ * When the topic doesn't match the current exam, try to guess which exam
+ * it WOULD fit (so the UI can offer a "did you mean to switch your goal?"
+ * suggestion). Returns the ExamMeta if a different exam claims the topic,
+ * otherwise null.
+ */
+export function suggestExamForTopic(
+  topic: string | null | undefined,
+  currentExam: ExamMeta | null | undefined,
+): ExamMeta | null {
+  if (!topic) return null;
+  const parts = topic.toUpperCase().split(/[\s,;.\-/_()]+/).filter(Boolean);
+  const currentKey = currentExam ? currentExam.name.split(/\s/)[0].toUpperCase() : "";
+  for (const [examKey, keywords] of Object.entries(EXAM_SUBJECT_KEYWORDS)) {
+    if (examKey === currentKey) continue;
+    for (const p of parts) {
+      if (keywords.has(p)) {
+        const meta = EXAM_DETECTORS[examKey];
+        if (meta) return meta;
+      }
+    }
+  }
+  return null;
+}

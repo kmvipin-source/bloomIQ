@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { groqJSON } from "@/lib/groq";
+import { buildSkillFewShotBlock } from "@/lib/skillFewShot";
 import { getBearer, supabaseServer, supabaseAdmin } from "@/lib/supabase/server";
 import { checkRateLimit } from "@/lib/rateLimit";
 import {
@@ -37,7 +38,16 @@ Write a SHORT verdict (2–4 sentences) that:
 Respond with VALID JSON only:
 {
   "verdict": "..."
-}`;
+}
+
+GENERIC DOMAIN AWARENESS (applies to ANY topic — no local lookup):
+If the topic is a specialized professional / technical / niche domain
+(payment switches, mainframe stack, networking protocols, cloud platforms,
+legal codes, medical specialties, regulatory frameworks, ERP modules,
+industrial control systems, etc.) — USE the precise real-world terminology.
+NEVER invent identifiers, opcodes, parameters, syntax, or product features
+that don\'t exist. If you don\'t have confident knowledge of a specific
+aspect, write content that AVOIDS that aspect rather than fabricating.`;
 
 export async function POST(req: Request) {
   try {
@@ -96,7 +106,7 @@ ${answer}
 """
 
 Write the JSON verdict.`;
-    const raw = await groqJSON(contextAwareSystem, userPrompt);
+    const raw = await groqJSON(contextAwareSystem + buildSkillFewShotBlock(String(topic || "")), userPrompt);
     const verdict = String((raw as { verdict?: unknown }).verdict || "").trim();
     if (!verdict) {
       return NextResponse.json({ error: "AI did not return a verdict; please try again." }, { status: 502 });

@@ -16,7 +16,12 @@ import { Sparkles, FileText, Image as ImageIcon, GraduationCap, Tag, Zap, BookOp
 import { type LearnerProfile } from "@/components/LearnerProfilePrompt";
 import { placeholderTopic } from "@/lib/topicSuggestions";
 import { detectSkillFromTopic } from "@/lib/skillDetectors";
-import { shouldUseCompetitiveExamFraming } from "@/lib/examDetectors";
+import {
+  shouldUseCompetitiveExamFraming,
+  detectExamFromTopic,
+  EXAM_DETECTORS,
+  type ExamMeta,
+} from "@/lib/examDetectors";
 import GenerateContextChips, { type GenerateContext } from "@/components/GenerateContextChips";
 // 2026-05-13 evening: audience-level is fully optional (no profile-driven default).
 
@@ -193,6 +198,71 @@ export default function GeneratePage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [examDefault]);
+
+  // 2026-05-14 — same topic-vs-syllabus / Bloom-aware / pre-flight UX
+  // suite that landed on /student/generate, now applied to /teacher/generate.
+  // Teachers don't have an exam_goal field, so examMeta comes from topic
+  // text only. EXAM_DETECTORS is the single source of truth.
+  const examMeta = useMemo<ExamMeta | null>(() => detectExamFromTopic(topic), [topic]);
+  void EXAM_DETECTORS; // referenced for type-only; future "coaching mode" lookup hook
+
+  // LLM-validated topic-vs-exam-syllabus warning. Same /api/topic-validate
+  // route the student page uses. Fires only when (a) examMeta exists and
+  // (b) the topic is ≥3 chars, debounced 800 ms. Fail-open on any error.
+  const [topicValidation, setTopicValidation] = useState<{
+    loading: boolean;
+    result: { valid: boolean; reason: string; suggestedExam: string | null } | null;
+  }>({ loading: false, result: null });
+  useEffect(() => {
+    if (!examMeta || (topic || "").trim().length < 3) {
+      setTopicValidation({ loading: false, result: null });
+      return;
+    }
+    const controller = new AbortController();
+    setTopicValidation((s) => ({ ...s, loading: true }));
+    const handle = setTimeout(async () => {
+      try {
+        const sb = supabaseBrowser();
+        const { data: { session } } = await sb.auth.getSession();
+        if (!session) return;
+        const res = await fetch("/api/topic-validate", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${session.access_token}`,
+          },
+          body: JSON.stringify({
+            topic: topic.trim(),
+            examName: examMeta.name,
+            examDescription: examMeta.description,
+            examSections: examMeta.sections,
+          }),
+          signal: controller.signal,
+        });
+        const j = (await res.json()) as {
+          valid?: boolean;
+          reason?: string;
+          suggestedExam?: string | null;
+        };
+        setTopicValidation({
+          loading: false,
+          result: {
+            valid: j.valid !== false,
+            reason: String(j.reason || ""),
+            suggestedExam: j.suggestedExam ? String(j.suggestedExam) : null,
+          },
+        });
+      } catch (e) {
+        if ((e as Error)?.name !== "AbortError") {
+          setTopicValidation({ loading: false, result: null });
+        }
+      }
+    }, 800);
+    return () => {
+      clearTimeout(handle);
+      controller.abort();
+    };
+  }, [topic, examMeta]);
 
   // Effective levels — used to warn when the teacher picks levels the
   // detected exam doesn't actually test.
@@ -634,6 +704,26 @@ export default function GeneratePage() {
           );
         })()}
 
+        {/* LLM-validated topic-vs-syllabus warning. Fires only when the
+            topic resolves to a known exam (via detectExamFromTopic) AND
+            the LLM marks the typed topic as off-syllabus. Same /api/topic-
+            validate route the student page uses; debounced 800 ms. */}
+        {topicValidation.result &&
+          !topicValidation.result.valid &&
+          examMeta &&
+          (source === "topic_only" || source === "topic_syllabus") && (
+            <div className="flex items-start gap-2 rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-900">
+              <span className="font-bold">⚠</span>
+              <div className="flex-1">
+                <strong>{topicValidation.result.reason}</strong>
+                {topicValidation.result.suggestedExam ? (
+                  <>{" "}This topic fits <strong>{topicValidation.result.suggestedExam}</strong> better — consider that exam if you intended a mock paper.</>
+                ) : (
+                  <>{" "}If this is intentional (cross-prep, mixed-subject test), proceed — the test will still be generated.</>
+                )}
+              </div>
+            </div>
+          )}
         {source === "topic_only" && (
           <div>
             <label className="label">Topic</label>
@@ -663,19 +753,29 @@ export default function GeneratePage() {
                 {BLOOM_LEVELS.map((l) => {
                   const on = pickedLevels.includes(l);
                   const atCap = !on && pickedLevels.length >= MAX_PICKED;
+                  const examUnsupported =
+                    !!examDefault && !examDefault.supportedBloomLevels.includes(l);
+                  const disabled = atCap || examUnsupported;
+                  const tooltip = examUnsupported
+                    ? `${examDefault!.displayName} papers don\u2019t test ${BLOOM_META[l].label}-level questions.`
+                    : atCap
+                      ? `Up to ${MAX_PICKED} levels`
+                      : BLOOM_META[l].description;
                   return (
                     <button
                       key={l}
                       type="button"
-                      onClick={() => togglePickedLevel(l)}
-                      disabled={atCap}
-                      title={atCap ? `Up to ${MAX_PICKED} levels` : BLOOM_META[l].description}
+                      onClick={() => { if (!examUnsupported) togglePickedLevel(l); }}
+                      disabled={disabled}
+                      title={tooltip}
                       className={`px-3 py-1.5 rounded-full text-sm font-medium border transition ${
-                        on
+                        on && !examUnsupported
                           ? "border-emerald-500 bg-emerald-50 text-emerald-800"
-                          : atCap
-                            ? "border-slate-200 text-slate-400 bg-slate-50 cursor-not-allowed"
-                            : "border-slate-300 text-slate-700 hover:bg-slate-50"
+                          : examUnsupported
+                            ? "border-slate-200 text-slate-300 bg-slate-50 line-through cursor-not-allowed"
+                            : atCap
+                              ? "border-slate-200 text-slate-400 bg-slate-50 cursor-not-allowed"
+                              : "border-slate-300 text-slate-700 hover:bg-slate-50"
                       }`}
                     >
                       {BLOOM_META[l].label}
@@ -740,11 +840,15 @@ export default function GeneratePage() {
             onChange={(e) => { setNumericalPercent(+e.target.value); setNumericalManuallySet(true); }}
             className="w-full accent-emerald-600"
           />
+          {/* Numerical % caption — fixed 2026-05-14: when manually-set value
+              EQUALS the suggested value, "Use suggested" is a no-op so we
+              hide that branch and show a quiet "your slider is aligned"
+              instead. Mirrors the fix on /student/generate. */}
           {examDefault && !numericalManuallySet ? (
             <p className="text-xs mt-1" style={{ color: "var(--brand-700, #047857)" }}>
               Set to <strong>{examDefault.defaultNumericalPercent}%</strong> to match {examDefault.displayName} — {examDefault.rationale} Drag the slider to override.
             </p>
-          ) : examDefault && numericalManuallySet ? (
+          ) : examDefault && numericalManuallySet && numericalPercent !== examDefault.defaultNumericalPercent ? (
             <p className="text-xs muted mt-1">
               {examDefault.displayName} usually has ~{examDefault.defaultNumericalPercent}% numerical content. You&apos;ve set yours to {numericalPercent}%.{" "}
               <button
@@ -755,6 +859,10 @@ export default function GeneratePage() {
                 Use suggested
               </button>
             </p>
+          ) : examDefault ? (
+            <p className="text-xs muted mt-1">
+              {examDefault.displayName} typically tests ~{examDefault.defaultNumericalPercent}% numerical questions — your slider is aligned.
+            </p>
           ) : (
             <p className="text-xs muted mt-1">
               Target % of questions that should involve calculation, formulas, or quantitative reasoning. Ignored automatically for non-numerical topics (history, literature, etc.).
@@ -764,11 +872,40 @@ export default function GeneratePage() {
 
         {err && <div className="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{err}</div>}
 
-        <div className="flex justify-end">
-          <button type="button" className="btn btn-primary" onClick={generate} disabled={busy}>
-            {busy ? <><span className="spinner" /> Generating…</> : <><Sparkles size={16} /> Generate</>}
-          </button>
-        </div>
+        {/* Pre-flight validation + summary pill (2026-05-14). Disables the
+            Generate button when the form can't generate yet, with an
+            inline amber reason so the teacher doesn't click and bounce
+            off a 400. Shows "Will generate X questions" so the commit is
+            visible before the click. Mirrors the same pattern on the
+            student page. */}
+        {(() => {
+          const effectiveLevels: BloomLevel[] = mode === "all" ? BLOOM_LEVELS.slice() : pickedLevels;
+          const totalQs = effectiveLevels.length * perLevel;
+          let reason: string | null = null;
+          if (source === "topic_only" && !topic.trim()) reason = "Enter a topic above.";
+          else if (source === "topic_syllabus" && !topic.trim()) reason = "Topic is required.";
+          else if (source === "topic_syllabus" && !shouldUseCompetitiveExamFraming({ topic, learnerProfile: null, examGoal: null }) && !className.trim()) reason = "Add a class/grade for syllabus-aligned tests.";
+          else if (source === "notes" && content.trim().length < 50) reason = "Paste at least a paragraph of notes (50+ chars).";
+          else if (source === "image" && !imageFile) reason = "Pick an image to generate from.";
+          else if (mode === "custom" && (pickedLevels.length < 1 || pickedLevels.length > MAX_PICKED)) reason = `Pick between 1 and ${MAX_PICKED} Bloom levels.`;
+          else if (effectiveLevels.length === 0) reason = "Pick at least one Bloom level.";
+          else if (totalQs <= 0) reason = "Question count must be at least 1.";
+          const canGenerate = !reason && !busy;
+          return (
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <p className="text-xs muted">
+                {reason ? (
+                  <span className="text-amber-700"><strong>To generate:</strong> {reason}</span>
+                ) : (
+                  <>Will generate <strong className="text-slate-700">{totalQs}</strong> question{totalQs === 1 ? "" : "s"}</>
+                )}
+              </p>
+              <button type="button" className="btn btn-primary" onClick={generate} disabled={!canGenerate}>
+                {busy ? <><span className="spinner" /> Generating…</> : <><Sparkles size={16} /> Generate</>}
+              </button>
+            </div>
+          );
+        })()}
       </div>
 
       {summary && (

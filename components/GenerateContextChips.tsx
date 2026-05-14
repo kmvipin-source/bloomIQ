@@ -221,32 +221,45 @@ export default function GenerateContextChips({
         </div>
       )}
 
-      {/* "Anything specific to cover?" textbox */}
+      {/* "More instructions" textbox. Upgraded 2026-05-14 from a single-line
+          input → multi-line textarea so students can write natural-language
+          requests like "test absorption mechanisms in detail with clinical
+          scenarios" instead of forcing them into chip-style fragments. The
+          backend (lib/topicEnrichment.applyAdditionalFocus) now branches on
+          length: short input (≤150 chars) keeps the legacy "sub-area" framing;
+          longer input is wrapped as explicit STUDENT INSTRUCTIONS in the
+          prompt so phrases like "tough questions" survive. Difficulty itself
+          flows through Bloom levels — we surface that hint inline below. */}
       <div>
         <label className="flex items-center gap-1.5 text-xs uppercase font-semibold muted mb-1.5">
-          Anything specific to cover? <span className="text-slate-400 normal-case italic">(optional)</span>
+          More instructions <span className="text-slate-400 normal-case italic">(optional)</span>
         </label>
-        <input
-          type="text"
+        <textarea
           className="input text-sm"
+          rows={3}
           placeholder={placeholder}
           value={extra}
-          maxLength={400}
+          maxLength={800}
           disabled={disabled}
           onChange={(e) => setExtra(e.target.value)}
         />
-        {extra.trim().length > 0 && selectedChips.length > 0 && !focusOffTopic && (
+        {extra.trim().length > 0 && extra.trim().length <= 150 && selectedChips.length > 0 && !focusOffTopic && (
           <p className="text-[11px] muted mt-1 italic">
-            Treated as one more sub-area — questions will be distributed evenly across your {selectedChips.length} chip{selectedChips.length === 1 ? "" : "s"} + this angle.
+            Treated as one more sub-area — questions distribute evenly across your {selectedChips.length} chip{selectedChips.length === 1 ? "" : "s"} + this angle.
           </p>
         )}
-        {extra.trim().length > 0 && selectedChips.length === 0 && !focusOffTopic && (
+        {extra.trim().length > 0 && extra.trim().length <= 150 && selectedChips.length === 0 && !focusOffTopic && (
           <p className="text-[11px] muted mt-1 italic">
             All questions will focus on this angle (within the main topic).
           </p>
         )}
-        {extra.length > 350 && (
-          <p className="text-[11px] muted mt-1 italic">{400 - extra.length} characters left.</p>
+        {extra.trim().length > 150 && !focusOffTopic && (
+          <p className="text-[11px] muted mt-1 italic">
+            Sent to the AI as explicit instructions. For tougher questions, also pick <strong>Analyze</strong> / <strong>Evaluate</strong> / <strong>Create</strong> Bloom levels above — this box is for <em>what</em> to cover, not <em>how hard</em>.
+          </p>
+        )}
+        {extra.length > 700 && (
+          <p className="text-[11px] muted mt-1 italic">{800 - extra.length} characters left.</p>
         )}
         {focusOffTopic && focusValidation.ok === false && (
           <div className="mt-2 rounded-md bg-amber-50 border border-amber-300 px-2.5 py-2 text-[12px] text-amber-900 flex items-start gap-1.5">

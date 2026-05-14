@@ -137,6 +137,17 @@ export async function POST(req: Request) {
     const sb = supabaseServer(token);
     const { data: { user } } = await sb.auth.getUser();
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    // Fetch the student's exam_goal so the classifier can fall back to it
+    // when the quiz's topic/name don't reveal an exam. Added 2026-05-14
+    // for the "NEET student practising 'blood group'" case. Cheap single-row
+    // read; tolerated if missing (we just pass null).
+    const { data: profRow } = await sb
+      .from("profiles")
+      .select("exam_goal")
+      .eq("id", user.id)
+      .maybeSingle();
+    const studentExamGoal: string | null =
+      (profRow as { exam_goal?: string | null } | null)?.exam_goal ?? null;
     const rate = checkRateLimit(user.id, "rank.predict", { capacity: 10, refillPerHour: 20 });
     if (!rate.allowed) return NextResponse.json({ error: "Too many requests.", code: "rate_limited" }, { status: 429, headers: { "Retry-After": String(rate.retryAfterSec) } });
     const ltGate = await consumeLifetimeUse(user.id, "rank");
@@ -205,6 +216,7 @@ export async function POST(req: Request) {
         topic: quizMeta.subject,
         name: quizMeta.name,
         topicFamily: quizMeta.topic_family,
+        studentExamGoal,
       });
 
       // ── Allowlist gate (2026-05-13 evening): only matches_known_exam
@@ -392,17 +404,4 @@ Return the 3-recommendation JSON.`;
         version: "1",
         assumptions: [
           `Cohort score distribution approximated as Normal(mean=${EXAM_BASELINES[exam_type].meanPct}%, stddev=${EXAM_BASELINES[exam_type].stdDevPct}%).`,
-          `Cohort size used: ${EXAM_BASELINES[exam_type].totalCandidates.toLocaleString()} candidates.`,
-          "AIR derived as (1 − percentile) × cohort size; floor of 1.",
-          "95% band combines binomial sampling error of the test score with a ±2pp baseline-drift allowance.",
-          "Real outcomes also depend on paper difficulty calibration, section-wise normalization, and tie-breaking — none modelled here.",
-        ],
-      },
-    });
-  } catch (e) {
-    return NextResponse.json(
-      { error: e instanceof Error ? e.message : "Rank prediction failed" },
-      { status: 500 }
-    );
-  }
-}
+          `Cohort size used: ${EXAM_BASELINES[exam_type].totalCandidates.toLocaleString()} candidates.`

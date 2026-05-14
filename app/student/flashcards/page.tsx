@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { supabaseBrowser } from "@/lib/supabase/client";
@@ -9,6 +9,11 @@ import { BLOOM_LEVELS, BLOOM_META, type BloomLevel } from "@/lib/bloom";
 import { placeholderTopic } from "@/lib/topicSuggestions";
 import { type LearnerProfile } from "@/components/LearnerProfilePrompt";
 import CurrentGoalChip from "@/components/CurrentGoalChip";
+import {
+  detectExamFromTopic,
+  EXAM_DETECTORS,
+  type ExamMeta,
+} from "@/lib/examDetectors";
 
 type Card = { front: string; back: string };
 type Mark = "todo" | "got" | "again";
@@ -51,6 +56,84 @@ export default function FlashcardsPage() {
       } catch { /* silent — fall back to k12 default */ }
     })();
   }, []);
+
+  // 2026-05-14: LLM-validated topic-vs-syllabus warning (same /api/topic-validate
+  // route, same debounced pattern as /student/generate, /teacher/generate, and
+  // /student/speed). Catches mismatches like "NEET student typing history" before
+  // the flashcards are generated.
+  const examMeta = useMemo<ExamMeta | null>(() => {
+    const fromTopic = detectExamFromTopic(topic);
+    if (fromTopic) return fromTopic;
+    if (!examGoal) return null;
+    const g = examGoal.toLowerCase().trim();
+    if (g.startsWith("jee")) return EXAM_DETECTORS.JEE;
+    if (g.startsWith("neet")) return EXAM_DETECTORS.NEET;
+    if (g === "cat" || g === "cat_prep") return EXAM_DETECTORS.CAT;
+    if (g === "upsc" || g === "upsc_prep") return EXAM_DETECTORS.UPSC;
+    if (g === "gmat" || g === "gmat_prep") return EXAM_DETECTORS.GMAT;
+    if (g === "gre"  || g === "gre_prep")  return EXAM_DETECTORS.GRE;
+    if (g === "gate" || g === "gate_prep") return EXAM_DETECTORS.GATE;
+    if (g === "clat" || g === "clat_prep") return EXAM_DETECTORS.CLAT;
+    if (g === "bitsat" || g === "bitsat_prep") return EXAM_DETECTORS.BITSAT;
+    if (g === "sat"  || g === "sat_prep")  return EXAM_DETECTORS.SAT;
+    if (g === "nda"  || g === "nda_prep")  return EXAM_DETECTORS.NDA;
+    if (g === "cuet" || g === "cuet_prep") return EXAM_DETECTORS.CUET;
+    return null;
+  }, [topic, examGoal]);
+  const [topicValidation, setTopicValidation] = useState<{
+    loading: boolean;
+    result: { valid: boolean; reason: string; suggestedExam: string | null } | null;
+  }>({ loading: false, result: null });
+  useEffect(() => {
+    if (!examMeta || (topic || "").trim().length < 3) {
+      setTopicValidation({ loading: false, result: null });
+      return;
+    }
+    const controller = new AbortController();
+    setTopicValidation((s) => ({ ...s, loading: true }));
+    const handle = setTimeout(async () => {
+      try {
+        const sb = supabaseBrowser();
+        const { data: { session } } = await sb.auth.getSession();
+        if (!session) return;
+        const res = await fetch("/api/topic-validate", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${session.access_token}`,
+          },
+          body: JSON.stringify({
+            topic: topic.trim(),
+            examName: examMeta.name,
+            examDescription: examMeta.description,
+            examSections: examMeta.sections,
+          }),
+          signal: controller.signal,
+        });
+        const j = (await res.json()) as {
+          valid?: boolean;
+          reason?: string;
+          suggestedExam?: string | null;
+        };
+        setTopicValidation({
+          loading: false,
+          result: {
+            valid: j.valid !== false,
+            reason: String(j.reason || ""),
+            suggestedExam: j.suggestedExam ? String(j.suggestedExam) : null,
+          },
+        });
+      } catch (e) {
+        if ((e as Error)?.name !== "AbortError") {
+          setTopicValidation({ loading: false, result: null });
+        }
+      }
+    }, 800);
+    return () => {
+      clearTimeout(handle);
+      controller.abort();
+    };
+  }, [topic, examMeta]);
 
   const [cards, setCards] = useState<Card[]>([]);
   const [marks, setMarks] = useState<Mark[]>([]);
@@ -124,6 +207,27 @@ export default function FlashcardsPage() {
       </div>
       <h1 className="h1 mt-2 flex items-center gap-2"><Layers size={28} /> Focus-area flashcards</h1>
       <p className="muted mt-1">Quick drills for the level (and optionally the topic) you want to strengthen.</p>
+
+      {/* 2026-05-14: LLM-validated topic-vs-syllabus warning. Same pattern
+          as /student/generate. Surfaces mismatches (e.g. NEET student asking
+          for "history" flashcards) before generation. Non-blocking. */}
+      {topicValidation.result &&
+        !topicValidation.result.valid &&
+        examMeta && (
+          <div className="card mt-6 bg-amber-50/60 border-amber-200">
+            <div className="flex items-start gap-2 text-xs text-amber-900">
+              <span className="font-bold">⚠</span>
+              <div className="flex-1">
+                <strong>{topicValidation.result.reason}</strong>
+                {topicValidation.result.suggestedExam ? (
+                  <>{" "}This topic fits <strong>{topicValidation.result.suggestedExam}</strong> better — switch your goal in <a href="/settings" className="underline font-semibold">Settings</a> if needed.</>
+                ) : (
+                  <>{" "}If this is intentional, proceed — flashcards will still be generated.</>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
       {/* ============ Generate panel ============ */}
       <div className="card mt-6">

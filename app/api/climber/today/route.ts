@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { groqJSON } from "@/lib/groq";
+import { buildSkillFewShotBlock } from "@/lib/skillFewShot";
 import { BLOOM_LEVELS, type BloomLevel } from "@/lib/bloom";
 import { getBearer, supabaseServer, supabaseAdmin } from "@/lib/supabase/server";
 import { checkRateLimit } from "@/lib/rateLimit";
@@ -37,7 +38,16 @@ Respond with VALID JSON only:
   "questions": [
     { "stem": "...", "options": ["a","b","c","d"], "correct_index": 0, "explanation": "..." }
   ]
-}`;
+}
+
+GENERIC DOMAIN AWARENESS (applies to ANY topic — no local lookup):
+If the topic is a specialized professional / technical / niche domain
+(payment switches, mainframe stack, networking protocols, cloud platforms,
+legal codes, medical specialties, regulatory frameworks, ERP modules,
+industrial control systems, etc.) — USE the precise real-world terminology.
+NEVER invent identifiers, opcodes, parameters, syntax, or product features
+that don\'t exist. If you don\'t have confident knowledge of a specific
+aspect, write content that AVOIDS that aspect rather than fabricating.`;
 
 type GenQ = { stem: string; options: string[]; correct_index: number; explanation: string };
 
@@ -107,7 +117,7 @@ export async function POST(req: Request) {
     const systemPrompt = prependLearningContext(SYSTEM, ctx) + exclusion.promptBlock;
 
     const userPrompt = `Topic: ${examAwareTopic}\nBloom level: ${target}\n\nGenerate the JSON now.`;
-    const raw = await groqJSON(systemPrompt, userPrompt);
+    const raw = await groqJSON(systemPrompt + buildSkillFewShotBlock(topic), userPrompt);
     const arr = (raw as { questions?: unknown }).questions;
     if (!Array.isArray(arr)) {
       return NextResponse.json({ error: "AI did not return questions; please retry." }, { status: 502 });

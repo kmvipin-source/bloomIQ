@@ -122,6 +122,10 @@ export default function ResultsPage() {
   // for them. We default to null (unknown) and resolve in the profile
   // fetch below; banner waits for the resolution to avoid a flash.
   const [isSchoolStudent, setIsSchoolStudent] = useState<boolean | null>(null);
+  // Student's exam_goal slug — drives the rank-predictor's profile fallback.
+  // Without it, a NEET student practising "blood group" got refused (the
+  // topic alone has no NEET token). Loaded in the profile fetch below.
+  const [studentExamGoal, setStudentExamGoal] = useState<string | null>(null);
 
   // Per-question review (added 2026-05-12). Loaded alongside the
   // attempt summary so the student can see every question they
@@ -223,16 +227,18 @@ export default function ResultsPage() {
       if (!user) return;
       const { data: prof } = await sb
         .from("profiles")
-        .select("track_question_time, is_school_student")
+        .select("track_question_time, is_school_student, exam_goal")
         .eq("id", user.id)
         .maybeSingle();
       const profRow = prof as {
         track_question_time: boolean | null;
         is_school_student: boolean | null;
+        exam_goal: string | null;
       } | null;
       const consent = profRow?.track_question_time ?? null;
       setTrackTime(consent);
       setIsSchoolStudent(!!profRow?.is_school_student);
+      setStudentExamGoal(profRow?.exam_goal ?? null);
       if (consent === true) {
         const { data: { session } } = await sb.auth.getSession();
         if (!session) return;
@@ -864,6 +870,7 @@ export default function ResultsPage() {
           topic: attempt.quiz?.subject ?? null,
           name: attempt.quiz?.name ?? null,
           topicFamily: attempt.quiz?.topic_family ?? null,
+          studentExamGoal,
         });
 
         // ─ Allowlist gate (2026-05-13 evening): the rank predictor is ONLY

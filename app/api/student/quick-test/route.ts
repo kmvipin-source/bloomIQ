@@ -20,6 +20,9 @@ import {
 import { resolveAudienceLevel } from "@/lib/audienceLevel";
 import { applyAdditionalFocus, validateFocusForTopic } from "@/lib/topicEnrichment";
 import { shouldUseCompetitiveExamFraming } from "@/lib/examDetectors";
+import { buildSkillFewShotBlock } from "@/lib/skillFewShot";
+import { groundTopic, formatGroundingForPrompt } from "@/lib/topicGrounding";
+import { embedTexts, cosineDedupInBatch } from "@/lib/embeddings";
 import {
   loadLearningContext,
   prependLearningContext,
@@ -59,6 +62,22 @@ HARD CONSTRAINTS — questions violating any of these will be rejected:
 4. Return EXACTLY the requested number of questions — no more, no fewer.
    If asked for 20, return 20. Generating extras wastes the user's quota
    and time.
+
+5. GENERIC DOMAIN AWARENESS (applies to ANY topic — no local lookup):
+   If the topic is a specialized professional / technical / niche domain
+   (payment switches like Postilion or Base24, mainframe stack like JCL /
+   COBOL / CICS / DB2, networking protocols like BGP / MPLS, cloud platforms,
+   legal codes, medical specialties, regulatory frameworks, ERP modules,
+   industrial control systems, etc.) — USE the precise real-world terminology
+   of that domain. Real product names, real parameter names, real syntax,
+   real field numbers, real API verbs, real configuration keys. NEVER invent
+   identifiers, opcodes, field bits, function names, or product features
+   that don\'t exist. If you don\'t have confident knowledge of a specific
+   aspect, write a question that AVOIDS that aspect rather than fabricating.
+6. ALWAYS produce EXACTLY the requested number of questions. If you run
+   short of obvious angles, vary the sub-area, scenario, difficulty, or
+   level of abstraction — but hit the requested count. Returning fewer
+   than requested wastes the student\'s quota and time.
 
 Return STRICT JSON only.`;
 
@@ -445,7 +464,23 @@ export async function POST(req: Request) {
     // block.
     const exclusion = await getRecentStemsForExclusion(adminForCtx, user.id, topic, null, 20);
     const audiencePrefix = audience.promptFragment ? `${audience.promptFragment}\n\n` : "";
-    const contextAwareSystem = `${audiencePrefix}${prependLearningContext(SYSTEM, ctx)}${exclusion.promptBlock}`;
+    // World-class quality lever (2026-05-14 evening): dynamic topic
+    // grounding. ONE Groq call decomposes the topic into canonical
+    // sub-areas + real-world anchors + common misconceptions. The
+    // generator then spreads questions across sub-areas, anchors stems
+    // in real terminology, and builds distractors on real misconceptions.
+    // Works for ANY topic — no local list. Falls back to ungrounded
+    // generation on null. Cached for this request (set once before the
+    // per-level loop, reused 1-6× across levels).
+    const grounding = await groundTopic(topic, {
+      examGoal: profileExamGoal,
+      learnerProfile: profileLearnerProfile,
+    });
+    const groundingBlock = formatGroundingForPrompt(grounding);
+    // eslint-disable-next-line no-console
+    console.log(`[quick-test] topicGrounding subAreas=${grounding?.subAreas.length ?? 0} anchors=${grounding?.realWorldAnchors.length ?? 0} misconceptions=${grounding?.commonMisconceptions.length ?? 0}`);
+
+    const contextAwareSystem = `${audiencePrefix}${prependLearningContext(SYSTEM, ctx)}${exclusion.promptBlock}${buildSkillFewShotBlock(topic)}${groundingBlock}`;
 
     // Generate per-level
     const genFor = async (lvl: BloomLevel) => {
@@ -496,6 +531,25 @@ export async function POST(req: Request) {
         .filter((q) => q && q.stem && Array.isArray(q.options) && q.options.length === 4
                       && Number.isInteger(q.correct_index) && q.correct_index >= 0 && q.correct_index <= 3);
 
+      // Semantic in-batch dedup (migration 80, 2026-05-14 evening) — the
+      // LLM occasionally emits two questions that are paraphrases of each
+      // other with low token overlap. Cosine on embeddings catches these
+      // where Jaccard can't. Fail-open: if embedding API is unavailable,
+      // skip and let Jaccard handle dedup as before.
+      let semanticallyDeduped = structurallyValid;
+      if (structurallyValid.length > 1) {
+        const candidateEmbs = await embedTexts(structurallyValid.map((q) => q.stem));
+        if (candidateEmbs) {
+          const withEmb = structurallyValid.map((q, i) => ({ q, embedding: candidateEmbs[i] }));
+          const { keptIndices } = cosineDedupInBatch(withEmb, 0.85);
+          if (keptIndices.length < structurallyValid.length) {
+            // eslint-disable-next-line no-console
+            console.log(`[quick-test] level=${lvl}: in-batch cosine dropped ${structurallyValid.length - keptIndices.length} paraphrase(s)`);
+          }
+          semanticallyDeduped = keptIndices.map((i) => structurallyValid[i]);
+        }
+      }
+
       // Quality filters (Vipin 2026-05-12):
       //   1. drop questions whose correct answer is echoed in the stem
       //   2. drop near-duplicate paraphrases inside this batch
@@ -504,7 +558,7 @@ export async function POST(req: Request) {
       //   4. hard-slice to the user's requested per-level count
       const perLevelTarget = countForLevel(lvl);
       const { kept: passed, droppedLeak, droppedDup, droppedHistory, trimmed } = filterQuestionBatch(
-        structurallyValid as Array<{ stem: string; options: string[]; correct_index: number; explanation?: string }>,
+        semanticallyDeduped as Array<{ stem: string; options: string[]; correct_index: number; explanation?: string }>,
         {
           maxCount: perLevelTarget,
           similarityThreshold: 0.7,
@@ -513,12 +567,66 @@ export async function POST(req: Request) {
       );
       // eslint-disable-next-line no-console
       console.log(
-        `[quick-test] level=${lvl}: kept=${passed.length}/${structurallyValid.length} ` +
+        `[quick-test] level=${lvl}: kept=${passed.length}/${semanticallyDeduped.length} ` +
         `(target=${perLevelTarget}, dropped: leak=${droppedLeak.length} dup=${droppedDup.length} ` +
         `history=${droppedHistory.length} trimmed=${trimmed.length})`
       );
 
-      const baseRows = passed.map((q) => ({
+      // 2026-05-14 evening — AUTO-RETRY ON SHORTFALL.
+      // When the per-level batch came in short (LLM returned fewer, or the
+      // filter dropped too many), fire ONE more groqJSON call asking for
+      // EXACTLY the gap. We feed the already-kept stems so the model
+      // produces DIFFERENT questions, and we filter the retry through the
+      // same quality pipeline (leak/dup/history) before merging. This is
+      // the cheapest, highest-leverage way to hit the user's requested
+      // count when grounding alone doesn't close it. One retry only — if
+      // even that fails, the shortfall toast on the client surfaces the
+      // honest delivery.
+      let effectivePassed: typeof passed = passed;
+      if (passed.length < perLevelTarget) {
+        const need = perLevelTarget - passed.length;
+        const alreadyHave = passed
+          .map((q, i) => `  ${i + 1}. ${q.stem.slice(0, 120)}${q.stem.length > 120 ? "…" : ""}`)
+          .join("\n");
+        const retryUserPrompt =
+          `RETRY — your previous attempt yielded ${passed.length} of ${perLevelTarget} usable questions at the "${lvl}" Bloom level for this topic.\n` +
+          `Generate ${need} MORE multiple-choice questions that:\n` +
+          `  - are DIFFERENT sub-areas / scenarios from the ones below\n` +
+          `  - stay strictly at the "${lvl}" Bloom level\n` +
+          `  - obey every constraint in the SYSTEM prompt (no answer-leak in stem, varied scenarios, real terminology, exact count)\n\n` +
+          `Questions you already produced (DO NOT repeat the same sub-area or scenario):\n${alreadyHave || "  (none)"}\n\n` +
+          `Return JSON: { "questions": [ { "stem": "...", "options": ["A","B","C","D"], "correct_index": 0, "explanation": "..." } ] }`;
+        try {
+          // eslint-disable-next-line no-console
+          console.log(`[quick-test] level=${lvl}: AUTO-RETRY for ${need} more question(s)`);
+          const retryRaw = await groqJSON(contextAwareSystem, retryUserPrompt);
+          const retryArr: GenQ[] = Array.isArray((retryRaw as { questions?: GenQ[] })?.questions)
+            ? (retryRaw as { questions: GenQ[] }).questions
+            : [];
+          const retryValid = retryArr.filter(
+            (q) => q && q.stem && Array.isArray(q.options) && q.options.length === 4
+              && Number.isInteger(q.correct_index) && q.correct_index >= 0 && q.correct_index <= 3,
+          );
+          const { kept: retryKept } = filterQuestionBatch(
+            retryValid as Array<{ stem: string; options: string[]; correct_index: number; explanation?: string }>,
+            {
+              maxCount: need,
+              similarityThreshold: 0.7,
+              // Treat the kept-so-far stems as "history" too, so the retry
+              // can't re-emit anything we already accepted.
+              historyStems: [...exclusion.stems, ...passed.map((q) => q.stem)],
+            },
+          );
+          effectivePassed = [...passed, ...retryKept];
+          // eslint-disable-next-line no-console
+          console.log(`[quick-test] level=${lvl}: retry kept ${retryKept.length}/${retryValid.length}, total now ${effectivePassed.length}/${perLevelTarget}`);
+        } catch (e) {
+          // eslint-disable-next-line no-console
+          console.warn(`[quick-test] level=${lvl}: retry failed (non-fatal):`, e instanceof Error ? e.message : e);
+        }
+      }
+
+      const baseRows = effectivePassed.map((q) => ({
         owner_id: user.id,
         topic: topic || null,
         bloom_level: lvl,
@@ -660,11 +768,23 @@ export async function POST(req: Request) {
     const sectionByIndex: (string | null)[] = allRows.map(
       (r) => (r as { section?: string | null }).section ?? null,
     );
-    const insertRows = allRows.map((r) => {
+    // Semantic embedding pass (migration 80, lib/embeddings.ts) — compute
+    // a 768-dim vector for every stem and attach it to the insert row.
+    // Failures fall back to null (the DB column allows it; the dedup
+    // helper treats NULL as "use Jaccard fallback"). One Gemini batch
+    // call per generation, regardless of question count.
+    const stemTexts = allRows.map((r) => String((r as { stem?: string }).stem || ""));
+    const stemEmbeddings = (await embedTexts(stemTexts)) || stemTexts.map(() => null);
+    // eslint-disable-next-line no-console
+    console.log(`[quick-test] embedded ${stemEmbeddings.filter((e) => Array.isArray(e)).length}/${stemTexts.length} stems`);
+    const insertRows = allRows.map((r, i) => {
       const { quality, section, ...rest } = r as unknown as Record<string, unknown> & { quality?: unknown; section?: unknown };
       void quality;
       void section;
-      return rest;
+      const emb = stemEmbeddings[i];
+      // pgvector accepts arrays directly via supabase-js. NULL when the
+      // embedding API didn't return a usable vector for this row.
+      return { ...rest, stem_embedding: emb || null };
     });
     const { data: insertedQs, error: qErr } = await sb
       .from("question_bank")
