@@ -83,11 +83,14 @@ export function resolveScheme(input: unknown): MarkingScheme {
     ? (rulesObj.default as Record<string, unknown>)
     : {};
   const presetRule = SCORING_PRESETS[preset].rule;
-  const correct = numberOr(defaultRuleRaw.correct, presetRule.correct);
+  // Defense-in-depth: clamp to the same range the picker enforces so a
+  // crafted POST that bypasses the UI can't store correct=+1000 or
+  // wrong=-1000 and game rank prediction / leaderboards.
+  const correct = clamp(numberOr(defaultRuleRaw.correct, presetRule.correct), 0, 10);
   const wrong = negative_marks_enabled
-    ? numberOr(defaultRuleRaw.wrong, presetRule.wrong)
+    ? clamp(numberOr(defaultRuleRaw.wrong, presetRule.wrong), -10, 0)
     : 0; // Hard zero when toggle is off — defensive against legacy data.
-  const unattempted = numberOr(defaultRuleRaw.unattempted, presetRule.unattempted);
+  const unattempted = clamp(numberOr(defaultRuleRaw.unattempted, presetRule.unattempted), -5, 5);
   return {
     preset,
     negative_marks_enabled,
@@ -95,6 +98,13 @@ export function resolveScheme(input: unknown): MarkingScheme {
       default: { correct, wrong, unattempted },
     },
   };
+}
+
+function clamp(n: number, lo: number, hi: number): number {
+  if (!Number.isFinite(n)) return lo;
+  if (n < lo) return lo;
+  if (n > hi) return hi;
+  return n;
 }
 
 function numberOr(x: unknown, fallback: number): number {

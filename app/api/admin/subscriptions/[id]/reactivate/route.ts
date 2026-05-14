@@ -85,6 +85,10 @@ export async function POST(req: Request, ctx: Ctx) {
         suspended_by: null,
         suspended_reason: null,
         expires_at: rolledExpiresAt,
+        // Audit: who unblocked the school and when. Migration 81.
+        // Symmetric with suspended_at / suspended_by on the inverse path.
+        reactivated_at: new Date().toISOString(),
+        reactivated_by: user.id,
       })
       .eq("id", subscriptionId);
     if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 });

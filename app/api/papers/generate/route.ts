@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { groqJSON, groqJSONVision } from "@/lib/groq";
-import { getBearer, supabaseServer } from "@/lib/supabase/server";
+import { getBearer, supabaseServer, supabaseAdmin } from "@/lib/supabase/server";
 import { checkRateLimit, checkDailyCap } from "@/lib/rateLimit";
 import {
   findMisconceptionDistractors,
@@ -9,6 +9,7 @@ import {
   type VerifiableQuestion,
 } from "@/lib/qgen";
 import { detectExamFromTopic } from "@/lib/examDetectors";
+import { loadLearningContext, prependLearningContext } from "@/lib/learningContext";
 
 export const runtime = "nodejs";
 export const maxDuration = 90;
@@ -214,7 +215,15 @@ export async function POST(req: Request) {
     // prompt with an exam-aware disambiguation block so the paper carries
     // the right register — this is what was missing for coaching schools.
     const prompt = buildPrompt(source, topic, className, syllabus, notes, examLabel, sections, totalMarks, seedBlock);
-    const sysForGen = examAwareSystem(SYSTEM, topic);
+    // Stack the two prompt-priming layers: detectExamFromTopic (topic-based,
+    // catches CAT/JEE acronyms even when the teacher hasn't set a goal) +
+    // learning-context inheritance (profile-based, picks up coaching-school
+    // teachers whose default exam_goal mirrors the cohort they teach).
+    // examAwareSystem comes first because it's most specific to the
+    // current paper; the learner-context wrapper applies above it.
+    const adminForCtx = supabaseAdmin();
+    const learnerCtx = await loadLearningContext(adminForCtx, user.id);
+    const sysForGen = prependLearningContext(examAwareSystem(SYSTEM, topic), learnerCtx);
     let json: Record<string, unknown>;
     if (source === "image" || source === "past_paper") {
       json = await groqJSONVision(sysForGen, prompt, imageDataUrl);
