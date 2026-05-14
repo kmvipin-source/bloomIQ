@@ -200,7 +200,17 @@ export default function PlansPage() {
       )}
 
       {loading ? (
-        <div className="card text-center py-8"><span className="spinner" /></div>
+        // Skeleton grid that mirrors the real card layout below. Reduces
+        // cumulative layout shift vs a bare spinner.
+        <div className="grid gap-3">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="card animate-pulse">
+              <div className="h-5 w-32 rounded bg-slate-200 mb-3" />
+              <div className="h-4 w-1/2 rounded bg-slate-100 mb-2" />
+              <div className="h-4 w-2/3 rounded bg-slate-100" />
+            </div>
+          ))}
+        </div>
       ) : err ? (
         <div className="card text-sm text-red-700 bg-red-50 border-red-200 flex items-start gap-2">
           <AlertCircle size={16} className="mt-0.5 shrink-0" /> {err}

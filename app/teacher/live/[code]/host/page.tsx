@@ -258,7 +258,14 @@ export default function LiveHostPage() {
               </div>
             )}
             <div className="mt-4 flex justify-end">
-              <button type="button" onClick={startRunning} disabled={busy || state.players_count === 0} className="btn btn-primary">
+              <button
+                type="button"
+                onClick={startRunning}
+                disabled={busy || state.players_count === 0}
+                aria-label={busy ? "Starting quiz" : "Start quiz"}
+                aria-busy={busy}
+                className="btn btn-primary"
+              >
                 {busy ? <span className="spinner" /> : <><Play size={14} /> Start quiz</>}
               </button>
             </div>
@@ -291,7 +298,14 @@ export default function LiveHostPage() {
           )}
 
           <div className="mt-4 flex justify-end">
-            <button type="button" onClick={advance} disabled={busy} className="btn btn-primary">
+            <button
+              type="button"
+              onClick={advance}
+              disabled={busy}
+              aria-label={busy ? "Advancing to next question" : "Next question"}
+              aria-busy={busy}
+              className="btn btn-primary"
+            >
               {busy ? <span className="spinner" /> : "Next question"}
             </button>
           </div>

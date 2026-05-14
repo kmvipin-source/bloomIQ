@@ -91,7 +91,10 @@ async function buildDrill(req: Request) {
   const todayStart = startOfUtcDay(now);
   const yesterdayStart = new Date(todayStart.getTime() - 24 * 3600_000);
   const fourteenStart = new Date(todayStart.getTime() - 14 * 24 * 3600_000);
-  const sevenStart = new Date(todayStart.getTime() - 7 * 24 * 3600_000);
+  // Was 7d; widened to 14d so students don't see the same question on a
+  // ~8-day rinse cycle. Matches the broader attempt window above so the
+  // exclusion has data for the full lookback.
+  const sevenStart = new Date(todayStart.getTime() - 14 * 24 * 3600_000);
 
   // Fetch the last 14 days of attempts for this student.
   const { data: attempts } = await sb
