@@ -43,6 +43,7 @@ import {
   buildExamAwareTopic,
 } from "@/lib/learningContext";
 import { getRecentStemsForExclusion } from "@/lib/recentStemsExclusion";
+import { resolveScheme } from "@/lib/scoring";
 
 export const runtime = "nodejs";
 export const maxDuration = 90;
@@ -376,9 +377,10 @@ export async function POST(req: Request) {
     // ever attempt (then auto-suggested by the picker); subsequent
     // attempts pre-fill from profile.last_marking_scheme so a CAT student
     // stays on CAT preset across surfaces.
+    // Server-side canonicalisation — drop untrusted shapes before insert.
     const requestedMarkingScheme: unknown =
       body.markingScheme && typeof body.markingScheme === "object"
-        ? body.markingScheme
+        ? resolveScheme(body.markingScheme)
         : null;
 
     const niceName = `Adaptive Practice — ${topic}`;
@@ -465,8 +467,8 @@ export async function POST(req: Request) {
     // it. Best-effort, silent on failure.
     if (requestedMarkingScheme && typeof requestedMarkingScheme === "object") {
       const { writeLastMarkingScheme } = await import("@/lib/markingSchemeMemory");
-      const { resolveScheme } = await import("@/lib/scoring");
-      await writeLastMarkingScheme(adminForCtx, user.id, resolveScheme(requestedMarkingScheme));
+      // Already canonicalised above; pass through unchanged.
+      await writeLastMarkingScheme(adminForCtx, user.id, requestedMarkingScheme as ReturnType<typeof resolveScheme>);
     }
 
     return NextResponse.json({

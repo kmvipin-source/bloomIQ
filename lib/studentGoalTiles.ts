@@ -263,6 +263,10 @@ function complete(primary: StudentTileKey[]): Layout {
   return { primary, secondary };
 }
 
+// IMPORTANT: every id in StudentGoalPicker.STUDENT_GOALS must have a row
+// here. The Record<StudentGoalId, ...> type catches additions at compile
+// time — when StudentGoalPicker grew class_5_8 / class_9 / corporate, this
+// map drifted and TS started flagging GOAL_MAP. Keep them in lockstep.
 const GOAL_MAP: Record<StudentGoalId, Layout> = {
   jee_prep: complete(["sprint", "speed", "traps", "rank", "xray"]),
   neet_prep: complete(["sprint", "speed", "traps", "rank", "xray"]),
@@ -271,6 +275,9 @@ const GOAL_MAP: Record<StudentGoalId, Layout> = {
   bank_exams: complete(["speed", "sprint", "traps", "rank", "tutor"]),
   class_10_boards: complete(["teach_back", "misconceptions", "memory", "visualizer", "tutor"]),
   class_12_boards: complete(["teach_back", "misconceptions", "xray", "memory", "tutor"]),
+  class_9: complete(["teach_back", "misconceptions", "memory", "visualizer", "tutor"]),
+  class_5_8: complete(["teach_back", "misconceptions", "memory", "visualizer", "tutor"]),
+  corporate: complete(["tutor", "teach_back", "visualizer", "memory", "misconceptions"]),
   exploring: complete(["teach_back", "misconceptions", "visualizer", "tutor"]),
 };
 
