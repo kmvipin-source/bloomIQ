@@ -120,8 +120,11 @@ export async function POST(req: Request) {
       if (paper_text.length < 50) {
         return NextResponse.json({ error: "Paste at least a paragraph of the paper text." }, { status: 400 });
       }
-      if (paper_text.length > 30000) {
-        return NextResponse.json({ error: "Paper text is too long (max 30k chars)." }, { status: 400 });
+      // Cap tightened from 30k → 20k chars. The vision-path 6 MB image
+      // decodes to ~15-25k effective tokens; matching the text-path cap
+      // keeps cost ceilings consistent across the two upload formats.
+      if (paper_text.length > 20000) {
+        return NextResponse.json({ error: "Paper text is too long (max 20k chars)." }, { status: 400 });
       }
       // Learning-context inheritance — the 5 "study recommendations" the
       // AI returns are user-facing prose. A CAT student uploading a

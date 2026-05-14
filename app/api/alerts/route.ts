@@ -101,6 +101,8 @@ export async function POST(req: Request) {
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     return NextResponse.json({ ok: true, created: newAlerts.length, alerts: newAlerts });
   } catch (e) {
-    return NextResponse.json({ error: e instanceof Error ? e.message : "Failed" }, { status: 500 });
+    // eslint-disable-next-line no-console
+    console.error("[alerts] failed:", e instanceof Error ? e.message : e);
+    return NextResponse.json({ error: "Alerts request failed." }, { status: 500 });
   }
 }
