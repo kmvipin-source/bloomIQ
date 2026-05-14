@@ -7,6 +7,7 @@ import {
   buildExamAwareTopic,
 } from "@/lib/learningContext";
 import { buildSkillFewShotBlock } from "@/lib/skillFewShot";
+import { consumeDailyQuota } from "@/lib/freeQuota";
 
 export const runtime = "nodejs";
 
@@ -32,6 +33,9 @@ export async function POST(req: Request) {
     const sb = supabaseServer(token);
     const { data: { user } } = await sb.auth.getUser();
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+    const dq = await consumeDailyQuota(user.id, "flashcards");
+    if (!dq.allowed) return NextResponse.json({ error: dq.reason, code: "free_daily_cap" }, { status: 402 });
 
     const body = await req.json().catch(() => ({}));
     const topic: string = String(body.topic || "").trim();

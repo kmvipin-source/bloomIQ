@@ -35,7 +35,8 @@ export async function GET(req: Request) {
     const { data: classes } = await admin
       .from("classes")
       .select("id, name, school_id")
-      .in("id", classIds);
+      .in("id", classIds)
+      .eq("status", "active");
     const cMap = new Map((classes || []).map((c) => [c.id as string, c]));
 
     const schoolIds = Array.from(new Set((classes || []).map((c) => c.school_id).filter(Boolean) as string[]));

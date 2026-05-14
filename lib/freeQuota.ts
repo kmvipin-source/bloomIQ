@@ -157,6 +157,118 @@ export function clearFreeQuotaCache(): void {
 }
 
 // ---------------------------------------------------------------
+// Public: ATOMIC consume helpers (preferred over check+record)
+// ---------------------------------------------------------------
+//
+// The original check-then-record pattern had a TOCTOU race — two
+// parallel callers both saw used=0 and both incremented. The Postgres
+// functions check_and_log_daily_use / check_and_log_lifetime_use (see
+// migration 80) do the count + increment under a row-level lock so
+// concurrent callers can't both claim the last slot. Use these instead
+// of check + record on every new endpoint.
+//
+// Slot is burned up-front. If the downstream LLM call fails, no
+// automatic refund — same trade-off as the coachQuota atomic helper.
+
+/**
+ * Atomically check + claim a daily-quota slot for `userId`. Returns the
+ * same shape as checkDailyQuota but is race-free. Paid tiers always
+ * pass through with `allowed: true`.
+ */
+export async function consumeDailyQuota(
+  userId: string,
+  surface: DailySurface,
+): Promise<DailyResult> {
+  const tier = await resolveTier(userId);
+  if (tier !== "free") {
+    return { allowed: true, tier, cap: null, remaining: null };
+  }
+  const limits = await loadLimits();
+  const cap = Number(limits[DAILY_TO_COLUMN[surface]] ?? 0);
+  if (cap <= 0) {
+    return {
+      allowed: false,
+      tier: "free",
+      cap: 0,
+      used: 0,
+      reason: `${DAILY_SURFACE_LABEL[surface]} is not available on the Free plan. Upgrade to Premium.`,
+    };
+  }
+  const tz = String(limits.daily_reset_timezone ?? "Asia/Kolkata");
+  const day = dayKeyForTimezone(tz);
+  const sb = supabaseAdmin();
+  const { data: ok, error } = await sb.rpc("check_and_log_daily_use", {
+    p_user_id: userId,
+    p_surface: surface,
+    p_cap: cap,
+    p_day_key: day,
+  });
+  if (error) {
+    return {
+      allowed: false,
+      tier: "free",
+      cap,
+      used: cap,
+      reason: `Could not verify daily limit: ${error.message}`,
+    };
+  }
+  if (ok === false) {
+    return {
+      allowed: false,
+      tier: "free",
+      cap,
+      used: cap,
+      reason: `You've used your ${cap} free ${DAILY_SURFACE_LABEL[surface]} for today. Upgrade to Premium for unlimited, or come back after midnight IST.`,
+    };
+  }
+  return { allowed: true, tier: "free", cap, remaining: 0 };
+}
+
+/**
+ * Atomically check + claim a lifetime-quota slot. Same shape as
+ * checkLifetimeUse but race-free.
+ */
+export async function consumeLifetimeUse(
+  userId: string,
+  featureKey: LifetimeFeature,
+): Promise<LifetimeResult> {
+  const tier = await resolveTier(userId);
+  if (tier !== "free") {
+    return { allowed: true, tier, alreadyUsed: false };
+  }
+  const limits = await loadLimits();
+  const cap = Number(limits[LIFETIME_TO_COLUMN[featureKey]] ?? 0);
+  if (cap <= 0) {
+    return {
+      allowed: false,
+      tier: "free",
+      reason: `${LIFETIME_FEATURE_LABEL[featureKey]} is a Premium feature. Upgrade to unlock.`,
+    };
+  }
+  const sb = supabaseAdmin();
+  const { data: ok, error } = await sb.rpc("check_and_log_lifetime_use", {
+    p_user_id: userId,
+    p_feature_key: featureKey,
+    p_cap: cap,
+  });
+  if (error) {
+    return {
+      allowed: false,
+      tier: "free",
+      reason: `Could not verify lifetime usage: ${error.message}`,
+    };
+  }
+  if (ok === false) {
+    return {
+      allowed: false,
+      tier: "free",
+      reason: `You've already used your free taste of ${LIFETIME_FEATURE_LABEL[featureKey]}. Upgrade to Premium to keep using it.`,
+    };
+  }
+  return { allowed: true, tier: "free", alreadyUsed: false };
+}
+
+// ---------------------------------------------------------------
 // Public: daily quota
 // ---------------------------------------------------------------
 

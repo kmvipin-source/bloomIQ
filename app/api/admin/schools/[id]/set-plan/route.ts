@@ -223,16 +223,33 @@ export async function POST(req: Request, ctx: RouteContext) {
       payment_received_at: string | null;
       started_at: string | null;
       expires_at: string | null;
+      status: string | null;
     };
     const { data: existingRaw } = await admin
       .from("subscriptions")
       .select(
         "id, plan_id, invoice_number, contracted_students, override_price_paise, override_reason, " +
-        "payment_method, payment_received_at, started_at, expires_at"
+        "payment_method, payment_received_at, started_at, expires_at, status"
       )
       .eq("school_id", schoolId)
       .maybeSingle();
     const existing = (existingRaw as unknown as ExistingSubRow | null) ?? null;
+
+    // Refuse plan edits while the subscription is in 'suspended' status.
+    // Path of least confusion: admin must explicitly /reactivate (or
+    // /mark-paid) first so the audit trail records the unblock, then
+    // change the plan. Otherwise a set-plan mid-suspension silently
+    // clears the audit fields (the UPDATE below sets status='active'
+    // and the suspended_* fields would dangle).
+    if (existing?.status === "suspended") {
+      return NextResponse.json(
+        {
+          error:
+            "Subscription is suspended. Reactivate (or mark paid) before changing the plan, so the audit trail records who unblocked it.",
+        },
+        { status: 409 },
+      );
+    }
 
     // ─────────── started_at / expires_at decision tree ───────────
     // The right answer depends on intent. We support four distinct cases,

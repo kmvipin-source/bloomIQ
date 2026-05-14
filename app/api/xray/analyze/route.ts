@@ -3,6 +3,7 @@ import { groqJSON, groqJSONVision } from "@/lib/groq";
 import { BLOOM_LEVELS, isBloomLevel, type BloomLevel } from "@/lib/bloom";
 import { getBearer, supabaseServer, supabaseAdmin } from "@/lib/supabase/server";
 import { checkRateLimit, checkDailyCap } from "@/lib/rateLimit";
+import { consumeLifetimeUse } from "@/lib/freeQuota";
 import {
   loadLearningContext,
   prependLearningContext,
@@ -97,6 +98,17 @@ export async function POST(req: Request) {
     if (!rate.allowed) return NextResponse.json({ error: "Too many requests.", code: "rate_limited" }, { status: 429, headers: { "Retry-After": String(rate.retryAfterSec) } });
     const daily = checkDailyCap(user.id, "xray.analyze", 20);
     if (!daily.allowed) return NextResponse.json({ error: `Daily limit reached (${daily.limit}).`, code: "daily_cap" }, { status: 429 });
+
+    // Showcase-Free lifetime gate: one taste of X-Ray for Free users.
+    // Atomic check + claim — paid users short-circuit on tier. Slot is
+    // burned up-front; transient LLM failure below does not refund.
+    const ltGate = await consumeLifetimeUse(user.id, "xray");
+    if (!ltGate.allowed) {
+      return NextResponse.json(
+        { error: ltGate.reason, code: "free_lifetime_used" },
+        { status: 402 }
+      );
+    }
 
     const body = await req.json().catch(() => ({}));
     const kind: string = String(body.kind || "");

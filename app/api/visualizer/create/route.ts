@@ -5,6 +5,7 @@ import { fixFrameLayout, type LayoutElement } from "@/lib/visualizerLayout";
 import { getBearer, supabaseServer } from "@/lib/supabase/server";
 import { requireFeature } from "@/lib/featureAccess.server";
 import { checkRateLimit, checkDailyCap } from "@/lib/rateLimit";
+import { consumeLifetimeUse } from "@/lib/freeQuota";
 
 export const runtime = "nodejs";
 export const maxDuration = 90;
@@ -427,6 +428,17 @@ export async function POST(req: Request) {
       return NextResponse.json(
         { error: (gate as unknown as { reason: string }).reason, code: "feature_locked", required_tier: (gate as unknown as { requiredTier: string | null }).requiredTier },
         { status: 403 },
+      );
+    }
+
+    // Showcase-Free lifetime gate: one taste for Free users. Paid plans
+    // short-circuit. Atomic claim — burns up-front; transient LLM
+    // failure below does not refund.
+    const ltGate = await consumeLifetimeUse(user.id, "visualizer");
+    if (!ltGate.allowed) {
+      return NextResponse.json(
+        { error: ltGate.reason, code: "free_lifetime_used" },
+        { status: 402 }
       );
     }
 

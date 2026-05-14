@@ -1,6 +1,13 @@
 import { NextResponse } from "next/server";
 import { groqText } from "@/lib/groq";
 import { aiGate } from "@/lib/aiGate";
+import { consumeDailyQuota } from "@/lib/freeQuota";
+import { supabaseAdmin } from "@/lib/supabase/server";
+import {
+  loadLearningContext,
+  prependLearningContext,
+  sanitizeUserTopic,
+} from "@/lib/learningContext";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -63,6 +70,10 @@ export async function POST(req: Request) {
     });
     if (!gate.ok) return gate.response;
 
+    // Showcase-Free daily cap. Paid users pass through.
+    const dq = await consumeDailyQuota(gate.userId, "tutor_chat");
+    if (!dq.allowed) return NextResponse.json({ error: dq.reason, code: "free_daily_cap" }, { status: 402 });
+
     const body = await req.json().catch(() => ({}));
     const message: string = String(body.message || "").trim();
     if (!message) return NextResponse.json({ error: "Empty message" }, { status: 400 });
@@ -73,7 +84,17 @@ export async function POST(req: Request) {
     const ctxStem = typeof ctx.question_stem === "string" ? ctx.question_stem.slice(0, 1500) : "";
     const ctxOptions = Array.isArray(ctx.options) ? (ctx.options as unknown[]).map(String).slice(0, 4) : [];
     const ctxCorrect = Number.isInteger(ctx.correct_index) ? Number(ctx.correct_index) : null;
-    const ctxTopic = typeof ctx.topic === "string" ? ctx.topic.slice(0, 200) : "";
+    const ctxTopic = sanitizeUserTopic(typeof ctx.topic === "string" ? ctx.topic : "");
+
+    // Learning-context inheritance — every other generation surface
+    // (flashcards, quick-test, teach-back, x-ray, ...) primes prompts on
+    // the user's exam_goal so CAT/JEE/NEET/GATE acronyms aren't
+    // misinterpreted. Tutor was the last hold-out: a CAT student asking
+    // about "DI sets" got generic data-integrity replies instead of CAT
+    // data-interpretation help. Same loader, same prepend pattern.
+    const admin = supabaseAdmin();
+    const learnerCtx = await loadLearningContext(admin, gate.userId);
+    const contextAwareSystem = prependLearningContext(SYSTEM, learnerCtx);
 
     // Build a rolling-context prompt. We use groqText (plain text completion)
     // since this is conversational; structured-JSON adds friction here.
@@ -99,7 +120,7 @@ ${history.map((t) => `${t.role === "user" ? "STUDENT" : "TEACHER"}: ${t.content}
 
 TEACHER:`;
 
-    const reply = await groqText(SYSTEM, userPrompt);
+    const reply = await groqText(contextAwareSystem, userPrompt);
     if (!reply) {
       return NextResponse.json({ error: "AI did not return a reply; please retry." }, { status: 502 });
     }

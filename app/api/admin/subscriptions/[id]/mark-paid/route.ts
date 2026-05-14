@@ -110,7 +110,7 @@ export async function POST(req: Request, ctx: RouteContext) {
     const admin = supabaseAdmin();
     const { data: sub } = await admin
       .from("subscriptions")
-      .select("id, plan_id, school_id, expires_at, activation_pending, invoice_number")
+      .select("id, plan_id, school_id, expires_at, activation_pending, invoice_number, status")
       .eq("id", subscriptionId)
       .maybeSingle();
     if (!sub) return NextResponse.json({ error: "Subscription not found" }, { status: 404 });
@@ -196,7 +196,23 @@ export async function POST(req: Request, ctx: RouteContext) {
       // first-sign-in deferral no longer applies (the cycle is locked in
       // by the explicit money-in event).
       activation_pending: false,
+      // Clear suspension columns so the row's state is internally
+      // consistent. Without this, mark-paid flipped status to 'active'
+      // but left suspended_at / suspended_by / suspended_reason set,
+      // leaving stale audit data on what is now a live subscription.
+      suspended_at: null,
+      suspended_by: null,
+      suspended_reason: null,
     };
+    // Migration 81 — if mark-paid is the unblock event (status was
+    // 'suspended' before this call), record the reactivation audit pair
+    // so /reactivate and /mark-paid produce the same trail. Skip for
+    // pure "I'm paying my next invoice on time" flows since no
+    // reactivation happened.
+    if ((sub as { status?: string | null }).status === "suspended") {
+      update.reactivated_at = new Date().toISOString();
+      update.reactivated_by = user.id;
+    }
     // Only write expires_at when the operator explicitly extended it via
     // the escape hatch. The default path leaves expires_at exactly as
     // set-plan / start-renewal wrote it, guaranteeing "1 year paid = 1

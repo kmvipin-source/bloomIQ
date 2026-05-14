@@ -26,6 +26,7 @@ import {
   buildExamAwareTopic,
 } from "@/lib/learningContext";
 import { getRecentStemsForExclusion } from "@/lib/recentStemsExclusion";
+import { resolveScheme } from "@/lib/scoring";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -347,14 +348,14 @@ export async function POST(req: Request) {
       ? (body.sub_topics as unknown[]).filter((s): s is string => typeof s === "string" && s.trim().length > 0).slice(0, 12)
       : [];
     // Per-test marking scheme (migration 76). Client sends NULL or a
-    // full MarkingScheme object from <MarkingSchemePicker />. We pass
-    // whatever's there straight into quizzes.marking_scheme — the
-    // Supabase JSONB column accepts any JSON. lib/scoring.ts → resolveScheme
-    // at the student's submission time will validate / fall back to the
-    // legacy default if anything's malformed.
+    // MarkingScheme-shaped object from <MarkingSchemePicker />. Pass it
+    // through resolveScheme() on the server BEFORE persisting so the
+    // JSONB column never holds untrusted shapes (extra keys, non-finite
+    // marks, presets we don't know). NULL stays NULL to preserve the
+    // legacy +1/0/0 fallback for pre-migration rows.
     const markingScheme: unknown =
       body.markingScheme && typeof body.markingScheme === "object"
-        ? body.markingScheme
+        ? resolveScheme(body.markingScheme)
         : null;
     const requested: string[] = Array.isArray(body.levels) ? body.levels : BLOOM_LEVELS;
     const levels: BloomLevel[] = requested.filter(isBloomLevel);

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { groqJSON, groqJSONVision } from "@/lib/groq";
-import { getBearer, supabaseServer } from "@/lib/supabase/server";
+import { getBearer, supabaseServer, supabaseAdmin } from "@/lib/supabase/server";
 import { checkRateLimit, checkDailyCap } from "@/lib/rateLimit";
 import {
   findMisconceptionDistractors,
@@ -9,6 +9,7 @@ import {
   type VerifiableQuestion,
 } from "@/lib/qgen";
 import { detectExamFromTopic } from "@/lib/examDetectors";
+import { loadLearningContext, prependLearningContext } from "@/lib/learningContext";
 
 export const runtime = "nodejs";
 export const maxDuration = 90;
@@ -135,7 +136,7 @@ export async function POST(req: Request) {
     // Use the same featureAccess check the dashboard uses for parity.
     const { requireFeature } = await import("@/lib/featureAccess.server");
     const featureGate = await requireFeature(user.id, "practice_tests_unlimited");
-    if (!featureGate.ok) {
+    if (!featureGate.allowed) {
       return NextResponse.json(
         {
           error: featureGate.reason ?? "Your plan doesn't include paper generation. Upgrade to continue.",
@@ -214,7 +215,15 @@ export async function POST(req: Request) {
     // prompt with an exam-aware disambiguation block so the paper carries
     // the right register — this is what was missing for coaching schools.
     const prompt = buildPrompt(source, topic, className, syllabus, notes, examLabel, sections, totalMarks, seedBlock);
-    const sysForGen = examAwareSystem(SYSTEM, topic);
+    // Stack the two prompt-priming layers: detectExamFromTopic (topic-based,
+    // catches CAT/JEE acronyms even when the teacher hasn't set a goal) +
+    // learning-context inheritance (profile-based, picks up coaching-school
+    // teachers whose default exam_goal mirrors the cohort they teach).
+    // examAwareSystem comes first because it's most specific to the
+    // current paper; the learner-context wrapper applies above it.
+    const adminForCtx = supabaseAdmin();
+    const learnerCtx = await loadLearningContext(adminForCtx, user.id);
+    const sysForGen = prependLearningContext(examAwareSystem(SYSTEM, topic), learnerCtx);
     let json: Record<string, unknown>;
     if (source === "image" || source === "past_paper") {
       json = await groqJSONVision(sysForGen, prompt, imageDataUrl);
@@ -307,7 +316,6 @@ export async function POST(req: Request) {
     let verifiedCount = 0;
     let disputedCount = 0;
     if (mcqQuestions.length > 0) {
-if (mcqQuestions.length > 0) {
       try {
         const verifyResults = await verifyAnswerKeys(mcqQuestions, 5);
         for (let i = 0; i < verifyResults.length; i++) {
@@ -347,3 +355,4 @@ if (mcqQuestions.length > 0) {
     return NextResponse.json({ error: e instanceof Error ? e.message : "Generation failed" }, { status: 500 });
   }
 }
+

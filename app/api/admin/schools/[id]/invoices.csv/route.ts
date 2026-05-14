@@ -23,9 +23,20 @@ type RouteContext = { params: Promise<{ id: string }> };
 
 // Minimal RFC-4180 escape — wrap in quotes if the value has a comma, quote,
 // or newline; double any embedded quotes. Cheap, safe, no dependency.
+//
+// CSV injection guard: Excel / Google Sheets / Numbers treat a cell whose
+// first character is one of = + - @ TAB CR as a formula and execute it on
+// open. A user-supplied override_reason like `=HYPERLINK("http://x", "click")`
+// would phish anyone opening the export. We prefix such cells with a
+// single apostrophe (the standard mitigation — sheets render it but don't
+// evaluate the cell). Applied to all cells uniformly so the rule lives in
+// one place even when new columns are added.
 function csvCell(v: unknown): string {
   if (v === null || v === undefined) return "";
-  const s = typeof v === "string" ? v : String(v);
+  let s = typeof v === "string" ? v : String(v);
+  if (s.length > 0 && /^[=+\-@\t\r]/.test(s)) {
+    s = `'${s}`;
+  }
   if (s.includes(",") || s.includes('"') || s.includes("\n") || s.includes("\r")) {
     return `"${s.replace(/"/g, '""')}"`;
   }

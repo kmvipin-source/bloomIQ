@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { groqJSON } from "@/lib/groq";
 import { BLOOM_LEVELS, type BloomLevel } from "@/lib/bloom";
 import { aiGate } from "@/lib/aiGate";
+import { consumeDailyQuota } from "@/lib/freeQuota";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import {
   loadLearningContext,
@@ -104,6 +105,9 @@ export async function POST(req: Request) {
     });
     if (!gate.ok) return gate.response;
     const user = { id: gate.userId };
+
+    const dq = await consumeDailyQuota(user.id, "teach_back");
+    if (!dq.allowed) return NextResponse.json({ error: dq.reason, code: "free_daily_cap" }, { status: 402 });
 
     const body = await req.json().catch(() => ({}));
     const topic: string = String(body.topic || "").trim();

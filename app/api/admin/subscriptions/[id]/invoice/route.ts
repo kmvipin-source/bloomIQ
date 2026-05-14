@@ -169,12 +169,26 @@ export async function GET(req: Request, ctx: RouteContext) {
     let invoiceNumber = sub.invoice_number;
     if (!invoiceNumber) {
       const year = new Date().getFullYear();
-      const pattern = `BLM/${year}/%`;
-      const [liveRes, archiveRes] = await Promise.all([
-        admin.from("subscriptions").select("id", { count: "exact", head: true }).like("invoice_number", pattern),
-        admin.from("subscription_invoice_archive").select("id", { count: "exact", head: true }).like("invoice_number", pattern),
+      const prefix = `BLM/${year}/`;
+      // Parse-and-max-plus-one: matches mark-paid's allocator. A pure
+      // count+1 over both tables drifts when archived rows have been
+      // hard-deleted, when a stub row was created without an
+      // invoice_number, or when the live row was renumbered manually —
+      // any of those produces a count lower than the true high-water
+      // mark and a colliding allocation. Parsing the suffix is the
+      // only correct read.
+      const re = new RegExp(`^BLM/${year}/(\\d+)$`);
+      const collected: number[] = [];
+      const [{ data: liveRows }, { data: archRows }] = await Promise.all([
+        admin.from("subscriptions").select("invoice_number").ilike("invoice_number", `${prefix}%`),
+        admin.from("subscription_invoice_archive").select("invoice_number").ilike("invoice_number", `${prefix}%`),
       ]);
-      let nextSeq = (liveRes.count ?? 0) + (archiveRes.count ?? 0) + 1;
+      for (const r of [...(liveRows ?? []), ...(archRows ?? [])]) {
+        const inv = (r as { invoice_number: string | null }).invoice_number;
+        const m = inv ? re.exec(inv) : null;
+        if (m) collected.push(parseInt(m[1], 10));
+      }
+      let nextSeq = (collected.length > 0 ? Math.max(...collected) : 0) + 1;
       let assigned: string | null = null;
       for (let attempt = 0; attempt < 10; attempt++) {
         const candidate = `BLM/${year}/${String(nextSeq).padStart(4, "0")}`;

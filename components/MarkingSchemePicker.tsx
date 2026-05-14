@@ -75,13 +75,18 @@ export default function MarkingSchemePicker(props: MarkingSchemePickerProps) {
   const [userTouched, setUserTouched] = useState<boolean>(false);
 
   // Recompute and emit the resolved scheme whenever any input changes.
+  // Custom marks are clamped to a sane range — without this, a user
+  // could set correct=+1000 / wrong=+99 and game any downstream
+  // scoring or rank prediction. The server-side resolveScheme()
+  // would still accept extreme numbers (Number.isFinite passes), so
+  // the bounds belong here in the UI control.
   useEffect(() => {
     const custom: Partial<MarkingRule> =
       preset === "CUSTOM"
         ? {
-            correct: numOrFallback(customCorrect, 1),
-            wrong: numOrFallback(customWrong, 0),
-            unattempted: numOrFallback(customUnatt, 0),
+            correct: clampMark(numOrFallback(customCorrect, 1), 0, 10),
+            wrong: clampMark(numOrFallback(customWrong, 0), -10, 0),
+            unattempted: clampMark(numOrFallback(customUnatt, 0), -5, 5),
           }
         : {};
     const resolved = resolveRule(preset, negEnabled, custom);
@@ -95,6 +100,18 @@ export default function MarkingSchemePicker(props: MarkingSchemePickerProps) {
     // pass an inline function, which would trigger an infinite loop.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [preset, negEnabled, customCorrect, customWrong, customUnatt]);
+
+  // Surface a soft warning when a typed Custom value is being clamped
+  // so the user understands why their input snapped.
+  const customCorrectNum = numOrFallback(customCorrect, 1);
+  const customWrongNum = numOrFallback(customWrong, 0);
+  const customUnattNum = numOrFallback(customUnatt, 0);
+  const customOutOfRange =
+    preset === "CUSTOM" && (
+      customCorrectNum < 0 || customCorrectNum > 10 ||
+      (negEnabled && (customWrongNum < -10 || customWrongNum > 0)) ||
+      customUnattNum < -5 || customUnattNum > 5
+    );
 
   // When the operator picks a new preset, flip the negative-marks
   // toggle to that preset's canonical default (PRACTICE → off, JEE →
@@ -226,6 +243,12 @@ export default function MarkingSchemePicker(props: MarkingSchemePickerProps) {
         </div>
       )}
 
+      {customOutOfRange && (
+        <div className="text-[11px] px-2 py-1 rounded-md bg-amber-50 text-amber-900 border border-amber-200">
+          Out-of-range values are clamped (correct 0&ndash;10, wrong &minus;10&ndash;0, skip &minus;5&ndash;5).
+        </div>
+      )}
+
       {/* Effective rule preview — always visible so the picker is never
           ambiguous about what will actually be applied. */}
       <div className="grid grid-cols-3 gap-2 text-xs text-slate-700 bg-slate-50 rounded-md p-2 mt-2">
@@ -251,4 +274,12 @@ export default function MarkingSchemePicker(props: MarkingSchemePickerProps) {
 function numOrFallback(s: string, fallback: number): number {
   const n = Number(s);
   return Number.isFinite(n) ? n : fallback;
+}
+
+function clampMark(n: number, lo: number, hi: number): number {
+  if (!Number.isFinite(n)) return lo;
+  if (n < lo) return lo;
+  if (n > hi) return hi;
+  // Round to nearest 0.25 to match the picker step.
+  return Math.round(n * 4) / 4;
 }
