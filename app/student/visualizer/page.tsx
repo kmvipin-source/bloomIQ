@@ -528,15 +528,7 @@ export default function VisualizerPage() {
     result: { valid: boolean; reason: string; suggestedExam: string | null } | null;
   }>({ loading: false, result: null });
   useEffect(() => {
-    // eslint-disable-next-line no-console
-    console.log("[topic-validate/visualizer] effect run", {
-      examMeta: examMeta ? examMeta.name : null,
-      topic,
-      topicLen: (topic || "").trim().length,
-    });
     if (!examMeta || (topic || "").trim().length < 3) {
-      // eslint-disable-next-line no-console
-      console.log("[topic-validate/visualizer] early-return — clearing result");
       setTopicValidation({ loading: false, result: null });
       return;
     }
@@ -566,8 +558,6 @@ export default function VisualizerPage() {
           reason?: string;
           suggestedExam?: string | null;
         };
-        // eslint-disable-next-line no-console
-        console.log("[topic-validate/visualizer] response", j);
         setTopicValidation({
           loading: false,
           result: {

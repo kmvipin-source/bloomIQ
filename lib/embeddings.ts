@@ -55,30 +55,46 @@ export async function embedText(text: string): Promise<number[] | null> {
 
 /** Batch embedding. Returns an array (same length, null on per-item failure)
  *  or `null` if the whole call failed. Caller treats null as "no embeddings
- *  available — use Jaccard fallback". */
+ *  available — use Jaccard fallback".
+ *
+ *  Capped at MAX_EMBED_BATCH inputs and CHUNK_SIZE concurrent requests so a
+ *  pathological caller (or future caller passing 100+ stems) doesn't burst
+ *  past Gemini's 1500 RPM free tier. Over-cap inputs return as null for
+ *  the tail entries — callers already treat null as "fall back to Jaccard". */
+const MAX_EMBED_BATCH = 32;
+const EMBED_CHUNK_SIZE = 8;
 export async function embedTexts(texts: string[]): Promise<(number[] | null)[] | null> {
   if (!Array.isArray(texts) || texts.length === 0) return [];
   const c = client();
   if (!c) return null;
+  const safeInputs = texts.slice(0, MAX_EMBED_BATCH);
+  const overflow = texts.length - safeInputs.length;
   try {
     const model = c.getGenerativeModel({ model: EMBED_MODEL });
-    // The Google SDK supports per-call embedding; we issue them in parallel.
-    // For very large batches we'd need to chunk + rate-limit, but our typical
-    // batch is ≤ 20 stems per generation, well below Gemini's free-tier RPM.
-    const out: (number[] | null)[] = await Promise.all(
-      texts.map(async (raw) => {
-        const t = (raw || "").trim();
-        if (!t) return null;
-        try {
-          const res = await model.embedContent(t);
-          const vec = res.embedding?.values;
-          if (!Array.isArray(vec) || vec.length !== EMBED_DIM) return null;
-          return vec;
-        } catch {
-          return null;
-        }
-      }),
-    );
+    // Chunked parallelism — at most EMBED_CHUNK_SIZE in flight at any
+    // time, then move to the next chunk. Stops free-tier 429s on bursts.
+    const out: (number[] | null)[] = [];
+    for (let i = 0; i < safeInputs.length; i += EMBED_CHUNK_SIZE) {
+      const chunk = safeInputs.slice(i, i + EMBED_CHUNK_SIZE);
+      const chunkResults = await Promise.all(
+        chunk.map(async (raw) => {
+          const t = (raw || "").trim();
+          if (!t) return null;
+          try {
+            const res = await model.embedContent(t);
+            const vec = res.embedding?.values;
+            if (!Array.isArray(vec) || vec.length !== EMBED_DIM) return null;
+            return vec;
+          } catch {
+            return null;
+          }
+        }),
+      );
+      out.push(...chunkResults);
+    }
+    // Pad with null so the returned array length still matches the
+    // caller's input length — keeps index-based zip-style consumers safe.
+    for (let i = 0; i < overflow; i++) out.push(null);
     return out;
   } catch {
     return null;
