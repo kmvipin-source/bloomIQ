@@ -10,7 +10,7 @@
 --   "How does HCl ionise in water?" vs "What's the dissociation of HCl?"
 --   → ~0.85 cosine on embeddings, ~0.10 Jaccard.
 -- Result: students hit the same question rephrased and the dedup pipeline
--- waved it through. With this migration + lib/embeddingDedup, the dedup
+-- waved it through. With this migration + lib/embeddings, the dedup
 -- pre-filter catches the paraphrase before it reaches verifyAnswerKeys.
 --
 -- Embedding model
@@ -44,4 +44,4 @@ CREATE INDEX IF NOT EXISTS question_bank_stem_embedding_cos_idx
 
 -- Helpful: a brief note that NULL embeddings are valid + how dedup behaves.
 COMMENT ON COLUMN question_bank.stem_embedding IS
-  'Gemini text-embedding-004 (768-dim) of stem. NULL = legacy row before migration 80; lib/embeddingDedup falls back to token-Jaccard when NULL.';
+  'Gemini text-embedding-004 (768-dim) of stem. NULL = legacy row before migration 80; lib/embeddings falls back to token-Jaccard when NULL.';

@@ -165,7 +165,13 @@ Generate the 3-question micro-drill JSON now.`;
     if (quizErr) return NextResponse.json({ error: quizErr.message }, { status: 500 });
 
     const linkRows = (insertedQs || []).map((q, i) => ({ quiz_id: quiz.id, question_id: q.id, position: i }));
-    await sb.from("quiz_questions").insert(linkRows);
+    const { error: linkErr } = await sb.from("quiz_questions").insert(linkRows);
+    if (linkErr) {
+      // Without this guard the quiz row exists with zero linked
+      // questions and the client redirects into a broken quiz code.
+      await sb.from("quizzes").delete().eq("id", quiz.id);
+      return NextResponse.json({ error: `Could not link drill questions: ${linkErr.message}` }, { status: 500 });
+    }
 
     return NextResponse.json({ ok: true, quizCode: code, total: valid.length });
   } catch (e) {

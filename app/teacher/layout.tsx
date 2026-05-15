@@ -29,9 +29,11 @@ export default function TeacherLayout({ children }: { children: React.ReactNode 
   const [ok, setOk] = useState(false);
 
   useEffect(() => {
+    let cancelled = false;
     (async () => {
       const sb = supabaseBrowser();
       const { data: { session } } = await sb.auth.getSession();
+      if (cancelled) return;
       if (!session) { router.replace("/login?next=/teacher"); return; }
 
       // Service-role lookup — sidesteps the user-token RLS race that
@@ -79,8 +81,10 @@ export default function TeacherLayout({ children }: { children: React.ReactNode 
         return;
       }
 
+      if (cancelled) return;
       setOk(true);
     })();
+    return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pathname]);
 

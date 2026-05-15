@@ -244,6 +244,7 @@ export default function GeneratePage() {
           reason?: string;
           suggestedExam?: string | null;
         };
+        if (controller.signal.aborted) return;
         setTopicValidation({
           loading: false,
           result: {
