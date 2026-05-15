@@ -377,8 +377,6 @@ export default function StudentGeneratePage() {
           reason?: string;
           suggestedExam?: string | null;
         };
-        // eslint-disable-next-line no-console
-        console.log("[topic-validate/generate] response", j);
         setTopicValidation({
           loading: false,
           result: {
@@ -454,25 +452,41 @@ export default function StudentGeneratePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [testShape]);
 
+  // User id for localStorage namespacing. Without this the two keys
+  // (recent topics + first-time tip) leaked across users on a shared
+  // device (school lab / family laptop): student B logging in would
+  // inherit student A's recents and "tip seen" state.
+  const [uid, setUid] = useState<string | null>(null);
+  useEffect(() => {
+    (async () => {
+      const sb = supabaseBrowser();
+      const { data: { user } } = await sb.auth.getUser();
+      if (user) setUid(user.id);
+    })();
+  }, []);
+  const recentKey = uid ? `bloomiq:student:recentTopics:${uid}` : null;
+  const tipKey = uid ? `bloomiq:student:seenGenerateTip:${uid}` : null;
+
   // Recently-used topics (localStorage-backed). The student usually cycles
   // through 6-10 same topics — keep them as one-tap chips above the topic
   // input so they don't retype. Capped at 8, FIFO eviction. We write on
   // successful generation only (so a typo'd topic doesn't pollute the list).
   const [recentTopics, setRecentTopics] = useState<string[]>([]);
   useEffect(() => {
+    if (!recentKey) return;
     try {
-      const raw = window.localStorage.getItem("bloomiq:student:recentTopics");
+      const raw = window.localStorage.getItem(recentKey);
       if (!raw) return;
       const arr = JSON.parse(raw);
       if (Array.isArray(arr)) setRecentTopics(arr.filter((s) => typeof s === "string").slice(0, 8));
     } catch { /* ignore */ }
-  }, []);
+  }, [recentKey]);
   function pushRecentTopic(t: string) {
     const trimmed = (t || "").trim();
-    if (!trimmed) return;
+    if (!trimmed || !recentKey) return;
     setRecentTopics((prev) => {
       const next = [trimmed, ...prev.filter((p) => p.toLowerCase() !== trimmed.toLowerCase())].slice(0, 8);
-      try { window.localStorage.setItem("bloomiq:student:recentTopics", JSON.stringify(next)); } catch { /* ignore */ }
+      try { window.localStorage.setItem(recentKey, JSON.stringify(next)); } catch { /* ignore */ }
       return next;
     });
   }
@@ -482,14 +496,16 @@ export default function StudentGeneratePage() {
   // returning student doesn't see it again. Auto-cleared in generate().
   const [showFirstTimeTip, setShowFirstTimeTip] = useState(false);
   useEffect(() => {
+    if (!tipKey) return;
     try {
-      const seen = window.localStorage.getItem("bloomiq:student:seenGenerateTip");
+      const seen = window.localStorage.getItem(tipKey);
       if (!seen) setShowFirstTimeTip(true);
     } catch { /* ignore */ }
-  }, []);
+  }, [tipKey]);
   function dismissFirstTimeTip() {
     setShowFirstTimeTip(false);
-    try { window.localStorage.setItem("bloomiq:student:seenGenerateTip", "1"); } catch { /* ignore */ }
+    if (!tipKey) return;
+    try { window.localStorage.setItem(tipKey, "1"); } catch { /* ignore */ }
   }
 
   // Competitive-exam framing decision (2026-05-14 evening, fixed).

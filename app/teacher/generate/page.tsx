@@ -483,8 +483,35 @@ export default function GeneratePage() {
       if (!res.ok) throw new Error(data.error || "Generation failed");
       // Off-topic textbox guard (2026-05-13).
       if (data.focus_warning) toast.error(data.focus_warning);
+
+      // Shortfall transparency: mirror student/generate. The API returns
+      // `total` (delivered) and `summary` (per-Bloom counts). Hard-fail
+      // when zero; warn loudly when delivered < requested so the teacher
+      // sees per-level counts instead of a generic success toast.
+      const deliveredTotal = Number(data.total ?? 0);
+      const requestedTotal = Object.values(perLevelCounts).reduce((s, n) => s + Number(n || 0), 0);
+      if (deliveredTotal === 0) {
+        throw new Error(
+          "AI returned zero usable questions. Try a more specific topic, " +
+          "fewer levels, or check that your topic aligns with the chosen syllabus."
+        );
+      }
       setSummary(data.summary);
-      toast.success("Questions generated successfully.");
+      if (deliveredTotal < requestedTotal) {
+        const perLevelStr = data.summary
+          ? Object.entries(data.summary as Record<string, number>)
+              .map(([k, v]) => `${k}: ${v}`)
+              .join(", ")
+          : "n/a";
+        toast.error(
+          `Generated ${deliveredTotal} of ${requestedTotal} (short by ${requestedTotal - deliveredTotal}). ` +
+          `Per level: ${perLevelStr}. Likely causes: niche topic / dedup / answer-leaks. ` +
+          `Try a more specific topic or fewer levels.`,
+          { duration: 10000 },
+        );
+      } else {
+        toast.success("Questions generated successfully.");
+      }
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Something went wrong";
       setErr(msg);

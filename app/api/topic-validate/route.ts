@@ -101,12 +101,16 @@ export async function POST(req: Request) {
     }
 
     const body = await req.json().catch(() => ({}));
-    const topic: string = String(body.topic || "").trim();
-    const examName: string = String(body.examName || "").trim();
-    const examDescription: string = String(body.examDescription || "").trim();
+    const topic: string = String(body.topic || "").trim().slice(0, 200);
+    const examName: string = String(body.examName || "").trim().slice(0, 120);
+    // Length cap on examDescription / examSections too — client-supplied
+    // fields flow straight into the LLM prompt. Without caps a crafted
+    // description string is a prompt-injection vector. 600 chars is well
+    // above any legitimate exam description in EXAM_DETECTORS.
+    const examDescription: string = String(body.examDescription || "").trim().slice(0, 600);
     const examSectionsRaw: unknown = body.examSections;
     const examSections: string[] = Array.isArray(examSectionsRaw)
-      ? (examSectionsRaw as unknown[]).map((x) => String(x)).slice(0, 12)
+      ? (examSectionsRaw as unknown[]).map((x) => String(x).slice(0, 120)).slice(0, 12)
       : [];
 
     if (!topic || !examName) {

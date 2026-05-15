@@ -217,9 +217,16 @@ export async function groqJSONVision(
   // No Gemini fallback for vision yet — the Gemini SDK's vision call
   // signature differs (inlineData base64 + mimeType) and our callers
   // already enforce decoded-bytes caps + MIME allowlist. If the user
-  // hits Groq's vision rate limit we surface the 429; teachers can
-  // retry, and the much smaller call volume on vision endpoints
-  // makes a daily-cap hit unlikely in the 40-tester pilot.
+  // hits Groq's vision rate limit we surface the 429.
+  //
+  // Surface a clear error when the deployment has NO Groq key at all
+  // (Gemini-only deploys auto-flip groqJSON / groqText to Gemini, but
+  // vision would otherwise quietly 401 from Groq with no helpful
+  // signal). Telling callers up-front lets them disable vision UI.
+  const hasGroq = !!(process.env.GROQ_API_KEY || process.env.NEXT_PUBLIC_GROQ_API_KEY);
+  if (!hasGroq) {
+    throw new Error("Vision generation requires GROQ_API_KEY. Gemini vision fallback is not wired yet.");
+  }
   const res = await groqClient().chat.completions.create({
     model: GROQ_VISION_MODEL,
     temperature: 0.4,

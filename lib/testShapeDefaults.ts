@@ -372,14 +372,19 @@ export function allocatePerLevelCounts(
     const w = shape.bloomWeights[l] ?? 0;
     return [l, total * w];
   });
+  // When total < levels.length we CAN'T give every level a minimum of 1
+  // and still hit `total`. Two-pass strategy: floor-with-minimum-1, then
+  // if over budget, zero out the lowest-weighted levels until the sum
+  // matches. This preserves the sum=total invariant the caller relies on
+  // (without it, the UI's "Customise per level" panel pre-fills with
+  // a sum that doesn't match the user's chosen total — confusing).
   fracs.forEach(([l, n]) => { out[l] = Math.max(1, Math.floor(n)); });
   let assigned = levels.reduce((s, l) => s + out[l], 0);
-  // If floors over-shot (rare with tiny totals + many levels), trim from
-  // the smallest-fraction level down to 1 minimum.
   if (assigned > total) {
+    // First: drop low-weight levels to 0 in ascending-weight order.
     const sortedAsc = [...fracs].sort((a, b) => a[1] - b[1]);
     for (const [l] of sortedAsc) {
-      while (assigned > total && out[l] > 1) {
+      while (assigned > total && out[l] > 0) {
         out[l] -= 1;
         assigned -= 1;
       }

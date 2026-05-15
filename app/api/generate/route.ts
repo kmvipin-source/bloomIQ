@@ -601,6 +601,26 @@ export async function POST(req: Request) {
         .filter((q) => q && q.stem && Array.isArray(q.options) && q.options.length === 4
                       && Number.isInteger(q.correct_index) && q.correct_index >= 0 && q.correct_index <= 3);
 
+      // In-batch semantic dedup via Gemini embeddings (mirror of quick-test).
+      // LLM occasionally emits two questions that are paraphrases of each
+      // other with low token overlap. Cosine on embeddings catches these
+      // where Jaccard can't. Fail-open: if the embedding API is unavailable
+      // or returns null per-item, we keep that item and let downstream
+      // Jaccard handle dedup as before.
+      let semanticallyDeduped = structurallyValid;
+      if (structurallyValid.length > 1) {
+        const candidateEmbs = await embedTexts(structurallyValid.map((q) => q.stem));
+        if (candidateEmbs) {
+          const withEmb = structurallyValid.map((q, i) => ({ q, embedding: candidateEmbs[i] }));
+          const { keptIndices } = cosineDedupInBatch(withEmb, 0.85);
+          if (keptIndices.length < structurallyValid.length) {
+            // eslint-disable-next-line no-console
+            console.log(`[generate] level=${lvl}: in-batch cosine dropped ${structurallyValid.length - keptIndices.length} paraphrase(s)`);
+          }
+          semanticallyDeduped = keptIndices.map((i) => structurallyValid[i]);
+        }
+      }
+
       // Quality + cross-test filters (Vipin 2026-05-12):
       //   1. drop questions whose correct answer is echoed in the stem
       //   2. drop near-duplicate paraphrases inside this batch

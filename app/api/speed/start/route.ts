@@ -38,7 +38,8 @@ You will be given a topic and a target count. Generate exactly that many MCQs, d
 - has bloom_level (one of: remember, understand, apply, analyze, evaluate, create)
 - has a 1-sentence explanation
 
-5. GENERIC DOMAIN AWARENESS (applies to ANY topic — no local lookup):
+HARD CONSTRAINTS:
+1. GENERIC DOMAIN AWARENESS (applies to ANY topic — no local lookup):
    If the topic is a specialized professional / technical / niche domain
    (payment switches like Postilion or Base24, mainframe stack like JCL /
    COBOL / CICS / DB2, networking protocols like BGP / MPLS, cloud platforms,
@@ -49,7 +50,7 @@ You will be given a topic and a target count. Generate exactly that many MCQs, d
    identifiers, opcodes, field bits, function names, or product features
    that don\'t exist. If you don\'t have confident knowledge of a specific
    aspect, write a question that AVOIDS that aspect rather than fabricating.
-6. ALWAYS produce EXACTLY the requested number of questions. If you run
+2. ALWAYS produce EXACTLY the requested number of questions. If you run
    short of obvious angles, vary the sub-area, scenario, difficulty, or
    level of abstraction — but hit the requested count. Returning fewer
    than requested wastes the student\'s quota and time.
