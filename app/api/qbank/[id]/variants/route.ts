@@ -121,9 +121,9 @@ Return JSON of the form:
     // instead of WORKING-STORAGE/PIC-clause-shaped variants. Same source-of-
     // truth helpers used by every other generator route.
     const admin = supabaseAdmin();
-    const ctx = await loadLearningContext(admin, user.id);
+    const learnerCtx = await loadLearningContext(admin, user.id);
     const contextAwareSystem =
-      prependLearningContext(SYSTEM, ctx) + buildSkillFewShotBlock(source.topic || "");
+      prependLearningContext(SYSTEM, learnerCtx) + buildSkillFewShotBlock(source.topic || "");
 
     let raw: Record<string, unknown>;
     try {

@@ -106,7 +106,7 @@ ${answer}
 """
 
 Write the JSON verdict.`;
-    const raw = await groqJSON(contextAwareSystem + buildSkillFewShotBlock(String(topic || "")), userPrompt);
+    const raw = await groqJSON(contextAwareSystem + buildSkillFewShotBlock(String(session.topic || "")), userPrompt);
     const verdict = String((raw as { verdict?: unknown }).verdict || "").trim();
     if (!verdict) {
       return NextResponse.json({ error: "AI did not return a verdict; please try again." }, { status: 502 });
