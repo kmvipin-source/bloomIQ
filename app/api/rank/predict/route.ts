@@ -404,4 +404,17 @@ Return the 3-recommendation JSON.`;
         version: "1",
         assumptions: [
           `Cohort score distribution approximated as Normal(mean=${EXAM_BASELINES[exam_type].meanPct}%, stddev=${EXAM_BASELINES[exam_type].stdDevPct}%).`,
-          `Cohort size used: ${EXAM_BASELINES[exam_type].totalCandidates.toLocaleString()} candidates.`
+          `Cohort size used: ${EXAM_BASELINES[exam_type].totalCandidates.toLocaleString()} candidates.`,
+          "AIR derived as (1 − percentile) × cohort size; floor of 1.",
+          "95% band combines binomial sampling error of the test score with a ±2pp baseline-drift allowance.",
+          "Real outcomes also depend on paper difficulty calibration, section-wise normalization, and tie-breaking — none modelled here.",
+        ],
+      },
+    });
+  } catch (e) {
+    return NextResponse.json(
+      { error: e instanceof Error ? e.message : "Rank prediction failed" },
+      { status: 500 }
+    );
+  }
+}

@@ -246,3 +246,31 @@ Generate the JSON now.`;
     }
 
     // Attach target_ms based on bloom level. Send the questions MINUS
+    // correct_index/explanation — /submit re-reads the server-trusted
+    // copy by session_id.
+    const enriched = valid.map((q, i) => ({
+      idx: i,
+      stem: q.stem,
+      options: q.options,
+      bloom_level: q.bloom_level,
+      target_ms: TARGET_MS[q.bloom_level],
+    }));
+
+    // Sticky marking-scheme persistence (migration 77). Speed Trainer is a
+    // transient session — it doesn't create a quizzes row — but we still
+    // honour the user's pick and remember it for the next surface. If the
+    // client sent a scheme, write it to profile.last_marking_scheme.
+    if (body && body.markingScheme && typeof body.markingScheme === "object") {
+      const { writeLastMarkingScheme } = await import("@/lib/markingSchemeMemory");
+      const { resolveScheme } = await import("@/lib/scoring");
+      await writeLastMarkingScheme(admin, user.id, resolveScheme(body.markingScheme));
+    }
+
+    return NextResponse.json({ ok: true, session_id: sessionId, topic, count: enriched.length, questions: enriched });
+  } catch (e) {
+    return NextResponse.json(
+      { error: e instanceof Error ? e.message : "Could not start speed session" },
+      { status: 500 }
+    );
+  }
+}
