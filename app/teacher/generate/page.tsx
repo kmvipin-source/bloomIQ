@@ -489,7 +489,11 @@ export default function GeneratePage() {
       // when zero; warn loudly when delivered < requested so the teacher
       // sees per-level counts instead of a generic success toast.
       const deliveredTotal = Number(data.total ?? 0);
-      const requestedTotal = Object.values(perLevelCounts).reduce((s, n) => s + Number(n || 0), 0);
+      // Total requested = perLevel × number-of-target-levels. In "all" mode
+      // the API targets every Bloom level (6); in "custom" it targets only
+      // the picked ones. Mirrors the same math the API does.
+      const levelCount = mode === "all" ? 6 : pickedLevels.length;
+      const requestedTotal = perLevel * levelCount;
       if (deliveredTotal === 0) {
         throw new Error(
           "AI returned zero usable questions. Try a more specific topic, " +
@@ -507,7 +511,6 @@ export default function GeneratePage() {
           `Generated ${deliveredTotal} of ${requestedTotal} (short by ${requestedTotal - deliveredTotal}). ` +
           `Per level: ${perLevelStr}. Likely causes: niche topic / dedup / answer-leaks. ` +
           `Try a more specific topic or fewer levels.`,
-          { duration: 10000 },
         );
       } else {
         toast.success("Questions generated successfully.");

@@ -758,7 +758,6 @@ export default function StudentGeneratePage() {
           `Heads up — generated ${deliveredTotal} of ${expectedTotal} questions (short by ${shortfall}). ` +
           `Per level: ${perLevelStr}. ` +
           `Likely causes: niche topic the AI has weak coverage for, duplicate questions de-duped, or answer-key leaks dropped. Try a more specific topic or fewer levels.`,
-          { duration: 10000 },
         );
       } else {
         toast.success(`Test generated — ${deliveredTotal} questions across ${effectiveLevels.length} level${effectiveLevels.length === 1 ? "" : "s"}.`);
@@ -769,7 +768,6 @@ export default function StudentGeneratePage() {
       if (data.examFilter && Array.isArray(data.examFilter.omitted) && data.examFilter.omitted.length > 0) {
         toast.error(
           `${data.examFilter.name} doesn't test ${data.examFilter.omitted.length} of your picked Bloom level(s) — those were skipped. Generated only the levels this exam actually covers.`,
-          { duration: 8000 },
         );
       }
 
