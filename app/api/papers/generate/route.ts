@@ -345,3 +345,46 @@ export async function POST(req: Request) {
           } else {
             disputedCount++;
             const rowIdx = mcqIndices[i];
+            const row = rows[rowIdx];
+            // Stamp the dispute on the explanation field so teachers
+            // editing / printing the paper see the warning even if the
+            // UI hasn't surfaced the verification.disputed count. The
+            // schema doesn't have a dedicated quality column on
+            // exam_paper_questions, so we piggyback on explanation.
+            const reviewerLetter = typeof v.correctIndex === "number" ? "ABCD"[v.correctIndex] ?? "?" : "?";
+            const marker = `[⚠ ANSWER DISPUTED — AI re-solve picked option ${reviewerLetter}; please verify before printing.]`;
+            row.explanation = row.explanation
+              ? `${marker}\n\n${row.explanation}`
+              : marker;
+            disputedPositions.push({ section: row.section_name, position: row.position });
+            // eslint-disable-next-line no-console
+            console.warn(
+              `[papers/generate] MCQ at row ${rowIdx} answer disputed by re-solve. Stored: ${row.correct_answer}, reviewer chose index: ${v.correctIndex}`
+            );
+          }
+        }
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.warn(`[papers/generate] verification pass failed (non-fatal):`, e instanceof Error ? e.message : e);
+      }
+    }
+    const { error: qErr } = await sb.from("exam_paper_questions").insert(rows);
+    if (qErr) {
+      await sb.from("exam_papers").delete().eq("id", paper.id);
+      return NextResponse.json({ error: qErr.message }, { status: 500 });
+    }
+
+    return NextResponse.json({
+      ok: true,
+      paperId: paper.id,
+      verification: {
+        mcq_total: mcqQuestions.length,
+        verified: verifiedCount,
+        disputed: disputedCount,
+        disputed_positions: disputedPositions,
+      },
+    });
+  } catch (e) {
+    return NextResponse.json({ error: e instanceof Error ? e.message : "Generation failed" }, { status: 500 });
+  }
+}
