@@ -453,6 +453,11 @@ function stripSizeAttrs(svg: string): string {
   // viewport scales to its parent box.
   const safe = DOMPurify.sanitize(svg, {
     USE_PROFILES: { svg: true, svgFilters: true },
+    // SVG profile alone strips <style>, but LLM-generated SVGs routinely
+    // emit internal CSS — without `style` in the allowlist the diagram
+    // renders unstyled. Whitelist explicitly while keeping the script /
+    // event-handler blockers in place.
+    ADD_TAGS: ["style"],
     FORBID_TAGS: ["script", "foreignObject"],
     FORBID_ATTR: ["onerror", "onload", "onclick", "onmouseover"],
   });
@@ -558,6 +563,7 @@ export default function VisualizerPage() {
           reason?: string;
           suggestedExam?: string | null;
         };
+        if (controller.signal.aborted) return;
         setTopicValidation({
           loading: false,
           result: {

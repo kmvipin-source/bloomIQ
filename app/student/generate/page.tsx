@@ -377,6 +377,9 @@ export default function StudentGeneratePage() {
           reason?: string;
           suggestedExam?: string | null;
         };
+        // Don't overwrite a fresher in-flight check's state if this
+        // promise resolved after the user typed again.
+        if (controller.signal.aborted) return;
         setTopicValidation({
           loading: false,
           result: {

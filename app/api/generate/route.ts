@@ -799,7 +799,12 @@ export async function POST(req: Request) {
 
     results.forEach((r, i) => {
       if (r.status === "fulfilled") {
-        const lvl = levels[i];
+        // Must index `effectiveLevels` (the array results was built from),
+        // not the user-requested `levels`. When the exam-filter drops a
+        // Bloom level (e.g. NEET filters "create"), the two arrays differ
+        // in length AND order, so summary[levels[i]] would record the
+        // wrong key — or undefined when i >= levels.length.
+        const lvl = effectiveLevels[i];
         summary[lvl] = r.value.length;
         allRows.push(...r.value);
       }

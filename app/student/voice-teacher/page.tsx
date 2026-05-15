@@ -466,6 +466,9 @@ export default function VoiceTeacherPage() {
 function wrapResponsiveSvg(svg: string): string {
   const safe = DOMPurify.sanitize(svg, {
     USE_PROFILES: { svg: true, svgFilters: true },
+    // LLM-generated SVGs frequently emit internal CSS; allow <style>
+    // tag explicitly so the diagram renders as authored.
+    ADD_TAGS: ["style"],
     FORBID_TAGS: ["script", "foreignObject"],
     FORBID_ATTR: ["onerror", "onload", "onclick", "onmouseover"],
   });

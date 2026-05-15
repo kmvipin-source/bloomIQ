@@ -140,7 +140,12 @@ export default function LiveHostPage() {
     // that auto-trigger. Host can hit Next manually anytime.)
     if (shouldAdvance) {
       advancedRef.current = idx;
-      void advance();
+      void advance().catch(() => {
+        // If /next failed (server 500, network blip), clear the guard so
+        // the next poll tick can retry instead of permanently blocking
+        // auto-advance on this idx.
+        advancedRef.current = -1;
+      });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [remainingSec, state]);

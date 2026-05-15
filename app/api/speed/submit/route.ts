@@ -50,16 +50,23 @@ type Quadrant = {
   slow_wrong: number;
 };
 
-// Same target_ms map as /start. Keep in sync — the JSON shape exchanged
-// between /start and the client doesn't carry target_ms any more, so we
-// re-derive it here when scoring.
+// Same target_ms map as /start. MUST stay in sync — the JSON shape
+// exchanged between /start and the client carries target_ms (the
+// "examiner-pace budget" the on-screen clock runs against) but
+// /submit re-derives it server-side from the issued bloom_level so a
+// tampered client can't game its own quadrant verdict. If these two
+// constants drift, students see a "Slow & wrong" verdict for answers
+// they completed within their on-screen clock — exactly the user-
+// facing bug the audit caught on 2026-05-15.
+//
+// Source of truth: app/api/speed/start/route.ts:TARGET_MS.
 const TARGET_MS: Record<BloomLevel, number> = {
-  remember: 15_000,
-  understand: 30_000,
-  apply: 60_000,
+  remember: 30_000,
+  understand: 45_000,
+  apply: 75_000,
   analyze: 90_000,
-  evaluate: 120_000,
-  create: 180_000,
+  evaluate: 90_000,
+  create: 120_000,
 };
 
 function computeQuadrant(qs: ServerQ[]): Quadrant {
@@ -129,8 +136,13 @@ export async function POST(req: Request) {
       });
     }
 
-    const questions: ServerQ[] = issued.map((q) => {
-      const a = ansByIdx.get(issued.indexOf(q)) ?? { picked: -1, time_ms: 0 };
+    const questions: ServerQ[] = issued.map((q, idx) => {
+      // Use the loop index, not Array.indexOf(q) — indexOf returns the
+      // first matching object reference, so two duplicate issued
+      // questions (rare after dedup, but possible after a JSONB round-
+      // trip in tests) would silently mis-align answers to the wrong
+      // question. The loop index is the issued ordering by construction.
+      const a = ansByIdx.get(idx) ?? { picked: -1, time_ms: 0 };
       const bl = (typeof q.bloom_level === "string" && isBloomLevel(q.bloom_level) ? q.bloom_level : "remember") as BloomLevel;
       return {
         stem: q.stem,

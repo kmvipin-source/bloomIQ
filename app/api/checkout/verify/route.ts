@@ -57,7 +57,13 @@ export async function POST(req: Request) {
     }
 
     // 1) HMAC verification. Constant-time compare so the secret can't
-    // be leaked through timing analysis.
+    // be leaked through timing analysis. Strict hex shape check FIRST —
+    // Buffer.from(hex) silently drops trailing nibbles on odd-length
+    // input, and the equal-length string check would still pass with
+    // both sides 64 chars even after truncation.
+    if (!/^[0-9a-f]{64}$/i.test(signature)) {
+      return NextResponse.json({ error: "Signature mismatch — payment not verified." }, { status: 400 });
+    }
     const expected = crypto
       .createHmac("sha256", keySecret)
       .update(`${orderId}|${paymentId}`)

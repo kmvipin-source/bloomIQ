@@ -119,13 +119,13 @@ export default function MobileNav({ role }: { role: Role }) {
         for (let i = ls.length - 1; i >= 0; i--) {
           const k = ls.key(i);
           if (!k) continue;
-          if (k.startsWith("sb-") || k.startsWith("bloomiq_") || k.startsWith("supabase.")) ls.removeItem(k);
+          if (k.startsWith("sb-") || k.startsWith("bloomiq_") || k.startsWith("bloomiq:") || k.startsWith("supabase.")) ls.removeItem(k);
         }
         const ss = window.sessionStorage;
         for (let i = ss.length - 1; i >= 0; i--) {
           const k = ss.key(i);
           if (!k) continue;
-          if (k.startsWith("sb-") || k.startsWith("bloomiq_") || k.startsWith("supabase.")) ss.removeItem(k);
+          if (k.startsWith("sb-") || k.startsWith("bloomiq_") || k.startsWith("bloomiq:") || k.startsWith("supabase.")) ss.removeItem(k);
         }
       } catch { /* non-fatal */ }
       window.location.replace("/");

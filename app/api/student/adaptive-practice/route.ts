@@ -352,7 +352,11 @@ export async function POST(req: Request) {
     };
     const insertRows: QuestionInsertRow[] = valid.map((q, i) => ({
       owner_id: user.id,
-      topic,
+      // Use the upgraded topic (effectiveTopic), not the raw body.topic.
+      // Without this, future history-exclusion queries against the
+      // upgraded topic miss these rows because they were persisted
+      // under the generic body value.
+      topic: effectiveTopic,
       bloom_level: targetedLevel,
       stem: String(q.stem).trim(),
       options: q.options.map((o) => String(o).trim()),

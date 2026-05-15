@@ -157,6 +157,7 @@ export default function SpeedTrainerPage() {
           reason?: string;
           suggestedExam?: string | null;
         };
+        if (controller.signal.aborted) return;
         setTopicValidation({
           loading: false,
           result: {

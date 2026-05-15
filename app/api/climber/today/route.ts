@@ -81,15 +81,12 @@ export async function POST(req: Request) {
         .not("topic", "is", null)
         .order("created_at", { ascending: false })
         .limit(50);
-      const seen = new Set<string>();
-      for (const r of (recentQs || []) as Array<{ topic: string | null }>) {
-        if (r.topic && !seen.has(r.topic)) {
-          topic = r.topic;
-          break;
-        }
-        if (r.topic) seen.add(r.topic);
-      }
-      if (!topic) topic = "General Knowledge";
+      // Most recent non-null topic. The previous loop used a `seen` set
+      // that was never populated before the first check, so the second
+      // branch was dead code. Simplified to the documented intent.
+      const first = ((recentQs || []) as Array<{ topic: string | null }>)
+        .find((r) => r.topic && r.topic.trim().length > 0);
+      topic = first?.topic ?? "General Knowledge";
     }
 
     // Read current per-topic mastery state to decide which Bloom level is next.

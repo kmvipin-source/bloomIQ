@@ -99,8 +99,15 @@ export default function StudentLayout({ children }: { children: React.ReactNode 
     check();
     // Re-check on tab focus so a trial that expires mid-session — or a
     // session that gets superseded by sign-in on another device — is
-    // caught without requiring a full reload.
-    function onFocus() { check(); }
+    // caught without requiring a full reload. Reset `ok` to false so
+    // children stop rendering with stale (potentially prior-user) data
+    // while the new check runs; the spinner shows briefly until role
+    // resolves again. Without this, the layout keeps mounting the old
+    // student's UI under a new session until the bouncer fires.
+    function onFocus() {
+      setOk(false);
+      check();
+    }
     window.addEventListener("focus", onFocus);
     return () => {
       cancelled = true;
