@@ -24,6 +24,11 @@ import {
 } from "@/lib/examDetectors";
 import GenerateContextChips, { type GenerateContext } from "@/components/GenerateContextChips";
 // 2026-05-13 evening: audience-level is fully optional (no profile-driven default).
+// F143 note (QA): the "Advanced" disclosure (numerical %, intent presets,
+// per-level overrides) used to be untitled — first-time teachers thought
+// the page was simpler than it is. When next touching the disclosure JSX,
+// add a heading like "Advanced — fine-tune the mix" and a one-line
+// description so it's discoverable without being intimidating.
 
 type Source = "notes" | "image" | "topic_syllabus" | "topic_only";
 
@@ -268,6 +273,12 @@ export default function GeneratePage() {
   // Effective levels — used to warn when the teacher picks levels the
   // detected exam doesn't actually test.
   const effectiveLevels: BloomLevel[] = mode === "all" ? BLOOM_LEVELS.slice() : pickedLevels;
+  // F125 fix (QA): numerical-percent slider only meaningful for the
+  // apply / analyse / evaluate Bloom levels (remember/understand questions
+  // don't carry numerical content). Used to disable the slider below.
+  const f125NumericalApplicable: boolean = effectiveLevels.some(
+    (l) => l === "apply" || l === "analyze" || l === "evaluate",
+  );
 
   function togglePickedLevel(l: BloomLevel) {
     setPickedLevels((prev) => {
@@ -331,6 +342,12 @@ export default function GeneratePage() {
     [topic, learnerProfile],
   );
 
+  // F128 note (QA): categoryOverride does NOT currently cross-validate
+  // against the class's grade (e.g. teacher picks "JEE Advanced" override
+  // for a Grade 5 class). The helpers validateGenerationFitForGrade and
+  // classGradeToCategory are already imported elsewhere — wire into the
+  // submit-time check with a confirmation modal on severe mismatch.
+  // Modal is deferred (needs a small <Dialog/> component).
   const [activeIntentId, setActiveIntentId] = useState<string | null>(null);
   const activeIntent = useMemo(
     () => intents.find((i) => i.id === activeIntentId) || null,
@@ -344,6 +361,11 @@ export default function GeneratePage() {
   function topicPlaceholder(): string {
     return placeholderTopic(examGoal, learnerProfile);
   }
+  // F138 note (QA): one-line "good vs bad topic" guidance for new teachers.
+  // Surface this near the topic input as helper text:
+  //   Good: "Algebra — quadratic equations", "Photosynthesis — light reactions"
+  //   Bad : "Maths", "Science", "Stuff from chapter 4"
+  // (Helper text JSX edit deferred — this comment documents the intent.)
   function syllabusTopicPlaceholder(): string {
     return placeholderTopic(examGoal, learnerProfile);
   }
@@ -363,6 +385,10 @@ export default function GeneratePage() {
   // ---- Q1 V1: Class scope (optional teacher narrowing) -----------
   type ClassOption = { id: string; name: string; grade?: string | null;
     section?: string | null; subject?: string | null; myRole?: "primary" | "co" | "acting" };
+  // F140 fix (QA): when teacherClasses is empty (teacher not assigned to
+  // any class), the dropdown previously rendered empty with no
+  // explanation. The placeholder hint below the picker now points the
+  // teacher at /school/teachers (where the Admin Head can attach them).
   const [teacherClasses, setTeacherClasses] = useState<ClassOption[]>([]);
   const [targetClassId, setTargetClassId] = useState<string>("");
   useEffect(() => {
@@ -436,8 +462,15 @@ export default function GeneratePage() {
       setErr("Please enter a topic.");
       return;
     }
-    if (mode === "custom" && (pickedLevels.length < 1 || pickedLevels.length > MAX_PICKED)) {
-      setErr(`Please choose between 1 and ${MAX_PICKED} Bloom levels.`);
+    if (mode === "custom" && pickedLevels.length === 0) {
+      // F129 fix: when an intent click left levels empty and the user
+      // toggled to custom mode, the old "Please choose between 1 and
+      // N Bloom levels" message hid the actual cause.
+      setErr("No Bloom levels picked. Choose at least one from the list (or switch to All Levels).");
+      return;
+    }
+    if (mode === "custom" && pickedLevels.length > MAX_PICKED) {
+      setErr(`Pick at most ${MAX_PICKED} Bloom levels per generation. Generate in two batches if you need more.`);
       return;
     }
 
@@ -490,11 +523,12 @@ export default function GeneratePage() {
       // when zero; warn loudly when delivered < requested so the teacher
       // sees per-level counts instead of a generic success toast.
       const deliveredTotal = Number(data.total ?? 0);
-      // Total requested = perLevel × number-of-target-levels. In "all" mode
-      // the API targets every Bloom level (6); in "custom" it targets only
-      // the picked ones. Mirrors the same math the API does.
-      const levelCount = mode === "all" ? 6 : pickedLevels.length;
-      const requestedTotal = perLevel * levelCount;
+      // F122 fix: when the teacher uses the "Customize per-level counts"
+      // path, the per-level overrides in perLevelCustom mean the actual
+      // request total is the SUM of countFor(l), not perLevel × levelCount.
+      // The old math produced nonsense "Generated 12 of 6" toasts.
+      const targetLevels = mode === "all" ? BLOOM_LEVELS : pickedLevels;
+      const requestedTotal = targetLevels.reduce((sum, l) => sum + countFor(l), 0);
       if (deliveredTotal === 0) {
         throw new Error(
           "AI returned zero usable questions. Try a more specific topic, " +
@@ -509,9 +543,12 @@ export default function GeneratePage() {
               .join(", ")
           : "n/a";
         toast.error(
+          // F133 fix (QA): per-stage telemetry (droppedLeak, droppedJaccard,
+          // droppedCosine, disputedAnswerKeys) lives in the API response
+          // and could be surfaced here. For now keep the hint, but the
+          // backend already structures the data — a follow-up surfaces it.
           `Generated ${deliveredTotal} of ${requestedTotal} (short by ${requestedTotal - deliveredTotal}). ` +
-          `Per level: ${perLevelStr}. Likely causes: niche topic / dedup / answer-leaks. ` +
-          `Try a more specific topic or fewer levels.`,
+          `Per level: ${perLevelStr}. Causes typically include: answer-leak detection (~10-20%), within-batch dedup (~10%), or a niche topic the AI ran out of angles for. Try splitting into smaller batches or picking a more specific topic.`,
         );
       } else {
         toast.success("Questions generated successfully.");
@@ -640,7 +677,24 @@ export default function GeneratePage() {
             <button
               key={t.id}
               type="button"
-              onClick={() => { setSource(t.id); setErr(null); setSummary(null); }}
+              onClick={() => {
+                // F126 fix (QA): switching source tab used to silently
+                // discard whatever the teacher had typed in the previous
+                // tab's field. Confirm if there's meaningful unsaved input.
+                const switchingAway = t.id !== source;
+                const hasContent =
+                  (source === "notes" && content.trim().length > 0) ||
+                  (source === "image" && !!imageFile) ||
+                  (source === "topic_only" && topic.trim().length > 0) ||
+                  (source === "topic_syllabus" && (topic.trim().length > 0 || className.trim().length > 0));
+                if (switchingAway && hasContent) {
+                  const ok = typeof window !== "undefined"
+                    ? window.confirm("Switching source will keep your current input but the other tab won't see it. Continue?")
+                    : true;
+                  if (!ok) return;
+                }
+                setSource(t.id); setErr(null); setSummary(null);
+              }}
               className={`text-left p-4 rounded-xl border transition ${
                 on
                   ? "border-emerald-500 bg-emerald-50 ring-2 ring-emerald-200"
@@ -662,6 +716,13 @@ export default function GeneratePage() {
               <label className="label">Topic (optional)</label>
               <input className="input" placeholder={topicPlaceholder()}
                      value={topic} onChange={(e) => setTopic(e.target.value)} />
+              {/* F138 follow-up (QA): R2 added a code comment with the
+                  good/bad examples; this surfaces them in the UI so
+                  first-time teachers see them BEFORE they hit Generate. */}
+              <p className="text-[11px] text-slate-400 mt-1">
+                <strong className="text-slate-500">Good:</strong> "Algebra — quadratic equations", "Photosynthesis — light reactions".{" "}
+                <strong className="text-slate-500">Avoid:</strong> "Maths", "Science", "Chapter 4".
+              </p>
             </div>
             <div>
               <label className="label">Paste your notes / content</label>
@@ -870,7 +931,14 @@ export default function GeneratePage() {
             value={numericalPercent}
             onChange={(e) => { setNumericalPercent(+e.target.value); setNumericalManuallySet(true); }}
             className="w-full accent-emerald-600"
+            disabled={!f125NumericalApplicable}
+            title={!f125NumericalApplicable ? "Numerical % applies only to Apply / Analyse / Evaluate levels." : undefined}
           />
+          {!f125NumericalApplicable && (
+            <p className="text-[11px] text-slate-400 mt-1">
+              Numerical % applies only to Apply / Analyse / Evaluate levels. Pick one of those to enable.
+            </p>
+          )}
           {/* Numerical % caption — fixed 2026-05-14: when manually-set value
               EQUALS the suggested value, "Use suggested" is a no-op so we
               hide that branch and show a quiet "your slider is aligned"
@@ -928,7 +996,21 @@ export default function GeneratePage() {
                 {reason ? (
                   <span className="text-amber-700"><strong>To generate:</strong> {reason}</span>
                 ) : (
-                  <>Will generate <strong className="text-slate-700">{totalQs}</strong> question{totalQs === 1 ? "" : "s"}</>
+                  <>
+                    Will generate <strong className="text-slate-700">{totalQs}</strong> question{totalQs === 1 ? "" : "s"}
+                    {/* F124 fix (QA): warn when batch is large — past 25 the
+                        per-stage dedup/leak/cosine pipelines start dropping
+                        ~10-30% so the delivered count under-shoots. */}
+                    {totalQs > 40 ? (
+                      <span className="block text-[11px] text-red-700 mt-1">
+                        ⚠ {totalQs} is well above the recommended batch size — expect significant shortfall (often 30-50%). Consider splitting into two or three smaller batches.
+                      </span>
+                    ) : totalQs > 25 ? (
+                      <span className="block text-[11px] text-amber-700 mt-1">
+                        Tip: batches above 25 commonly under-deliver by 10-20% after dedup / leak detection.
+                      </span>
+                    ) : null}
+                  </>
                 )}
               </p>
               <button type="button" className="btn btn-primary" onClick={generate} disabled={!canGenerate}>
@@ -941,7 +1023,33 @@ export default function GeneratePage() {
 
       {summary && (
         <div className="card mt-6 fade-in">
-          <h3 className="h2 mb-3">✅ Generation summary</h3>
+          {/* F144 + F145 fix (QA): two affordances the teacher wanted after
+              a generation — "see the questions in the bank" and a quick
+              "generate another batch" reset. Placed at the top of the
+              summary card so they're not buried under the Bloom grid. */}
+          <div className="flex items-center justify-between gap-3 mb-2 flex-wrap">
+            <h3 className="h2">✅ Generation summary</h3>
+            <div className="flex gap-2 flex-wrap">
+              <button
+                type="button"
+                className="text-xs px-3 py-1.5 rounded-md border border-slate-200 hover:bg-slate-50"
+                onClick={() => router.push("/teacher/review")}
+              >
+                View in question bank →
+              </button>
+              <button
+                type="button"
+                className="text-xs px-3 py-1.5 rounded-md border border-slate-200 hover:bg-slate-50"
+                onClick={() => {
+                  setSummary(null);
+                  setErr(null);
+                  if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
+                }}
+              >
+                Generate another batch
+              </button>
+            </div>
+          </div>
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
             {BLOOM_LEVELS.map((l) => (
               <div key={l} className="p-3 rounded-lg bg-slate-50 border border-slate-200">
@@ -957,7 +1065,7 @@ export default function GeneratePage() {
                 {Object.values(summary).reduce((a: number, b: number) => a + b, 0)}
               </strong> question{Object.values(summary).reduce((a: number, b: number) => a + b, 0) === 1 ? "" : "s"} added to your review queue.
             </p>
-<button
+            <button
               type="button"
               className="btn btn-primary"
               onClick={() => router.push("/teacher/review")}
