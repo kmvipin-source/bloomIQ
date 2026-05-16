@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { getBearer, supabaseServer, supabaseAdmin } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/lib/supabase/server";
+import { requirePlatformAdmin } from "@/lib/apiAuth";
 
 export const runtime = "nodejs";
 
@@ -17,30 +18,14 @@ export const runtime = "nodejs";
  * Auth: caller must be platform_admin.
  */
 
-async function requireAdmin(req: Request) {
-  const token = getBearer(req);
-  if (!token) return { err: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) };
-  const sb = supabaseServer(token);
-  const { data: { user } } = await sb.auth.getUser();
-  if (!user) return { err: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) };
-  // Service-role read to dodge the RLS race. The previous user-token
-  // read intermittently 403'd legit admins on the Vercel edge.
-  const adminCli = supabaseAdmin();
-  const { data: me } = await adminCli
-    .from("profiles")
-    .select("platform_admin")
-    .eq("id", user.id)
-    .maybeSingle();
-  if (!me?.platform_admin) {
-    return { err: NextResponse.json({ error: "Forbidden" }, { status: 403 }) };
-  }
-  return { user };
-}
+// F171 fix (QA): local requireAdmin replaced with shared
+// requirePlatformAdmin from lib/apiAuth.ts. Call sites swap
+// "err" key for the discriminated "error" shape.
 
 export async function GET(req: Request) {
   try {
-    const auth = await requireAdmin(req);
-    if ("err" in auth) return auth.err;
+    const auth = await requirePlatformAdmin(req);
+    if ("error" in auth) return auth.error;
 
     const admin = supabaseAdmin();
     const { data: plans, error } = await admin

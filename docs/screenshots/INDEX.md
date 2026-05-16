@@ -1,4 +1,4 @@
-# BloomIQ QA Screenshots Index — 2026-05-02
+# ZCORIQ QA Screenshots Index — 2026-05-02
 
 This index documents every visual checkpoint captured during the
 end-to-end functional QA on 2026-05-02. The screenshots themselves
@@ -193,11 +193,11 @@ me to drive Chrome through the flow again and I'll save explicitly.
 ## #12 — /staff hidden platform-admin login
 
 - **ss_235347s8u** — Initial render of `/staff` (after sign-out).
-  Heading "**BloomIQ staff sign in**" with shield icon. Subtitle
+  Heading "**ZCORIQ staff sign in**" with shield icon. Subtitle
   "*Internal-only entry point. If you reached this page by
   mistake, go to the public sign-in.*" Single-column form: Email,
   Password (with show/hide toggle), ToS checkbox, Sign in button
-  (correctly disabled until ToS ticked). Footer: "*BloomIQ staff
+  (correctly disabled until ToS ticked). Footer: "*ZCORIQ staff
   only. Public users — please use /login.*" **No role tabs, no
   student modes** — clean platform-only surface.
 - **ss_07260wycl** — `/staff` form filled with `kmvipin@gmail.com`.

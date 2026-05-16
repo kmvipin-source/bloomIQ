@@ -25,7 +25,7 @@ import { BLOOM_LEVELS, BLOOM_META, type BloomLevel } from "@/lib/bloom";
  *     callout band below, where it actually matters for the action.
  *
  * Empty state: render the six labelled rows with empty bars and "—"
- * percentages so the canvas teaches what BloomIQ is even before any
+ * percentages so the canvas teaches what ZCORIQ is even before any
  * data exists — paired with a "Take a practice test" CTA below.
  */
 

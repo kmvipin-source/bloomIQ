@@ -50,7 +50,7 @@ Both gates read live from `subscription_limits` with a 60-second in-process cach
 | Voice AI Teacher | 1 lifetime | Admin page |
 | Trap Detector | 1 lifetime | Admin page |
 | Knowledge Graph | 1 lifetime | Admin page |
-| BloomIQ Score calibration | 1 lifetime | Admin page |
+| ZCORIQ Bloom Score calibration | 1 lifetime | Admin page |
 | Reset timezone | `Asia/Kolkata` | Admin page |
 
 Set any cap to **0** to hard-lock that feature on Free (no taste at all).

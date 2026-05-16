@@ -99,7 +99,7 @@ export default function StatusPage() {
         {/* Branding */}
         <div className="flex items-center gap-2 mb-6">
           <span className="text-2xl">🌱</span>
-          <span className="text-xl font-bold tracking-tight">BloomIQ — System status</span>
+          <span className="text-xl font-bold tracking-tight">ZCORIQ — System status</span>
         </div>
 
         {/* Banner */}

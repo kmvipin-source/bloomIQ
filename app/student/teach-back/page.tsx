@@ -9,6 +9,7 @@ import {
   CheckCircle2, AlertTriangle, Loader2, ArrowLeft,
 } from "lucide-react";
 import { suggestedTopics, placeholderTopic } from "@/lib/topicSuggestions";
+import { detectExamFromTopic, EXAM_DETECTORS, type ExamMeta } from "@/lib/examDetectors";
 import { type LearnerProfile } from "@/components/LearnerProfilePrompt";
 import CurrentGoalChip from "@/components/CurrentGoalChip";
 
@@ -58,6 +59,73 @@ export default function TeachBackPage() {
   // register. User can change goal from the persistent chip below.
   const [examGoal, setExamGoal] = useState<string | null>(null);
   const [learnerProfile, setLearnerProfile] = useState<LearnerProfile | null>(null);
+  // 2026-05-14: LLM-validated topic-vs-syllabus warning — same pattern as
+  // /student/generate, /student/speed, /student/flashcards, /student/visualizer.
+  // Uniform UX: same /api/topic-validate route, same 800ms debounce, same
+  // amber warning shape, same Settings deep-link. Fail-open on errors.
+  const examMeta = useMemo<ExamMeta | null>(() => {
+    const fromTopic = detectExamFromTopic(topic);
+    if (fromTopic) return fromTopic;
+    if (!examGoal) return null;
+    const g = examGoal.toLowerCase().trim();
+    if (g.startsWith("jee")) return EXAM_DETECTORS.JEE;
+    if (g.startsWith("neet")) return EXAM_DETECTORS.NEET;
+    if (g === "cat" || g === "cat_prep") return EXAM_DETECTORS.CAT;
+    if (g === "upsc" || g === "upsc_prep") return EXAM_DETECTORS.UPSC;
+    if (g === "gmat" || g === "gmat_prep") return EXAM_DETECTORS.GMAT;
+    if (g === "gre"  || g === "gre_prep")  return EXAM_DETECTORS.GRE;
+    if (g === "gate" || g === "gate_prep") return EXAM_DETECTORS.GATE;
+    if (g === "clat" || g === "clat_prep") return EXAM_DETECTORS.CLAT;
+    if (g === "bitsat" || g === "bitsat_prep") return EXAM_DETECTORS.BITSAT;
+    if (g === "sat"  || g === "sat_prep")  return EXAM_DETECTORS.SAT;
+    if (g === "nda"  || g === "nda_prep")  return EXAM_DETECTORS.NDA;
+    if (g === "cuet" || g === "cuet_prep") return EXAM_DETECTORS.CUET;
+    return null;
+  }, [topic, examGoal]);
+  const [topicValidation, setTopicValidation] = useState<{
+    loading: boolean;
+    result: { valid: boolean; reason: string; suggestedExam: string | null } | null;
+  }>({ loading: false, result: null });
+  useEffect(() => {
+    if (!examMeta || (topic || "").trim().length < 3) {
+      setTopicValidation({ loading: false, result: null });
+      return;
+    }
+    const controller = new AbortController();
+    setTopicValidation((s) => ({ ...s, loading: true }));
+    const handle = setTimeout(async () => {
+      try {
+        const sb = supabaseBrowser();
+        const { data: { session } } = await sb.auth.getSession();
+        if (!session) return;
+        const res = await fetch("/api/topic-validate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+          body: JSON.stringify({
+            topic: topic.trim(),
+            examName: examMeta.name,
+            examDescription: examMeta.description,
+            examSections: examMeta.sections,
+          }),
+          signal: controller.signal,
+        });
+        const j = (await res.json()) as { valid?: boolean; reason?: string; suggestedExam?: string | null };
+        setTopicValidation({
+          loading: false,
+          result: {
+            valid: j.valid !== false,
+            reason: String(j.reason || ""),
+            suggestedExam: j.suggestedExam ? String(j.suggestedExam) : null,
+          },
+        });
+      } catch (e) {
+        if ((e as Error)?.name !== "AbortError") {
+          setTopicValidation({ loading: false, result: null });
+        }
+      }
+    }, 800);
+    return () => { clearTimeout(handle); controller.abort(); };
+  }, [topic, examMeta]);
 
   useEffect(() => {
     void loadHistory();
@@ -195,7 +263,24 @@ export default function TeachBackPage() {
 
       {!grade && (
         <form onSubmit={submit} className="card mt-6 space-y-4">
-          <div>
+          
+      {/* Uniform topic-vs-syllabus warning (same shape as the other student-facing surfaces). */}
+      {topicValidation.result && !topicValidation.result.valid && examMeta && (
+        <div className="card mt-4 bg-amber-50/60 border-amber-200">
+          <div className="flex items-start gap-2 text-xs text-amber-900">
+            <span className="font-bold">⚠</span>
+            <div className="flex-1">
+              <strong>{topicValidation.result.reason}</strong>
+              {topicValidation.result.suggestedExam ? (
+                <>{" "}This topic fits <strong>{topicValidation.result.suggestedExam}</strong> better — switch your goal in <a href="/settings" className="underline font-semibold">Settings</a> if needed.</>
+              ) : (
+                <>{" "}If this is intentional, proceed.</>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+      <div>
             <label className="label">Topic</label>
             <input
               className="input"

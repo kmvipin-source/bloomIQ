@@ -124,7 +124,7 @@ export default function AppearancePage() {
           <div>
             <h1 className="h1">Appearance</h1>
             <p className="muted text-sm">
-              Make BloomIQ look the way you like. Changes apply instantly.
+              Make ZCORIQ look the way you like. Changes apply instantly.
             </p>
           </div>
         </div>

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { groqText } from "@/lib/groq";
-import { getBearer, supabaseServer } from "@/lib/supabase/server";
+import { supabaseServer } from "@/lib/supabase/server";
+import { requireAuthenticated } from "@/lib/apiAuth";
 import { checkCoachQuota, logCoachCall } from "@/lib/coachQuota";
 import { buildTeacherContext } from "@/lib/teacherContext";
 
@@ -21,7 +22,7 @@ export const maxDuration = 60;
 
 type ChatTurn = { role: "user" | "assistant"; content: string };
 
-const SYSTEM_TEMPLATE = (contextJson: string) => `You are the BloomIQ Teacher Coach — a senior pedagogy-savvy mentor helping a classroom teacher interpret their students' quiz data.
+const SYSTEM_TEMPLATE = (contextJson: string) => `You are the ZCORIQ Teacher Coach — a senior pedagogy-savvy mentor helping a classroom teacher interpret their students' quiz data.
 
 You receive the teacher's current state as a JSON snapshot. Use it to answer concretely.
 
@@ -65,11 +66,11 @@ function transcript(history: ChatTurn[]): string {
 
 export async function POST(req: Request) {
   try {
-    const token = getBearer(req);
-    if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    const sb = supabaseServer(token);
-    const { data: { user } } = await sb.auth.getUser();
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    // F22 fix (QA): shared requireAuthenticated — single-session
+    // enforcement now applied to the teacher-coach mutating route.
+    const auth = await requireAuthenticated(req);
+    if ("error" in auth) return auth.error;
+    const { user, sb } = auth;
 
     // Role check: only teachers can use the Teacher Coach. We deliberately do
     // NOT allow super_teacher here — they have their own (school-wide) coach.
@@ -79,8 +80,15 @@ export async function POST(req: Request) {
       .eq("id", user.id)
       .single();
     if (!prof || prof.role !== "teacher") {
+      // F108 fix: super_teacher has their own school-wide coach at
+      // /api/school/coach. Point them there instead of a generic 403.
+      const isSuper = prof?.role === "super_teacher";
       return NextResponse.json(
-        { error: "Only teachers can use the Teacher Coach." },
+        {
+          error: isSuper
+            ? "Use the school-wide Coach at /api/school/coach instead — it has cross-class context."
+            : "Only teachers can use the Teacher Coach.",
+        },
         { status: 403 }
       );
     }
@@ -125,16 +133,9 @@ export async function POST(req: Request) {
     return NextResponse.json({
       reply,
       contextSnapshot: { asOf: ctx.asOf, totals: ctx.totals },
-      quota: {
-        planSlug: gate.planSlug,
-        used: gate.used + 1,
-        limit: gate.limit,
-      },
+      quota: { planSlug: gate.planSlug, used: gate.used + 1, limit: gate.limit },
     });
   } catch (e) {
-    return NextResponse.json(
-      { error: e instanceof Error ? e.message : "Coach failed to respond." },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: e instanceof Error ? e.message : "Coach failed to respond." }, { status: 500 });
   }
 }

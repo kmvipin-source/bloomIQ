@@ -3,7 +3,7 @@
  *
  * Generates a 12-question Bloom-taxonomy-tagged calibration quiz tailored
  * to the student's exam goal. Used by /api/student/calibration/start to
- * produce the first-run experience that powers the BloomIQ Score and
+ * produce the first-run experience that powers the ZCORIQ Bloom Score and
  * Future You reveal.
  *
  * WHY 12 QUESTIONS:
@@ -72,7 +72,7 @@ export type CalibrationGenerationResult = {
   groq_model: string;
 };
 
-const SYSTEM_PROMPT = `You are an expert exam-prep assessment designer for BloomIQ, an Indian education platform. You write Bloom's Taxonomy-tagged multiple-choice calibration questions for students preparing for Indian competitive and board exams.
+const SYSTEM_PROMPT = `You are an expert exam-prep assessment designer for ZCORIQ, an Indian education platform. You write Bloom's Taxonomy-tagged multiple-choice calibration questions for students preparing for Indian competitive and board exams.
 
 You MUST return strict JSON in the exact shape specified. No prose, no markdown, no commentary. The response is parsed by code; any deviation from the schema breaks the user experience.
 

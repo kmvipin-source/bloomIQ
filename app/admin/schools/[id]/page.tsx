@@ -207,7 +207,7 @@ export default function SchoolAdminPage(props: PageProps) {
       if (activationDate) {
         // Treat as midnight India-local; encode as ISO so server stores
         // a stable instant. The 5h30 offset is intentional — IST is
-        // BloomIQ's primary market.
+        // ZCORIQ's primary market.
         body.started_at = new Date(`${activationDate}T00:00:00+05:30`).toISOString();
       }
       body.activation_pending = activationPending;
@@ -821,7 +821,7 @@ Optional audit note (e.g. "30 days past due"):`,
                   see both. */}
               {sub.payment_recorded_at && sub.payment_recorded_at !== sub.payment_received_at && (
                 <div className="text-[10px] muted mt-1">
-                  Recorded in BloomIQ at {new Date(sub.payment_recorded_at).toLocaleString("en-IN")}
+                  Recorded in ZCORIQ at {new Date(sub.payment_recorded_at).toLocaleString("en-IN")}
                 </div>
               )}
             </div>

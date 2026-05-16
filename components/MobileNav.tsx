@@ -145,7 +145,7 @@ export default function MobileNav({ role }: { role: Role }) {
       >
         <Link href={ROLE_HOME[role]} className="flex items-center gap-2">
           <span className="text-2xl">🌱</span>
-          <span className="font-bold tracking-tight">BloomIQ</span>
+          <span className="font-bold tracking-tight">ZCORIQ</span>
         </Link>
         <button type="button"
           onClick={() => setOpen((v) => !v)}

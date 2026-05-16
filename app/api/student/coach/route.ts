@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { groqText } from "@/lib/groq";
-import { getBearer, supabaseServer } from "@/lib/supabase/server";
+import { supabaseServer } from "@/lib/supabase/server";
+import { requireAuthenticated } from "@/lib/apiAuth";
 import { buildStudentContext } from "@/lib/studentContext";
 import { consumeDailyQuota } from "@/lib/freeQuota";
 
@@ -21,7 +22,7 @@ export const maxDuration = 60;
 
 type ChatTurn = { role: "user" | "assistant"; content: string };
 
-const SYSTEM_TEMPLATE = (contextJson: string) => `You are the BloomIQ Student Coach — a supportive performance coach helping a student understand their own quiz performance and habits. NOT a subject-matter tutor (that's a different feature).
+const SYSTEM_TEMPLATE = (contextJson: string) => `You are the ZCORIQ Student Coach — a supportive performance coach helping a student understand their own quiz performance and habits. NOT a subject-matter tutor (that's a different feature).
 
 Use the JSON snapshot below to answer concretely.
 
@@ -66,11 +67,11 @@ function transcript(history: ChatTurn[]): string {
 
 export async function POST(req: Request) {
   try {
-    const token = getBearer(req);
-    if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    const sb = supabaseServer(token);
-    const { data: { user } } = await sb.auth.getUser();
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    // F22 fix (QA): shared requireAuthenticated — single-session
+    // enforcement (token iat >= profiles.session_iat) now applied.
+    const auth = await requireAuthenticated(req);
+    if ("error" in auth) return auth.error;
+    const { user, sb } = auth;
 
     // Role check: only students can use the Student Coach.
     const { data: prof } = await sb

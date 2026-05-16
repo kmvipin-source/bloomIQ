@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { getBearer, supabaseServer, supabaseAdmin } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/lib/supabase/server";
+import { requirePlatformAdmin } from "@/lib/apiAuth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,20 +19,12 @@ export const dynamic = "force-dynamic";
  */
 export async function GET(req: Request) {
   try {
-    const token = getBearer(req);
-    if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    const sb = supabaseServer(token);
-    const { data: { user } } = await sb.auth.getUser();
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-    const { data: prof } = await sb
-      .from("profiles")
-      .select("platform_admin")
-      .eq("id", user.id)
-      .maybeSingle();
-    if (!prof?.platform_admin) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-
-    const admin = supabaseAdmin();
+    // F171 fix (QA): inline platform_admin check replaced with shared
+    // requirePlatformAdmin (and the F22 single-session iat enforcement
+    // that comes with it for free).
+    const auth = await requirePlatformAdmin(req);
+    if ("error" in auth) return auth.error;
+    const { admin } = auth;
 
     // -- Plans (canonical labels + price + tier for grouping)
     const { data: plans } = await admin
@@ -59,9 +52,19 @@ export async function GET(req: Request) {
 
     // Active sub set: status active + not expired.
     const now = Date.now();
+    // F174 fix: include in-grace-period subscriptions in the "active"
+    // count. The hard < expires_at check previously dropped subs that
+    // are past expiry but still serving features via grace_period_days.
+    // 14 days is the platform-wide default grace window (matches the
+    // onboard route's default).
+    const GRACE_DEFAULT_DAYS = 14;
     const activeSubs = (subs || []).filter((s) => {
       if (s.status && s.status !== "active") return false;
-      if (s.expires_at && new Date(s.expires_at).getTime() < now) return false;
+      if (!s.expires_at) return true;
+      const expiresMs = new Date(s.expires_at).getTime();
+      const graceDays = (s as { grace_period_days?: number | null }).grace_period_days ?? GRACE_DEFAULT_DAYS;
+      const graceCutoff = expiresMs + (graceDays * 24 * 60 * 60 * 1000);
+      if (graceCutoff < now) return false;
       return true;
     });
 
@@ -323,4 +326,4 @@ export async function GET(req: Request) {
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : "Failed" }, { status: 500 });
   }
-}
+}

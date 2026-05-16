@@ -41,7 +41,10 @@ type User = {
   created_at: string | null;
 };
 
-type RoleFilter = "all" | SubRole | "all_teachers";
+// F175 note (QA): "platform_admin" is a flag on profiles, not a
+// sub_role. We expose it here as a synthetic RoleFilter value so the
+// chip list can include a one-click "show admins only" filter.
+type RoleFilter = "all" | SubRole | "all_teachers" | "platform_admins";
 
 const SUB_ROLE_LABEL: Record<SubRole, string> = {
   individual_student: "Individual Student",
@@ -187,6 +190,10 @@ export default function AdminUsersPage() {
     return users.filter((u) => {
       if (roleFilter === "all_teachers") {
         if (u.role !== "teacher") return false;
+      } else if (roleFilter === "platform_admins") {
+        // F175 fix (QA): synthetic filter — platform_admin is on profiles,
+        // not in sub_role, so it needs its own branch.
+        if (!u.platform_admin) return false;
       } else if (roleFilter !== "all") {
         if (u.sub_role !== roleFilter) return false;
       }
@@ -259,6 +266,8 @@ export default function AdminUsersPage() {
             ["all_teachers", `Teachers (${counts.all_teachers})`],
             ["primary_teacher", `Primary (${counts.primary_teacher})`],
             ["co_teacher", `Co-Teachers (${counts.co_teacher})`],
+            // F175 fix (QA): show-admins chip — convenience for ops.
+            ["platform_admins", `Platform Admins (${users.filter((u) => u.platform_admin).length})`],
           ] as Array<[RoleFilter, string]>).map(([key, label]) => (
             <button
               key={key}

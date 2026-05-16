@@ -18,7 +18,7 @@
  * Config (set in .env / .env.local):
  *   EMAIL          — Gmail address (the sending account)
  *   PASS           — Gmail app password (NOT the account password)
- *   DIGEST_FROM    — optional friendly From header, e.g. "BloomIQ <noreply@bloomiq.com>"
+ *   DIGEST_FROM    — optional friendly From header, e.g. "ZCORIQ <noreply@bloomiq.com>"
  *
  * When EMAIL or PASS is missing, sendEmail() returns
  * `{ ok: true, sent: false, reason: "not_configured" }` so calling routes
@@ -84,14 +84,14 @@ function wrap(bodyHtml: string): string {
     <div style="font-family: -apple-system, system-ui, sans-serif; max-width: 560px; margin: 0 auto; color: #0f172a;">
       ${bodyHtml}
       <hr style="border:none; border-top: 1px solid #e2e8f0; margin: 24px 0;"/>
-      <p style="color:#64748b; font-size:12px;">Sent by BloomIQ. If this wasn't you, you can safely ignore this email.</p>
+      <p style="color:#64748b; font-size:12px;">Sent by ZCORIQ. If this wasn't you, you can safely ignore this email.</p>
     </div>`;
 }
 
 /**
  * Co-teacher invitation. Sent when a school admin / primary teacher
  * adds someone as a co-teacher on a class. The recipient may or may
- * not have an existing BloomIQ account.
+ * not have an existing ZCORIQ account.
  */
 export function coTeacherInviteTemplate(opts: {
   inviterName: string | null;
@@ -99,9 +99,9 @@ export function coTeacherInviteTemplate(opts: {
   schoolName: string | null;
   acceptUrl: string;
 }): { subject: string; html: string; text: string } {
-  const who = opts.inviterName || "A BloomIQ admin";
+  const who = opts.inviterName || "A ZCORIQ admin";
   const school = opts.schoolName ? ` at ${opts.schoolName}` : "";
-  const subject = `You've been invited to co-teach ${opts.className} on BloomIQ`;
+  const subject = `You've been invited to co-teach ${opts.className} on ZCORIQ`;
   const html = wrap(`
     <h2 style="color:#0f172a; margin-top:0;">You're invited to co-teach</h2>
     <p>${escapeHtml(who)}${escapeHtml(school)} has added you as a co-teacher on the
@@ -112,7 +112,7 @@ export function coTeacherInviteTemplate(opts: {
       <a href="${opts.acceptUrl}"
          style="background:#10b981; color:white; padding:10px 18px; border-radius:8px;
                 text-decoration:none; font-weight:600; display:inline-block;">
-        Open BloomIQ
+        Open ZCORIQ
       </a>
     </p>
     <p style="color:#475569; font-size:13px;">
@@ -120,9 +120,9 @@ export function coTeacherInviteTemplate(opts: {
       address — your co-teacher access will appear automatically.
     </p>`);
   const text =
-    `You're invited to co-teach ${opts.className} on BloomIQ.\n\n` +
+    `You're invited to co-teach ${opts.className} on ZCORIQ.\n\n` +
     `${who}${school} has added you as a co-teacher.\n\n` +
-    `Open BloomIQ: ${opts.acceptUrl}\n\n` +
+    `Open ZCORIQ: ${opts.acceptUrl}\n\n` +
     `If you don't have an account yet, sign up with this email address and the access ` +
     `will appear automatically.`;
   return { subject, html, text };
@@ -138,9 +138,9 @@ export function primaryTeacherInviteTemplate(opts: {
   schoolName: string | null;
   acceptUrl: string;
 }): { subject: string; html: string; text: string } {
-  const who = opts.inviterName || "A BloomIQ admin";
+  const who = opts.inviterName || "A ZCORIQ admin";
   const school = opts.schoolName ? ` at ${opts.schoolName}` : "";
-  const subject = `You're now the primary teacher for ${opts.className} on BloomIQ`;
+  const subject = `You're now the primary teacher for ${opts.className} on ZCORIQ`;
   const html = wrap(`
     <h2 style="color:#0f172a; margin-top:0;">You're the primary teacher</h2>
     <p>${escapeHtml(who)}${escapeHtml(school)} has set you as the primary teacher
@@ -151,7 +151,7 @@ export function primaryTeacherInviteTemplate(opts: {
       <a href="${opts.acceptUrl}"
          style="background:#10b981; color:white; padding:10px 18px; border-radius:8px;
                 text-decoration:none; font-weight:600; display:inline-block;">
-        Open BloomIQ
+        Open ZCORIQ
       </a>
     </p>
     <p style="color:#475569; font-size:13px;">
@@ -159,9 +159,9 @@ export function primaryTeacherInviteTemplate(opts: {
       will appear on your dashboard automatically.
     </p>`);
   const text =
-    `You're now the primary teacher for ${opts.className} on BloomIQ.\n\n` +
+    `You're now the primary teacher for ${opts.className} on ZCORIQ.\n\n` +
     `${who}${school} has set you as the primary teacher.\n\n` +
-    `Open BloomIQ: ${opts.acceptUrl}\n\n` +
+    `Open ZCORIQ: ${opts.acceptUrl}\n\n` +
     `If you don't have an account yet, sign up with this email address.`;
   return { subject, html, text };
 }

@@ -1,0 +1,20 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "noEmit": true, "skipLibCheck": true, "types": [] },
+  "include": [
+    "next-env.d.ts",
+    ".types/**/*.d.ts",
+    "lib/featureFlags.ts",
+    "lib/featureFlags.client.tsx",
+    "app/api/flags/**/*.ts",
+    "app/api/admin/feature-flags/**/*.ts",
+    "app/api/admin/onboard-school/route.ts",
+    "app/api/waitlist/schools/route.ts",
+    "app/admin/feature-flags/page.tsx",
+    "app/schools-coming-soon/page.tsx",
+    "app/layout.tsx",
+    "app/pricing/page.tsx",
+    "components/Sidebar.tsx"
+  ],
+  "exclude": ["node_modules"]
+}

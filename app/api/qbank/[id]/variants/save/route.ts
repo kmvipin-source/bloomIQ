@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { getBearer, supabaseServer } from "@/lib/supabase/server";
+import { supabaseServer } from "@/lib/supabase/server";
+import { requireAuthenticated } from "@/lib/apiAuth";
 import { isBloomLevel } from "@/lib/bloom";
 
 export const runtime = "nodejs";
@@ -28,20 +29,24 @@ type RouteCtx = { params: Promise<{ id: string }> };
 export async function POST(req: Request, ctx: RouteCtx) {
   try {
     const { id } = await ctx.params;
-    const token = getBearer(req);
-    if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    const sb = supabaseServer(token);
-    const { data: { user } } = await sb.auth.getUser();
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    // F22 fix (QA): shared requireAuthenticated — single-session
+    // enforcement (token iat >= profiles.session_iat) now applied.
+    const auth = await requireAuthenticated(req);
+    if ("error" in auth) return auth.error;
+    const { user, sb } = auth;
 
     // Confirm caller owns the source question.
+    // 2026-05-15 (migration 90): also pull the source category so the variant
+    // rows inherit it. Variants are paraphrases of the same question — they
+    // should live in the same category bucket, never land as Uncategorized.
     const { data: src } = await sb
       .from("question_bank")
-      .select("id, owner_id, topic")
+      .select("id, owner_id, topic, category")
       .eq("id", id)
       .maybeSingle();
     if (!src) return NextResponse.json({ error: "Source question not found." }, { status: 404 });
     const sourceTopic = (src as { owner_id: string; topic: string | null }).topic;
+    const sourceCategory = (src as { category?: string | null }).category ?? null;
     if ((src as { owner_id: string }).owner_id !== user.id) {
       return NextResponse.json({ error: "You don't own this question." }, { status: 403 });
     }
@@ -59,6 +64,7 @@ export async function POST(req: Request, ctx: RouteCtx) {
       owner_id: string; topic: string | null; bloom_level: string;
       stem: string; options: string[]; correct_index: number;
       explanation: string | null; status: "approved";
+      category: string | null;
     };
     const rows: Insert[] = [];
     for (const v of raw) {
@@ -70,6 +76,7 @@ export async function POST(req: Request, ctx: RouteCtx) {
       rows.push({
         owner_id: user.id,
         topic: (typeof v.topic === "string" && v.topic.trim()) ? v.topic.trim() : sourceTopic,
+        category: sourceCategory,
         bloom_level: v.bloom_level,
         stem: v.stem.trim(),
         options: v.options.map((o) => String(o).trim()),

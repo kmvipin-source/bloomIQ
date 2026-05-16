@@ -6,7 +6,7 @@ export type Profile = {
   full_name: string | null;
   school: string | null;
   grade: string | null;
-  // BloomIQ staff flag — gates /admin/* pages. Distinct from super_teacher,
+  // ZCORIQ staff flag — gates /admin/* pages. Distinct from super_teacher,
   // which is a per-school admin role. See migration 22.
   platform_admin: boolean;
   // Independent-student onboarding answer — drives tile prioritisation on
@@ -47,6 +47,41 @@ export type Question = {
   explanation: string | null;
   status: "pending" | "approved" | "rejected";
   created_at: string;
+  // 2026-05-15 (migration 90): teaching/learning context this question was
+  // generated for (mirrors profiles.exam_goal slug — "class_10_boards",
+  // "jee_main", etc.). NULL = legacy row from before tagging shipped.
+  category?: string | null;
+  // 2026-05-16 (migration 91): generation provenance blob. See
+  // lib/qgenPipeline.ts → GenerationMeta for the canonical shape. Loose
+  // typing here because the column is jsonb and we read it from many
+  // surfaces with overlapping interest — the UI only narrows the fields
+  // it actually reads (verifier.status, bloom_disputed, etc.). Default
+  // is {} for rows generated before the pipeline shipped.
+  generation_meta?: {
+    route?: string;
+    intent?: string;
+    requested_bloom?: BloomLevel;
+    prompt_version?: string;
+    verifier?: {
+      status?: "agreed" | "disputed" | "skipped";
+      reason?: string;
+      model?: string;
+      llm_correct?: string;
+      verifier_correct?: string;
+    };
+    embedding_present?: boolean;
+    dedup?: {
+      jaccard_filtered?: number;
+      cosine_in_batch_filtered?: number;
+      cosine_history_filtered?: number;
+    };
+    retry_count?: number;
+    generated_at?: string;
+    bloom_disputed?: boolean;
+    bloom_actual?: BloomLevel | null;
+    bloom_rationale?: string;
+    sanitizer_fired?: boolean;
+  } | null;
 };
 
 export type Quiz = {

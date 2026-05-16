@@ -36,12 +36,17 @@ export async function POST(req: Request) {
         ip,
         user_agent: ua,
       });
-    } catch { /* best-effort audit; never block login */ }
+    } catch (err) {
+      // F44 fix: log loudly when the audit insert fails so ops can spot
+      // a rising failure rate. The client-facing path still returns 200
+      // (audit must never block login), but a silent zero-write was
+      // invisible to monitoring.
+      // eslint-disable-next-line no-console
+      console.warn("[login-audit] insert failed:", err instanceof Error ? err.message : err);
+    }
 
     return NextResponse.json({ ok: true });
   } catch {
-    // Even the outer path must not surface a 500 to the client — the user is
-    // already signed in, audit is non-essential.
     return NextResponse.json({ ok: true });
   }
 }

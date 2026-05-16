@@ -1,7 +1,7 @@
 /**
  * lib/features.ts
  *
- * Single source of truth for every gateable feature in BloomIQ.
+ * Single source of truth for every gateable feature in ZCORIQ.
  *
  * Each entry has:
  *   - `key`: stable string used in plans.features jsonb arrays and in
@@ -24,7 +24,7 @@
 
 export type FeatureCategory =
   | "core_assessment"   // Practice tests, scoring, basic analytics
-  | "metacognition"     // Teach-Back, Misconception, Calibration — BloomIQ's USP
+  | "metacognition"     // Teach-Back, Misconception, Calibration — ZCORIQ's USP
   | "exam_prep"         // Sprint, Speed, Trap, Rank
   | "ai_tutoring"       // Tutor, Voice, Visualizer
   | "memory_retention"  // Memory (SRS), Knowledge Graph

@@ -1,7 +1,7 @@
 /**
- * lib/bloomiqScore.ts
+ * lib/zcoriqBloomScore.ts
  *
- * The brain of the BloomIQ Score feature. Three things live here:
+ * The brain of the ZCORIQ Bloom Score feature. Three things live here:
  *
  *   1. computeScore()       — turns a set of Bloom-tagged correct/wrong
  *                              answers into a single 300-900 score,
@@ -298,7 +298,7 @@ export function predictRankAndColleges(
   }
 
     if (goal === "cat") {
-    // CAT is itself a percentile-based exam. We map the BloomIQ score to
+    // CAT is itself a percentile-based exam. We map the ZCORIQ score to
     // an indicative CAT percentile band — never a precise number.
     const catPct = Math.max(1, Math.min(99.9,
       30 + Math.pow((score - 300) / 600, 1.4) * 70
@@ -477,7 +477,7 @@ function collegesForPrimaryMiddle(score: number, gradePct: number): CollegeTarge
                 : score >= 650 ? "Ready for Olympiad Level 1 (PRMO / NSO Stage 1)"
                 : score >= 550 ? "Olympiad Level 1 within reach with 4-week prep"
                 : "Build fundamentals before attempting Olympiads";
-  const peer = `Stronger than ${gradePct}% of grade-level peers (BloomIQ benchmark)`;
+  const peer = `Stronger than ${gradePct}% of grade-level peers (ZCORIQ benchmark)`;
   return [
     { name: peer,     band: "Peer benchmark" },
     { name: olympiad, band: "Olympiad / Talent search" },

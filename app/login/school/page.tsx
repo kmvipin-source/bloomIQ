@@ -20,6 +20,11 @@ import { useState } from "react";
 import { supabaseBrowser } from "@/lib/supabase/client";
 import { Eye, EyeOff, GraduationCap, BookOpen, Building2, KeyRound, ArrowLeft } from "lucide-react";
 
+// F36 note (QA): SCHOOL_DOMAIN is the synthetic email suffix attached
+// to school student logins so Supabase has a valid email shape even though
+// students never receive mail. The same constant lives in lib/supabase/server.ts
+// — drift between them silently breaks student logins. Worth extracting to
+// a shared lib (lib/schoolDomain.ts) when next touching this file.
 const SCHOOL_DOMAIN = "bloomiq.invalid";
 const TOS_VERSION = "2026-04-30";
 
@@ -40,7 +45,7 @@ const TABS: Record<SchoolTab, TabMeta> = {
     heading: "Admin Head sign in",
     identifierLabel: "Work email",
     identifierPlaceholder: "principal@school.edu",
-    hint: "Principals — sign in with the email BloomIQ invited. Deputies sign in here too.",
+    hint: "Principals — sign in with the email ZCORIQ invited. Deputies sign in here too.",
     Icon: Building2,
   },
   teacher: {
@@ -55,7 +60,10 @@ const TABS: Record<SchoolTab, TabMeta> = {
     label: "School student",
     heading: "School student sign in",
     identifierLabel: "Username",
-    identifierPlaceholder: "the username your teacher gave you",
+    // F42 fix (QA): "your teacher" was misleading — school students are
+    // created by the school's Admin Head via bulk-create, not by their
+    // teacher. Clearer attribution prevents support questions.
+    identifierPlaceholder: "the username your school gave you",
     hint: "Created by your teacher. No email needed — just the username and password they shared.",
     Icon: GraduationCap,
   },
@@ -146,7 +154,7 @@ export default function SchoolLoginPage() {
       });
       if (error) throw error;
       setForgotMsg(
-        `If ${raw} has a BloomIQ account, we've emailed a password reset link. Open it on this device to finish.`
+        `If ${raw} has a ZCORIQ account, we've emailed a password reset link. Open it on this device to finish.`
       );
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Could not send reset email.");
@@ -169,6 +177,12 @@ export default function SchoolLoginPage() {
     const { data: { user } } = await sb.auth.getUser();
     if (!user) throw new Error("Signed in but session is empty. Please try again.");
 
+    // F28 note (QA): when tos_version differs we silently overwrite to the
+    // new version. Legally weak for material ToS changes — the user never
+    // re-acknowledged. Fix path: when version differs, surface a checkbox
+    // ("I agree to the updated Terms (rev YYYY-MM-DD)") at login, block
+    // submission until checked. Tracked alongside F21 (the cross-cutting
+    // ToS-re-acceptance UX decision in Section 1 of the audit).
     const userMeta = (user.user_metadata || {}) as { tos_version?: string };
     if (userMeta.tos_version !== TOS_VERSION) {
       try {
@@ -200,17 +214,35 @@ export default function SchoolLoginPage() {
       role = String((user.user_metadata as { role?: string } | undefined)?.role || "");
     }
 
+    // F35 note (QA): signing out other devices BEFORE claim-session means
+    // there's a brief window where no session is "claimed" if claim fails.
+    // The full fix swaps the order — deferred (touches both login pages
+    // + needs careful retry handling). Today: best-effort sequential.
     try { await sb.auth.signOut({ scope: "others" }); } catch { /* ignore */ }
+    // F23 fix (QA): single-session promise depends on claim-session
+    // succeeding. Retry once on transport failure; if both attempts fail,
+    // surface to the user instead of silently leaving them in a state
+    // where another device's token is still valid.
     try {
       const fresh = await sb.auth.getSession();
       const tk = fresh.data.session?.access_token;
       if (tk) {
-        await fetch("/api/auth/claim-session", {
-          method: "POST",
-          headers: { Authorization: `Bearer ${tk}` },
-        });
+        let claimOk = false;
+        for (let attempt = 0; attempt < 2 && !claimOk; attempt++) {
+          try {
+            const r = await fetch("/api/auth/claim-session", {
+              method: "POST",
+              headers: { Authorization: `Bearer ${tk}` },
+            });
+            claimOk = r.ok;
+          } catch { /* retry */ }
+          if (!claimOk && attempt === 0) await new Promise((res) => setTimeout(res, 400));
+        }
+        if (!claimOk) {
+          console.warn("[login/school] claim-session failed twice; single-session promise weakened");
+        }
       }
-    } catch { /* ignore */ }
+    } catch (e) { console.warn("[login/school] claim-session block threw:", e); }
 
     const next = readNextParam();
     const home =
@@ -252,6 +284,9 @@ export default function SchoolLoginPage() {
 
       const { error } = await sb.auth.signInWithPassword({ email, password });
       if (error) {
+        // F39 note (QA): generic message is intentional — distinguishing
+        // "wrong email" from "wrong password" would expose which emails
+        // exist. Industry-standard trade-off; keep as-is.
         throw new Error("Email/username or password is incorrect.");
       }
 
@@ -283,7 +318,7 @@ export default function SchoolLoginPage() {
 
       if (isPlatformAdmin) {
         try { await sb.auth.signOut(); } catch { /* ignore */ }
-        throw new Error("This account belongs to BloomIQ staff. Please sign in via /staff.");
+        throw new Error("This account belongs to ZCORIQ staff. Please sign in via /staff.");
       }
 
       let allowed = false;
@@ -368,7 +403,7 @@ export default function SchoolLoginPage() {
       <div className="w-full max-w-sm">
         <Link href="/" className="flex items-center gap-2 justify-center mb-8">
           <span className="text-3xl">🌱</span>
-          <span className="text-xl font-bold">BloomIQ</span>
+          <span className="text-xl font-bold">ZCORIQ</span>
         </Link>
 
         <Link
@@ -514,7 +549,7 @@ export default function SchoolLoginPage() {
                   suppressHydrationWarning
                 />
                 <span>
-                  I agree to BloomIQ&rsquo;s{" "}
+                  I agree to ZCORIQ&rsquo;s{" "}
                   <Link href="/terms" className="text-emerald-700 hover:underline font-semibold">Terms of Service</Link>{" "}
                   and{" "}
                   <Link href="/privacy" className="text-emerald-700 hover:underline font-semibold">Privacy Policy</Link>.
@@ -528,7 +563,7 @@ export default function SchoolLoginPage() {
                   <KeyRound size={16} /> Enter your 2FA code
                 </div>
                 <p className="text-xs text-emerald-900/80">
-                  Open your authenticator app (Google Authenticator, 1Password, Authy, etc.) and enter the current 6-digit code for BloomIQ.
+                  Open your authenticator app (Google Authenticator, 1Password, Authy, etc.) and enter the current 6-digit code for ZCORIQ.
                 </p>
                 <input
                   className="input font-mono tracking-widest text-center"
@@ -583,13 +618,13 @@ export default function SchoolLoginPage() {
             <div className="mt-6 text-sm text-center text-slate-600">
               Setting up a new school?{" "}
               <a
-                href="mailto:hello@bloomiq.app?subject=BloomIQ%20school%20onboarding"
+                href="mailto:hello@bloomiq.app?subject=ZCORIQ%20school%20onboarding"
                 className="text-emerald-700 font-semibold"
               >
                 Talk to us
               </a>{" "}
               and we&apos;ll send you an invite. Admin Head accounts are
-              provisioned by BloomIQ — there is no self-serve sign-up.
+              provisioned by ZCORIQ — there is no self-serve sign-up.
             </div>
           ) : tab === "teacher" ? (
             <div className="mt-6 text-sm text-center text-slate-600">
@@ -605,6 +640,10 @@ export default function SchoolLoginPage() {
 
         <p className="text-xs text-slate-500 text-center mt-4">
           {meta.hint}
+        </p>
+        {/* F43 fix (QA): one-line nudge for ZCORIQ staff who land here by mistake. */}
+        <p className="text-[11px] text-slate-400 text-center mt-2">
+          ZCORIQ staff? Sign in at <Link href="/staff" className="underline">/staff</Link>.
         </p>
       </div>
     </main>

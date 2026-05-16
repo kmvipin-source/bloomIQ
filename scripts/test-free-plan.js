@@ -120,7 +120,7 @@ async function checkFreePlanSummary() {
     return;
   }
   const summary = (data.feature_summary || []).join(" | ");
-  if (summary.includes("3 quizzes") && summary.includes("BloomIQ Score")) {
+  if (summary.includes("3 quizzes") && summary.includes("ZCORIQ Bloom Score")) {
     ok("Free plan summary references Option A copy");
   } else {
     bad("Free plan summary stale", `current: ${summary.slice(0, 80)}…`);

@@ -246,7 +246,7 @@ export default function TakeQuiz() {
 
     // Per-question rows — now carry marks_earned alongside the existing
     // is_correct. Bloom mastery still keys off is_correct, so the
-    // BloomIQ Score recompute is unaffected. Skipped questions still
+    // ZCORIQ Bloom Score recompute is unaffected. Skipped questions still
     // get is_correct: null (legacy invariant), but marks_earned: 0.
     const rows = questions.map((q, i) => {
       const ai = answerInputs[i];
@@ -303,7 +303,7 @@ export default function TakeQuiz() {
       negative_marks_enabled: breakdown.scheme.negative_marks_enabled,
       time_taken_seconds: seconds,
     });
-    // Recompute the BloomIQ score so the badge + Future You reflect
+    // Recompute the ZCORIQ score so the badge + Future You reflect
     // the new attempt. Fire-and-forget — see lib/scoreRecompute.
     void triggerScoreRecompute("quiz", attemptId);
     toast.success("Quiz submitted successfully.");
@@ -360,6 +360,19 @@ export default function TakeQuiz() {
     }, 1000);
     return () => clearInterval(t);
   }, [quiz, attemptId, submit]);
+
+  // F114 fix (QA): warn on tab-close / nav-away while an attempt is in
+  // flight. Browsers ignore custom strings, but setting returnValue
+  // triggers the native "Leave site?" confirm.
+  useEffect(() => {
+    if (!attemptId || submitting) return;
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [attemptId, submitting]);
 
   if (loadErr) {
     return (

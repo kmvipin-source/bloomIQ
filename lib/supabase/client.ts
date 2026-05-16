@@ -107,7 +107,7 @@ export function supabaseBrowser(): SupabaseClient {
       .filter(Boolean)
       .join(", ");
     const msg =
-      `BloomIQ build is missing ${missing}. ` +
+      `ZCORIQ build is missing ${missing}. ` +
       `Set these in Vercel → Settings → Environment Variables (Production scope), then redeploy with cache disabled.`;
     if (typeof window !== "undefined") {
       // eslint-disable-next-line no-console

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { getBearer, supabaseServer } from "@/lib/supabase/server";
+import { supabaseServer } from "@/lib/supabase/server";
+import { requireAuthenticated } from "@/lib/apiAuth";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -15,17 +16,20 @@ type SrsRow = { id: string; question_id: string; due_at: string };
 
 export async function GET(req: Request) {
   try {
-    const token = getBearer(req);
-    if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    const sb = supabaseServer(token);
-    const { data: { user } } = await sb.auth.getUser();
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    // F22 fix (QA): shared requireAuthenticated — single-session
+    // enforcement (token iat >= profiles.session_iat) now applied.
+    const auth = await requireAuthenticated(req);
+    if ("error" in auth) return auth.error;
+    const { user, sb } = auth;
 
-    // Today as YYYY-MM-DD (UTC). srs_reviews.due_at is a date column.
-    const today = new Date();
-    const yyyy = today.getUTCFullYear();
-    const mm = String(today.getUTCMonth() + 1).padStart(2, "0");
-    const dd = String(today.getUTCDate()).padStart(2, "0");
+    // F112 fix: UTC-only date math hid "due today" SRS items from IST
+    // students until 5:30am their local time. Anchor to IST. Long-term:
+    // per-user timezone preference.
+    const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+    const nowIst = new Date(Date.now() + IST_OFFSET_MS);
+    const yyyy = nowIst.getUTCFullYear();
+    const mm = String(nowIst.getUTCMonth() + 1).padStart(2, "0");
+    const dd = String(nowIst.getUTCDate()).padStart(2, "0");
     const todayStr = `${yyyy}-${mm}-${dd}`;
 
     let count = 0;

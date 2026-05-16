@@ -42,7 +42,7 @@ export default function StudentPracticePage() {
   const router = useRouter();
 
   const search = useSearchParams();
-  // Deep-link from BloomIQ Score active-path Start buttons:
+  // Deep-link from ZCORIQ Bloom Score active-path Start buttons:
   // /student/practice?bloom=evaluate&topic=core+syllabus
   const deepLinkBloom: BloomLevel | null = (() => {
     const raw = search.get("bloom");
@@ -98,7 +98,7 @@ export default function StudentPracticePage() {
     })();
   }, []);
 
-  // Auto-fire when arriving via the BloomIQ Score active-path Start buttons.
+  // Auto-fire when arriving via the ZCORIQ Bloom Score active-path Start buttons.
   // Triggered when the URL carries a bloom param AND either a topic param or
   // the explicit auto=1 flag. We fire ONCE per page-load; the autoFiredRef
   // guard prevents StrictMode double-effect or any re-render loop. The form
@@ -192,7 +192,7 @@ export default function StudentPracticePage() {
             <Zap size={16} style={{ color: "#10b981" }} className="flex-shrink-0 mt-0.5" />
             <div className="flex-1">
               <div className="font-semibold" style={{ color: "#10b981" }}>
-                Drilling your <strong>{BLOOM_META[deepLinkBloom].label}</strong> weak spot from your BloomIQ active path
+                Drilling your <strong>{BLOOM_META[deepLinkBloom].label}</strong> weak spot from your ZCORIQ active path
               </div>
               <p className="text-xs opacity-80 mt-0.5">
                 {deepLinkTopic
@@ -226,7 +226,7 @@ export default function StudentPracticePage() {
           <p className="mt-1 text-slate-700">
             Tell us what you want to practise. We&apos;ll pick the right
             difficulty for you &mdash; 5 questions, calibrated to your
-            current level. We use your BloomIQ Score and any recent quiz
+            current level. We use your ZCORIQ Bloom Score and any recent quiz
             attempts to find your sweet spot; new students get a balanced
             mid-difficulty set.
           </p>

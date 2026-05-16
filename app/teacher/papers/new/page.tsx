@@ -1,8 +1,9 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { supabaseBrowser } from "@/lib/supabase/client";
+import { detectExamFromTopic, type ExamMeta } from "@/lib/examDetectors";
 import { toast } from "@/lib/toast";
 import {
   ArrowLeft, Sparkles, Plus, Trash2, FileText, Tag, GraduationCap,
@@ -85,6 +86,57 @@ export default function NewPaperPage() {
   // Source
   const [source, setSource] = useState<Source>("topic_syllabus");
   const [topic, setTopic] = useState("");
+
+  // 2026-05-14: LLM-validated topic-vs-syllabus warning — same shape as
+  // /student/* surfaces. Teachers don't have exam_goal, so examMeta is
+  // topic-driven only; warning fires if the teacher types a known exam name
+  // (e.g. "JEE Main") and the typed sub-topic doesn't belong to that exam's
+  // syllabus. Fail-open on errors.
+  const examMeta = useMemo<ExamMeta | null>(() => detectExamFromTopic(topic), [topic]);
+  const [topicValidation, setTopicValidation] = useState<{
+    loading: boolean;
+    result: { valid: boolean; reason: string; suggestedExam: string | null } | null;
+  }>({ loading: false, result: null });
+  useEffect(() => {
+    if (!examMeta || (topic || "").trim().length < 3) {
+      setTopicValidation({ loading: false, result: null });
+      return;
+    }
+    const controller = new AbortController();
+    setTopicValidation((s) => ({ ...s, loading: true }));
+    const handle = setTimeout(async () => {
+      try {
+        const sb = supabaseBrowser();
+        const { data: { session } } = await sb.auth.getSession();
+        if (!session) return;
+        const res = await fetch("/api/topic-validate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+          body: JSON.stringify({
+            topic: topic.trim(),
+            examName: examMeta.name,
+            examDescription: examMeta.description,
+            examSections: examMeta.sections,
+          }),
+          signal: controller.signal,
+        });
+        const j = (await res.json()) as { valid?: boolean; reason?: string; suggestedExam?: string | null };
+        setTopicValidation({
+          loading: false,
+          result: {
+            valid: j.valid !== false,
+            reason: String(j.reason || ""),
+            suggestedExam: j.suggestedExam ? String(j.suggestedExam) : null,
+          },
+        });
+      } catch (e) {
+        if ((e as Error)?.name !== "AbortError") {
+          setTopicValidation({ loading: false, result: null });
+        }
+      }
+    }, 800);
+    return () => { clearTimeout(handle); controller.abort(); };
+  }, [topic, examMeta]);
   const [syllabus, setSyllabus] = useState("");
   const [notes, setNotes] = useState("");
   const [examLabel, setExamLabel] = useState("");
@@ -323,7 +375,24 @@ export default function NewPaperPage() {
 
         {source === "topic_syllabus" && (
           <div className="grid sm:grid-cols-2 gap-3">
-            <div>
+            
+      {/* Uniform topic-vs-syllabus warning (same shape as the other student-facing surfaces). */}
+      {topicValidation.result && !topicValidation.result.valid && examMeta && (
+        <div className="card mt-4 bg-amber-50/60 border-amber-200">
+          <div className="flex items-start gap-2 text-xs text-amber-900">
+            <span className="font-bold">⚠</span>
+            <div className="flex-1">
+              <strong>{topicValidation.result.reason}</strong>
+              {topicValidation.result.suggestedExam ? (
+                <>{" "}This topic fits <strong>{topicValidation.result.suggestedExam}</strong> better — switch your goal in <a href="/settings" className="underline font-semibold">Settings</a> if needed.</>
+              ) : (
+                <>{" "}If this is intentional, proceed.</>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+      <div>
               <label className="label">Topic</label>
               <input className="input" value={topic} onChange={(e) => setTopic(e.target.value)} placeholder="e.g. the chapter or skill you want to test" />
             </div>

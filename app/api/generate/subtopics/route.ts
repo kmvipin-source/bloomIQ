@@ -24,7 +24,8 @@
 
 import { NextResponse } from "next/server";
 import { groqJSON } from "@/lib/groq";
-import { getBearer, supabaseServer, supabaseAdmin } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/lib/supabase/server";
+import { requireAuthenticated } from "@/lib/apiAuth";
 import { checkRateLimit } from "@/lib/rateLimit";
 import { sanitizeUserTopic } from "@/lib/learningContext";
 
@@ -98,11 +99,11 @@ function sanitiseSubtopics(raw: unknown): string[] {
 
 export async function POST(req: Request) {
   try {
-    const token = getBearer(req);
-    if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    const sb = supabaseServer(token);
-    const { data: { user } } = await sb.auth.getUser();
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    // F22 fix (QA): shared requireAuthenticated — single-session
+    // enforcement (token iat >= profiles.session_iat) now applied.
+    const auth = await requireAuthenticated(req);
+    if ("error" in auth) return auth.error;
+    const { user, sb } = auth;
 
     // Generous rate limit — this is a tiny endpoint that runs on Tab-out.
     // 30 per hour is plenty; main protection is the cache catching repeats.

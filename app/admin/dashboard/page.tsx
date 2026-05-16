@@ -119,7 +119,7 @@ export default function AdminDashboardPage() {
       {/* Header */}
       <div>
         <h1 className="text-2xl font-bold flex items-center gap-2"><BarChart3 size={26} /> Platform dashboard</h1>
-        <p className="text-sm muted mt-1">Adoption, plan mix, and revenue across BloomIQ. Counts only — no PII.</p>
+        <p className="text-sm muted mt-1">Adoption, plan mix, and revenue across ZCORIQ. Counts only — no PII.</p>
       </div>
 
       {/* Big-number tiles */}

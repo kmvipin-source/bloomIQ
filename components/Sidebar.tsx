@@ -9,7 +9,7 @@ import {
   BarChart3, FileText, LogOut, User as UserIcon, Users,
   TrendingUp, NotebookPen, Building2, FileEdit,
   ShieldCheck, ArrowUpRight, Wrench, Search, Radio,
-  MessageCircle, HelpCircle, UserPlus, CreditCard,
+  MessageCircle, HelpCircle, UserPlus, CreditCard, ToggleRight,
 } from "lucide-react";
 
 type SidebarRole = "teacher" | "student" | "super_teacher" | "platform_admin";
@@ -131,7 +131,7 @@ const SUPER_TEACHER: ItemGroup[] = [
   ] },
 ];
 
-// ===== Platform admin (BloomIQ internal staff) =====
+// ===== Platform admin (ZCORIQ internal staff) =====
 // Flat list — only a handful of destinations and they don't cluster
 // into obvious sub-categories. Bottom nav still adds Profile / Help /
 // Security / Sign out via the shared component code below.
@@ -142,10 +142,11 @@ const PLATFORM_ADMIN: ItemGroup[] = [
     { href: "/admin/users",          label: "Users",          icon: Users },
     { href: "/admin/plans",          label: "Plans",          icon: ListChecks },
     { href: "/admin/team",           label: "Admin Team",     icon: UserPlus },
+    { href: "/admin/feature-flags",  label: "Feature Flags",  icon: ToggleRight },
   ] },
 ];
 
-// Map a sidebar role to its home URL — used for the BloomIQ branding
+// Map a sidebar role to its home URL — used for the ZCORIQ branding
 // link in the header. We can't just say `/${role}` anymore because
 // platform_admin doesn't have a /platform_admin route (it's /admin),
 // and super_teacher's home is /school not /super_teacher.
@@ -157,7 +158,7 @@ const ROLE_HOME: Record<SidebarRole, string> = {
 };
 
 // Map a sidebar role to its display label for the small "X dashboard"
-// caption under the BloomIQ wordmark. Title-case underscores would
+// caption under the ZCORIQ wordmark. Title-case underscores would
 // otherwise produce ugly strings like "Platform_admin dashboard".
 const ROLE_LABEL: Record<SidebarRole, string> = {
   teacher: "Teacher",
@@ -269,7 +270,7 @@ export default function Sidebar({ role }: { role: SidebarRole }) {
       <div className="p-5" style={{ borderBottom: "1px solid var(--color-border)" }}>
         <Link href={ROLE_HOME[role]} className="flex items-center gap-2">
           <span className="text-2xl">&#x1F331;</span>
-          <span className="text-lg font-bold tracking-tight">BloomIQ</span>
+          <span className="text-lg font-bold tracking-tight">ZCORIQ</span>
         </Link>
         <div className="mt-1 text-xs muted">{ROLE_LABEL[role]} dashboard</div>
       </div>

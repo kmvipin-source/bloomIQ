@@ -5,7 +5,7 @@
  * test-invariants.js
  * ------------------
  * Database invariant checker. Reads the live Supabase with service-role and
- * asserts ~60 invariants every healthy BloomIQ DB should satisfy. Catches
+ * asserts ~60 invariants every healthy ZCORIQ DB should satisfy. Catches
  * schema drift, FK orphans, missing columns, RLS toggle gone, plans that
  * shouldn't exist, etc.
  *
@@ -342,7 +342,7 @@ async function checkDataSanity() {
 
 // ─────────────────────────────────────────────────────────────────
 async function main() {
-  console.log("\x1b[1mBloomIQ database invariant audit\x1b[0m");
+  console.log("\x1b[1mZCORIQ database invariant audit\x1b[0m");
   console.log("Target:", SB_URL);
   await checkSchemaShape();
   await checkRlsEnabled();

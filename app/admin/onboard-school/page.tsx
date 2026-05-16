@@ -8,7 +8,7 @@ import { Building2, Mail, UserRound, Send, CheckCircle2, Clock, Copy, Trash2, Se
 /**
  * /admin/onboard-school
  *
- * Internal page for BloomIQ staff to onboard a paying school. Behind the
+ * Internal page for ZCORIQ staff to onboard a paying school. Behind the
  * scenes calls /api/admin/onboard-school which creates the schools row and
  * fires a Supabase invite email to the Admin Head.
  *
@@ -230,7 +230,7 @@ export default function OnboardSchoolPage() {
     <div className="fade-in">
       <h1 className="h1 flex items-center gap-2 mb-1"><Building2 size={28} /> Onboard a school</h1>
       <p className="muted text-sm mb-6">
-        Creates the school in BloomIQ and emails the Admin Head an invite link to set their password.
+        Creates the school in ZCORIQ and emails the Admin Head an invite link to set their password.
       </p>
 
       <div className="card max-w-xl">

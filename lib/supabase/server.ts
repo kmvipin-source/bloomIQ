@@ -5,6 +5,11 @@ import { createClient } from "@supabase/supabase-js";
  * Pass the user's access token from the client (Authorization: Bearer ...)
  * so RLS policies see the right auth.uid().
  */
+// F22 update (QA): the requireAuthenticated() + requirePlatformAdmin()
+// helpers now live in lib/apiAuth.ts. Step 1 (the 4 admin routes that
+// had local requirePlatformAdmin copies) is shipped. Steps 2 (other
+// admin routes with inline platform_admin checks) and 3 (~30 mutating
+// non-admin routes adopting requireAuthenticated) are follow-up PRs.
 export function supabaseServer(accessToken?: string) {
   return createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,

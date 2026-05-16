@@ -127,7 +127,7 @@ export default function GenerateContextChips({
       {/* Audience-level chip row — 4-state (none/begin/prac/expert) */}
       <div>
         <div className="flex items-center gap-1.5 text-xs uppercase font-semibold muted mb-1.5">
-          <GraduationCap size={12} /> Question depth <span className="text-slate-400 normal-case italic">(optional)</span>
+          <GraduationCap size={12} /> Reading level <span className="text-slate-400 normal-case italic">(optional)</span>
         </div>
         <div className="flex gap-1.5 flex-wrap">
           {AUDIENCE_OPTIONS.map((opt) => {

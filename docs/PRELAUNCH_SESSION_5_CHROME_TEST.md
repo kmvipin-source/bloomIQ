@@ -38,7 +38,7 @@ Set `PO/2026/BLM-001` in the new PO field, then clicked **Mark payment received*
 
 - **Invoice number**: `BLM/2026/0001` — D13 auto-generated at payment time (no double-mint possible — atomic count + insert in a single API round-trip)
 - **Payment status**: "Received 11 May 2026 via neft" (customer-stated date)
-- **"Recorded in BloomIQ at 11/5/2026, 11:34:50 pm"** — D3 server-side audit timestamp now visible under the status line
+- **"Recorded in ZCORIQ at 11/5/2026, 11:34:50 pm"** — D3 server-side audit timestamp now visible under the status line
 - **Expires_at**: extended from 11 May 2027 → 10 May 2028 (one full School Standard period)
 - **PO number** persisted on the subscription row
 - "Mark payment received" button correctly switched to "Re-record payment", and a **Start renewal cycle** button appeared
@@ -49,7 +49,7 @@ Navigated to `/admin/subscriptions/.../invoice`. PDF rendered with:
 
 - Title: **TAX INVOICE**
 - Invoice #: **BLM/2026/0001**  (the freshly-minted number from above)
-- Vendor block: BloomIQ Pvt Ltd · 123 Outer Ring Road, Bengaluru 560103 · Karnataka · **GSTIN 29AAACB1234F1Z5**
+- Vendor block: ZCORIQ Pvt Ltd · 123 Outer Ring Road, Bengaluru 560103 · Karnataka · **GSTIN 29AAACB1234F1Z5**
 - Bill-to block: RLS_Test_B_1778517634659 · **State: Karnataka · GSTIN: 29ABCDE1234F1Z5**
 - Line: "School Standard — 120 contracted seats × ₹49" = ₹5,880 · HSN/SAC 998313
 - Tax block: **CGST @ 9% ₹529.2 + SGST @ 9% ₹529.2** ← same state → split correctly, NOT IGST

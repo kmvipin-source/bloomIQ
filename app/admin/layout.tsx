@@ -7,7 +7,7 @@ import MobileNav from "@/components/MobileNav";
 import { supabaseBrowser } from "@/lib/supabase/client";
 
 /**
- * /admin/* — internal BloomIQ staff pages.
+ * /admin/* — internal ZCORIQ staff pages.
  *
  * Gated by profiles.platform_admin = true. Anyone without the flag
  * is bounced to /. Bootstrap admin must be flipped via SQL once;

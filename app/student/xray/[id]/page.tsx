@@ -149,7 +149,7 @@ export default function XrayDetailPage() {
         </div>
       `;
     }).join("");
-    w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(heading)} - BloomIQ X-Ray</title><style>
+    w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(heading)} - ZCORIQ X-Ray</title><style>
       body { font-family: -apple-system, system-ui, sans-serif; padding: 1.2rem; color: #0f172a; max-width: 880px; margin: 0 auto; line-height: 1.5; }
       h1 { font-size: 22px; margin: 0 0 4px; }
       .sub { color: #64748b; font-size: 12px; margin-bottom: 18px; }
@@ -168,7 +168,7 @@ export default function XrayDetailPage() {
       @media print { @page { margin: 14mm; } body { padding: 0; } }
     </style></head><body>
       <h1>${escapeHtml(heading)}</h1>
-      <div class="sub">${qs.length} question${qs.length === 1 ? "" : "s"} - generated ${escapeHtml(generatedOn)} - BloomIQ X-Ray</div>
+      <div class="sub">${qs.length} question${qs.length === 1 ? "" : "s"} - generated ${escapeHtml(generatedOn)} - ZCORIQ X-Ray</div>
       ${items}
       <script>window.onload = function(){ setTimeout(function(){ window.print(); }, 80); }<\/script>
     </body></html>`);

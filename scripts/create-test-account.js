@@ -1,4 +1,4 @@
-// Create a test BloomIQ account that bypasses Supabase email confirmation.
+// Create a test ZCORIQ account that bypasses Supabase email confirmation.
 // Uses the service-role key to mark the email as already confirmed.
 //
 // Usage (from project root):

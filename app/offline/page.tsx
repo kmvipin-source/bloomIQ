@@ -5,7 +5,7 @@
 // signed-out user without leaking dashboard chrome.
 
 export const metadata = {
-  title: "Offline — BloomIQ",
+  title: "Offline — ZCORIQ",
   robots: { index: false },
 };
 
@@ -34,7 +34,7 @@ export default function OfflinePage() {
         <div style={{ fontSize: 48, marginBottom: 12 }}>📡</div>
         <h1 style={{ margin: 0, fontSize: 22, color: "#0f172a" }}>You&apos;re offline</h1>
         <p style={{ margin: "12px 0 0", fontSize: 14, color: "#475569" }}>
-          BloomIQ couldn&apos;t reach the internet. Reconnect, then refresh
+          ZCORIQ couldn&apos;t reach the internet. Reconnect, then refresh
           this tab to pick up where you left off.
         </p>
       </div>

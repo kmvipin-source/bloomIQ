@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
 import MobileNav from "@/components/MobileNav";
-import BloomIQScoreBadge from "@/components/BloomIQScoreBadge";
+import ZcoriqBloomScoreBadge from "@/components/ZcoriqBloomScoreBadge";
 import { supabaseBrowser } from "@/lib/supabase/client";
 
 export default function StudentLayout({ children }: { children: React.ReactNode }) {
@@ -51,7 +51,7 @@ export default function StudentLayout({ children }: { children: React.ReactNode 
               router.replace("/student/expired");
               return;
             }
-            // BloomIQ calibration is OPT-IN, not mandatory.
+            // ZCORIQ calibration is OPT-IN, not mandatory.
             //
             // Earlier versions of this layout hard-redirected any
             // independent student without a calibration row to
@@ -63,11 +63,11 @@ export default function StudentLayout({ children }: { children: React.ReactNode 
             // (Vipin, 2026-05-12).
             //
             // The polite reminder lives on:
-            //   1. The /student dashboard "Discover your BloomIQ Score"
+            //   1. The /student dashboard "Discover your ZCORIQ Bloom Score"
             //      hero card — only renders when has_calibration ===
             //      false, so it disappears the moment they complete it.
-            //   2. The BloomIQScoreBadge in this layout's top-right —
-            //      renders a "Get your BloomIQ →" CTA when uncalibrated,
+            //   2. The ZcoriqBloomScoreBadge in this layout's top-right —
+            //      renders a "Get your ZCORIQ →" CTA when uncalibrated,
             //      visible on every /student/* page.
             //
             // Both surfaces explain the benefit (3-digit indicative
@@ -137,7 +137,7 @@ export default function StudentLayout({ children }: { children: React.ReactNode 
       <main className="flex-1 p-4 md:p-8 overflow-auto">
         {!hideBadge ? (
           <div className="flex justify-end mb-3">
-            <BloomIQScoreBadge />
+            <ZcoriqBloomScoreBadge />
           </div>
         ) : null}
         {children}

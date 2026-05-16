@@ -56,7 +56,7 @@ const LIFETIME_LABEL: Record<string, { title: string; sub: string }> = {
   voice_teacher:    { title: "Voice AI Teacher",   sub: "Lifetime voice sessions on Free." },
   trap_detector:    { title: "Trap Detector",      sub: "Lifetime trap diagnoses on Free." },
   knowledge_graph:  { title: "Knowledge Graph",    sub: "Lifetime fresh graph builds on Free." },
-  bloom_score:      { title: "BloomIQ Score",      sub: "Lifetime calibrations on Free. Set to 1 so every new user gets it once." },
+  bloom_score:      { title: "ZCORIQ Bloom Score",      sub: "Lifetime calibrations on Free. Set to 1 so every new user gets it once." },
 };
 
 const TZ_OPTIONS = [

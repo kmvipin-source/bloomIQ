@@ -1,4 +1,4 @@
-# BloomIQ comprehensive audit — 2026-05-14 (resume of 2026-05-13 evening session)
+# ZCORIQ comprehensive audit — 2026-05-14 (resume of 2026-05-13 evening session)
 
 This session resumed yesterday's audit (see `AUDIT_2026_05_13_EVENING.md`).
 The tester had flagged a high-profile UI bug — "I select JEE exam, in
@@ -142,7 +142,7 @@ competitive exams.
 
 **Shipped in `lib/skillFewShot.ts`:**
 
-- 15 niche skills covering the long tail BloomIQ users hit hardest:
+- 15 niche skills covering the long tail ZCORIQ users hit hardest:
   - Mainframe: JCL, COBOL, CICS, DB2, VSAM, RACF, IMS
   - Payments/fintech: ISO 8583, EMV, PCI-DSS, DUKPT
   - Crypto/security: HSM, PKI

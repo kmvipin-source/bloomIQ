@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { getBearer, supabaseServer, supabaseAdmin } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/lib/supabase/server";
+import { requireAuthenticated } from "@/lib/apiAuth";
 
 export const runtime = "nodejs";
 
@@ -33,11 +34,11 @@ async function findUserByEmail(
  */
 export async function POST(req: Request) {
   try {
-    const token = getBearer(req);
-    if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    const sb = supabaseServer(token);
-    const { data: { user } } = await sb.auth.getUser();
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    // F22 fix (QA): shared requireAuthenticated — single-session
+    // enforcement (token iat >= profiles.session_iat) now applied.
+    const auth = await requireAuthenticated(req);
+    if ("error" in auth) return auth.error;
+    const { user, sb } = auth;
 
     const admin = supabaseAdmin();
     // Caller-role lookup uses service-role to avoid the RLS race that
@@ -86,11 +87,11 @@ export async function POST(req: Request) {
  */
 export async function GET(req: Request) {
   try {
-    const token = getBearer(req);
-    if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    const sb = supabaseServer(token);
-    const { data: { user } } = await sb.auth.getUser();
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    // F22 fix (QA): shared requireAuthenticated — single-session
+    // enforcement (token iat >= profiles.session_iat) now applied.
+    const auth = await requireAuthenticated(req);
+    if ("error" in auth) return auth.error;
+    const { user, sb } = auth;
 
     const admin = supabaseAdmin();
     const { data: me } = await admin.from("profiles").select("role, school_id").eq("id", user.id).maybeSingle();
@@ -152,11 +153,11 @@ export async function GET(req: Request) {
  */
 export async function DELETE(req: Request) {
   try {
-    const token = getBearer(req);
-    if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    const sb = supabaseServer(token);
-    const { data: { user } } = await sb.auth.getUser();
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    // F22 fix (QA): shared requireAuthenticated — single-session
+    // enforcement (token iat >= profiles.session_iat) now applied.
+    const auth = await requireAuthenticated(req);
+    if ("error" in auth) return auth.error;
+    const { user, sb } = auth;
 
     const admin = supabaseAdmin();
     const { data: me } = await admin.from("profiles").select("role, school_id").eq("id", user.id).maybeSingle();

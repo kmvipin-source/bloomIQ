@@ -103,8 +103,8 @@ export default function PaywallModal({
               individual students can&apos;t change the school subscription.
             </p>
             <a
-              href={`mailto:?subject=${encodeURIComponent(`Please enable ${feat?.label || "a feature"} on BloomIQ`)}&body=${encodeURIComponent(
-                `Hi,\n\nCan we upgrade BloomIQ to a plan that includes ${feat?.label || "this feature"}? It would help me with ${feat?.description || "my studies"}.\n\nThanks!`
+              href={`mailto:?subject=${encodeURIComponent(`Please enable ${feat?.label || "a feature"} on ZCORIQ`)}&body=${encodeURIComponent(
+                `Hi,\n\nCan we upgrade ZCORIQ to a plan that includes ${feat?.label || "this feature"}? It would help me with ${feat?.description || "my studies"}.\n\nThanks!`
               )}`}
               className="btn btn-primary w-full mt-3 inline-flex items-center justify-center gap-2"
             >

@@ -110,15 +110,15 @@ export default function CalibrationPage() {
       </Link>
 
       {/* Banner: this URL is the legacy "confidence calibration" view,
-          NOT the new BloomIQ Score calibration that drives the score badge
+          NOT the new ZCORIQ Bloom Score calibration that drives the score badge
           and Future You reveal. Point users at the right page so docs /
           old links don't strand them on the wrong screen. */}
       <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50/70 px-3 py-2 text-sm text-emerald-900 flex items-center justify-between gap-3 flex-wrap">
         <span>
-          Looking for the <strong>BloomIQ Score</strong> calibration (the 7-minute Future-You reveal)?
+          Looking for the <strong>ZCORIQ Bloom Score</strong> calibration (the 7-minute Future-You reveal)?
         </span>
         <Link href="/student/bloom-score" className="font-semibold inline-flex items-center gap-1 hover:underline">
-          Go to BloomIQ Score →
+          Go to ZCORIQ Bloom Score →
         </Link>
       </div>
 

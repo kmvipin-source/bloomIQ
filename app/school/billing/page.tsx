@@ -154,7 +154,7 @@ export default function SchoolBillingPage() {
           <CreditCard size={36} className="mx-auto text-slate-400" />
           <h2 className="h2 mt-4 mb-1">No active subscription</h2>
           <p className="muted text-sm mb-4 max-w-md mx-auto">
-            Your school doesn&apos;t have a paid plan yet. Reach out to your BloomIQ contact, or browse the available plans.
+            Your school doesn&apos;t have a paid plan yet. Reach out to your ZCORIQ contact, or browse the available plans.
           </p>
           <Link href="/pricing" className="btn btn-primary"><IndianRupee size={14} /> See plans</Link>
         </div>
@@ -167,7 +167,7 @@ export default function SchoolBillingPage() {
       <h1 className="h1">Billing</h1>
       <p className="muted text-sm mb-4">
         Your school&apos;s plan, current invoice, and past billing cycles. For changes to the plan or
-        pricing, please contact your BloomIQ account manager.
+        pricing, please contact your ZCORIQ account manager.
       </p>
 
       {/* Suspended banner — visible explanation of why features are locked.
@@ -185,7 +185,7 @@ export default function SchoolBillingPage() {
               )}
               {" "}Your classes, students, and past test data are <strong>all preserved</strong>
               {" "}exactly as they were. Once payment is recorded, full access returns instantly.
-              Please reach out to your BloomIQ account manager to clear the balance.
+              Please reach out to your ZCORIQ account manager to clear the balance.
             </div>
           </div>
         </div>
@@ -245,7 +245,7 @@ export default function SchoolBillingPage() {
         <h2 className="h2 mb-1">Current invoice</h2>
         <p className="text-xs muted mb-4">
           Issued for this billing cycle. If you&apos;ve already paid and the status below still says
-          &ldquo;awaiting payment&rdquo;, please share the bank reference with your BloomIQ contact.
+          &ldquo;awaiting payment&rdquo;, please share the bank reference with your ZCORIQ contact.
         </p>
         <div className="grid sm:grid-cols-2 gap-3 text-sm">
           <div className="px-3 py-2 rounded-lg bg-slate-50 border border-slate-200">

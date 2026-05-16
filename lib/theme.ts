@@ -17,6 +17,12 @@
  *      localStorage and (for logged-in users) the profiles table.
  */
 
+// F142 note (QA): brand-color drift audit found ~3 places where
+// text-amber-700 / text-blue-700 are used in lieu of --brand-700.
+// Sweep with:
+//   git grep -nE "text-(amber|blue|rose|indigo)-(600|700|800)" app/ components/
+// and confirm the ones that should be brand-coloured switch to
+// "text-[color:var(--brand-700)]" so they re-theme with the picker.
 export type ThemeName = "emerald" | "indigo" | "rose" | "amber" | "slate";
 export type ColorMode = "light" | "dark";
 
@@ -89,7 +95,7 @@ export function isColorMode(x: unknown): x is ColorMode {
  * NOTE — we deliberately do NOT auto-pick dark from
  * `prefers-color-scheme: dark`. Most users never explicitly picked dark
  * mode in their OS — they just inherited it — so respecting system pref
- * by default surprises them with a dark BloomIQ they didn't choose. We
+ * by default surprises them with a dark ZCORIQ they didn't choose. We
  * default to light and require an explicit click on the toggle to go
  * dark. Users who actually want "follow system" can be given a toggle
  * for that later as an opt-in option on /settings/appearance.

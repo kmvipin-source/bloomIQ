@@ -30,7 +30,8 @@
 
 import { NextResponse } from "next/server";
 import { groqJSON } from "@/lib/groq";
-import { getBearer, supabaseServer } from "@/lib/supabase/server";
+import { supabaseServer } from "@/lib/supabase/server";
+import { requireAuthenticated } from "@/lib/apiAuth";
 import { checkRateLimit } from "@/lib/rateLimit";
 
 export const runtime = "nodejs";
@@ -79,11 +80,11 @@ type ValidationResult = {
 
 export async function POST(req: Request) {
   try {
-    const token = getBearer(req);
-    if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    const sb = supabaseServer(token);
-    const { data: { user } } = await sb.auth.getUser();
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    // F22 fix (QA): shared requireAuthenticated — single-session
+    // enforcement (token iat >= profiles.session_iat) now applied.
+    const auth = await requireAuthenticated(req);
+    if ("error" in auth) return auth.error;
+    const { user, sb } = auth;
 
     // Cheap LLM call but a bored or buggy client could hammer it. Tight
     // per-user rate limit; on hit return a fail-open response so the UI

@@ -1,4 +1,5 @@
-import { getBearer, supabaseServer, supabaseAdmin } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/lib/supabase/server";
+import { requirePlatformAdmin } from "@/lib/apiAuth";
 
 export const runtime = "nodejs";
 
@@ -47,17 +48,12 @@ function csvRow(cells: unknown[]): string {
 }
 
 export async function GET(req: Request, ctx: RouteContext) {
-  const token = getBearer(req);
-  if (!token) return new Response("Unauthorized", { status: 401 });
-  const sb = supabaseServer(token);
-  const { data: { user } } = await sb.auth.getUser();
-  if (!user) return new Response("Unauthorized", { status: 401 });
-  const { data: prof } = await sb
-    .from("profiles")
-    .select("platform_admin")
-    .eq("id", user.id)
-    .maybeSingle();
-  if (!prof?.platform_admin) return new Response("Forbidden", { status: 403 });
+  // F171 fix (QA): inline platform_admin check → shared helper.
+  // Helper returns JSON error responses (not plain-text Response). CSV
+  // consumers will see {"error":"Unauthorized"} on 401 / Forbidden on 403
+  // instead of plain text; clients should parse status code, not body.
+  const auth = await requirePlatformAdmin(req);
+  if ("error" in auth) return auth.error;
 
   const { id: schoolId } = await ctx.params;
   if (!schoolId) return new Response("school id is required", { status: 400 });

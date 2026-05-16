@@ -92,7 +92,7 @@ export default function TwoFactorNudge() {
         <div className="flex-1 min-w-0">
           <div className="font-semibold text-sm">Secure your account with 2FA</div>
           <p className="text-xs text-slate-600 mt-1">
-            Add an authenticator app so a leaked password alone can&apos;t unlock your BloomIQ account.
+            Add an authenticator app so a leaked password alone can&apos;t unlock your ZCORIQ account.
           </p>
           <div className="flex gap-2 mt-3">
             <Link

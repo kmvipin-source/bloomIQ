@@ -44,7 +44,7 @@ type RouteContext = { params: Promise<{ id: string }> };
 export async function POST(req: Request, ctx: RouteContext) {
   try {
     const auth = await requireAdmin(req);
-    if ("err" in auth) return auth.err;
+    if ("error" in auth) return auth.error;
     const { id } = await ctx.params;
 
     const admin = supabaseAdmin();
@@ -62,11 +62,20 @@ export async function POST(req: Request, ctx: RouteContext) {
     }
 
     // Two-eyes check.
-    const { count: adminCount } = await admin
+    // F170 fix: DB-error returning null adminCount used to default to
+    // bootstrap_mode=true → self-approval allowed. Wrong direction:
+    // a transient hiccup must NEVER weaken two-eyes. Hard-fail instead.
+    const { count: adminCount, error: countErr } = await admin
       .from("profiles")
       .select("id", { count: "exact", head: true })
       .eq("platform_admin", true);
-    const bootstrap_mode = (adminCount ?? 0) <= 1;
+    if (countErr) {
+      return NextResponse.json(
+        { error: `Could not verify admin count for two-eyes check: ${countErr.message}` },
+        { status: 500 },
+      );
+    }
+    const bootstrap_mode = adminCount != null && adminCount <= 1;
     const isSelfApproval = proposal.created_by === auth.user.id;
 
     if (isSelfApproval && !bootstrap_mode) {
@@ -80,7 +89,25 @@ export async function POST(req: Request, ctx: RouteContext) {
     }
 
     // Resolve the final payload — approver may be editing.
+    // F180 fix: if `proposed_at_submit` is already populated, the
+    // proposal was previously edited-on-approval and re-opened. Reject
+    // a second edit-on-approval to preserve the original-submission
+    // snapshot as a one-time audit anchor.
     const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+    if (
+      proposal.proposed_at_submit != null &&
+      body.proposed &&
+      typeof body.proposed === "object" &&
+      body.proposed !== null
+    ) {
+      return NextResponse.json(
+        {
+          error: "This proposal was already edited at approval once. Reject and resubmit to make further edits.",
+          code: "edit_on_approve_already_used",
+        },
+        { status: 409 },
+      );
+    }
     let approvedPayload: PlanProposalPayload = proposal.proposed;
     let approvedWithEdits = false;
     let proposedAtSubmit: PlanProposalPayload | null = null;
@@ -97,6 +124,32 @@ export async function POST(req: Request, ctx: RouteContext) {
         approvedPayload = v.payload;
         approvedWithEdits = true;
         proposedAtSubmit = proposal.proposed;
+      }
+    }
+
+    // F172 fix (QA): when an "edit" proposal is about to land, check for
+    // non-captured Razorpay orders against this plan_id. The verify path
+    // tolerates price drift (F156), but operators want a heads-up so
+    // they can communicate to in-flight buyers. Soft warning only — a
+    // DB blip must not block an urgent approval. Logged for follow-up.
+    if (proposal.kind === "edit") {
+      try {
+        const { data: inflight, count } = await admin
+          .from("razorpay_orders")
+          .select("razorpay_order_id, user_id, created_at", { count: "exact" })
+          .eq("plan_id", proposal.target_plan_id || "")
+          .is("verified_at", null)
+          .gte("created_at", new Date(Date.now() - 60 * 60_000).toISOString())
+          .limit(20);
+        if ((count ?? 0) > 0) {
+          console.warn("[plan-proposal-approve] in-flight orders against plan", {
+            plan_id: proposal.target_plan_id,
+            inflight_count: count,
+            sample: (inflight || []).slice(0, 5),
+          });
+        }
+      } catch (e) {
+        console.warn("[plan-proposal-approve] in-flight check failed (non-fatal)", e);
       }
     }
 
@@ -256,9 +309,6 @@ export async function POST(req: Request, ctx: RouteContext) {
 
     return NextResponse.json({ ok: true, proposal: stamped, plan: resultingPlan });
   } catch (e) {
-    return NextResponse.json(
-      { error: e instanceof Error ? e.message : "Approve failed" },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: e instanceof Error ? e.message : "Approve failed" }, { status: 500 });
   }
 }

@@ -90,7 +90,7 @@ export default function HelpPage() {
             <h1 className="h1">Help &amp; how-tos</h1>
             <p className="muted text-sm mt-1">
               {role === "super_teacher"
-                ? "Run BloomIQ for your whole school — teachers, classes, students, reports."
+                ? "Run ZCORIQ for your whole school — teachers, classes, students, reports."
                 : role === "teacher"
                 ? "From AI-drafted questions to live class quizzes — the workflow at a glance."
                 : "Most help topics live on your dashboard cards. Click around — every feature has a one-line intro."}
@@ -197,7 +197,7 @@ function TeacherHelp() {
       q: "How does AI question generation work?",
       body: (
         <>
-          Paste lesson text, upload a PDF, or describe a topic. BloomIQ drafts a
+          Paste lesson text, upload a PDF, or describe a topic. ZCORIQ drafts a
           set of multiple-choice questions tagged by Bloom level (Remember &rarr;
           Create). Drafts go into your <strong>Review</strong> queue &mdash;
           they&apos;re never live until you approve. You can edit any question
@@ -621,7 +621,7 @@ function SchoolAdminHelp() {
       q: "Where does the school logo show up?",
       body: (
         <>
-          On <strong>School Home</strong> at the top, in the BloomIQ branding
+          On <strong>School Home</strong> at the top, in the ZCORIQ branding
           row of every super-teacher / teacher / school-student sidebar, and on
           the parent-share link pages your students send out. PNG/JPG/SVG up to
           2&nbsp;MB; square images render best.
@@ -633,7 +633,7 @@ function SchoolAdminHelp() {
       q: "How do I change my school's plan?",
       body: (
         <>
-          Plan changes are managed by the BloomIQ team right now &mdash; not
+          Plan changes are managed by the ZCORIQ team right now &mdash; not
           self-serve. The badge in your top-right shows your current tier and
           the &ldquo;renews&rdquo; date. Email <strong>support@bloomiq.app</strong>
           to upgrade or change your subscription.
@@ -645,7 +645,7 @@ function SchoolAdminHelp() {
       q: "How does renewal work? When do I pay?",
       body: (
         <>
-          Two ways. <strong>(1) NEFT / wire transfer:</strong> the BloomIQ team
+          Two ways. <strong>(1) NEFT / wire transfer:</strong> the ZCORIQ team
           emails you a GST tax invoice with our bank account and a unique
           invoice number. Pay by NEFT, RTGS, or cheque using that invoice
           number as the reference. We mark it received once the funds land,

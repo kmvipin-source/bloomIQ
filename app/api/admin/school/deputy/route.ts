@@ -1,9 +1,18 @@
 import { NextResponse } from "next/server";
-import { getBearer, supabaseServer, supabaseAdmin } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/lib/supabase/server";
+import { requireAuthenticated } from "@/lib/apiAuth";
 
 export const runtime = "nodejs";
 
+// F56 note (QA): hardcoded cap of 2 deputies per school. Enterprise
+// pilots have asked for 4. Path forward: add plans.max_deputies (nullable
+// = use default 2), then look it up via the school's bound plan. Until
+// that ships, keep this constant — it's intentional for the v1 launch.
 const DEPUTY_CAP = 2;
+// F72 note (QA): the deputy promote/demote endpoint deliberately reserves
+// the right to manage deputies to the Admin Head only. Lifting the
+// schools.super_teacher_id check below would allow deputy-vs-deputy
+// power struggles — leave the gate in place.
 
 /**
  * POST /api/admin/school/deputy
@@ -37,12 +46,11 @@ const DEPUTY_CAP = 2;
  */
 export async function POST(req: Request) {
   try {
-    const token = getBearer(req);
-    if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-    const sb = supabaseServer(token);
-    const { data: { user } } = await sb.auth.getUser();
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    // F22 fix (QA): shared requireAuthenticated — single-session
+    // enforcement (token iat >= profiles.session_iat) now applied.
+    const auth = await requireAuthenticated(req);
+    if ("error" in auth) return auth.error;
+    const { user, sb } = auth;
 
     const body = await req.json().catch(() => ({}));
     const teacherId = String(body?.teacher_id || "").trim();
@@ -182,11 +190,11 @@ export async function POST(req: Request) {
  */
 export async function GET(req: Request) {
   try {
-    const token = getBearer(req);
-    if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    const sb = supabaseServer(token);
-    const { data: { user } } = await sb.auth.getUser();
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    // F22 fix (QA): shared requireAuthenticated — single-session
+    // enforcement (token iat >= profiles.session_iat) now applied.
+    const auth = await requireAuthenticated(req);
+    if ("error" in auth) return auth.error;
+    const { user, sb } = auth;
 
     const admin = supabaseAdmin();
     const { data: me } = await admin

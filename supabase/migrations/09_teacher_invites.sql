@@ -11,6 +11,10 @@ create table if not exists public.class_teacher_invites (
   subject text,
   invited_at timestamptz default now(),
   invited_by uuid references public.profiles(id) on delete set null,
+  -- F74 note (QA): no expires_at column. A forwarded invite could be
+  -- claimed weeks after the teacher quit. Add column + nightly cleanup
+  -- ( delete where invited_at < now() - interval '30 days' ) in a
+  -- follow-up migration; the change is additive.
   primary key (class_id, email)
 );
 create index if not exists cti_email_idx on public.class_teacher_invites (lower(email));

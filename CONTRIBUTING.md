@@ -1,4 +1,4 @@
-# Contributing to BloomIQ
+# Contributing to ZCORIQ
 
 This is the working agreement between the two collaborators on this repo. It
 covers branching, preview deploys, schema migrations, QA on prod, and the

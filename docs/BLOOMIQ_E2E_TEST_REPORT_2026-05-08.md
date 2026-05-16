@@ -1,4 +1,4 @@
-# BloomIQ end-to-end test report
+# ZCORIQ end-to-end test report
 
 **Date:** 2026-05-08  
 **Scope:** Comprehensive workflow testing across 4 user roles + plan/expiry scenarios  
@@ -18,7 +18,7 @@
 | 5 | Expired subscription UX | ⏸ Pending | Script written, needs to be run from your machine |
 | 6 | School Pilot vs School Plus visibility | ⏸ Pending | Needs second test student (deferred — see follow-ups) |
 | 7 | Teacher / Admin Head | ✅ Pass with 1 finding | Dashboard, classes work; school subscription missing |
-| 8 | Platform admin (BloomIQ staff) | ✅ Pass | /staff login, onboard-school form, plans catalogue all render |
+| 8 | Platform admin (ZCORIQ staff) | ✅ Pass | /staff login, onboard-school form, plans catalogue all render |
 
 **Pass rate (executed):** 6/6 ✅  
 **Deferred:** 2 (need DB scripts run from your machine)

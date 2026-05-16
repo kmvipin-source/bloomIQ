@@ -4,9 +4,10 @@ import { Suspense, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { supabaseBrowser } from "@/lib/supabase/client";
-import { Check, Crown, Sparkles, Mail, ArrowRight, PartyPopper, Receipt } from "lucide-react";
+import { Check, Crown, Sparkles, Mail, ArrowRight, PartyPopper, Receipt, Building2 } from "lucide-react";
 import { track } from "@/lib/posthog";
 import { formatPaise } from "@/lib/money";
+import { usePlatformFlag } from "@/lib/featureFlags.client";
 
 // =============================================================================
 // PUBLIC-FIRST PRICING PAGE
@@ -110,6 +111,16 @@ function PricingInner() {
   const router = useRouter();
   const search = useSearchParams();
   const autostart = search.get("autostart");
+
+  // Staged-launch gate: when the platform admin has switched
+  // school_marketing_visible OFF, the "For Schools" section flips
+  // to a coming-soon waitlist card instead of the live plans grid.
+  // The flag defaults to ON so the existing section still renders
+  // for everyone unless explicitly hidden.
+  const { enabled: schoolMarketingVisible } = usePlatformFlag(
+    "school_marketing_visible",
+    true /* default while loading: keep the section visible to avoid flicker */
+  );
 
   const [me, setMe] = useState<Me | null>(null);
   const [loading, setLoading] = useState(true);
@@ -258,7 +269,7 @@ function PricingInner() {
         order_id: order.order_id,
         amount: order.amount_paise,
         currency: order.currency,
-        name: "BloomIQ",
+        name: "ZCORIQ",
         description: order.plan?.label || "Subscription",
         prefill: { email: me.email || undefined, name: me.full_name || undefined },
         theme: { color: "#10b981" },
@@ -355,7 +366,7 @@ function PricingInner() {
         order_id: j.order_id,
         amount: j.amount_paise,
         currency: j.currency,
-        name: "BloomIQ",
+        name: "ZCORIQ",
         description: j.plan?.label || "Subscription",
         prefill: { email: j.user.email, name: j.user.full_name },
         theme: { color: "#10b981" },
@@ -411,16 +422,16 @@ function PricingInner() {
   // pricing page wondering what to do.
   if (success && me) {
     const tierLabel =
-      success.tier === "premium" ? "BloomIQ Annual"
-      : success.tier === "individual" ? "BloomIQ Monthly"
-      : "BloomIQ";
+      success.tier === "premium" ? "ZCORIQ Annual"
+      : success.tier === "individual" ? "ZCORIQ Monthly"
+      : "ZCORIQ";
     const dashboardHref = "/student";
     return (
       <main className="min-h-screen bg-gradient-to-br from-emerald-50 via-white to-sky-50 grid place-items-center px-6 py-10">
         <div className="w-full max-w-md fade-in">
           <Link href="/" className="flex items-center gap-2 justify-center mb-8">
             <span className="text-3xl">🌱</span>
-            <span className="text-xl font-bold">BloomIQ</span>
+            <span className="text-xl font-bold">ZCORIQ</span>
           </Link>
 
           <div className="card text-center">
@@ -477,7 +488,7 @@ function PricingInner() {
         <div className="max-w-6xl mx-auto px-6 py-3 flex items-center justify-between">
           <Link href="/" className="flex items-center gap-2">
             <span className="text-2xl">🌱</span>
-            <span className="font-bold tracking-tight">BloomIQ</span>
+            <span className="font-bold tracking-tight">ZCORIQ</span>
           </Link>
           <nav className="flex items-center gap-2 sm:gap-4">
             {loading ? (
@@ -511,7 +522,7 @@ function PricingInner() {
         {/* ============ Hero ============ */}
         <div className="text-center max-w-2xl mx-auto">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 text-xs font-semibold mb-4">
-            <Crown size={14} /> BloomIQ Plans
+            <Crown size={14} /> ZCORIQ Plans
           </div>
           <h1 className="text-4xl md:text-5xl font-bold tracking-tight text-slate-900">
             Pricing that grows <span className="text-emerald-600">with you</span>
@@ -534,10 +545,10 @@ function PricingInner() {
             <div className="card flex flex-col">
               <div className="font-bold text-lg">Free</div>
               <div className="text-3xl font-bold mt-2">₹0<span className="text-base font-normal muted"> /mo</span></div>
-              <p className="muted text-xs mt-1">Try BloomIQ. No card needed.</p>
+              <p className="muted text-xs mt-1">Try ZCORIQ. No card needed.</p>
               <ul className="mt-4 space-y-1.5 text-sm flex-1">
                 <li className="flex items-start gap-2"><Check size={14} className="text-emerald-600 mt-0.5 shrink-0" /> 3 quizzes a day + 1 Daily Drill</li>
-                <li className="flex items-start gap-2"><Check size={14} className="text-emerald-600 mt-0.5 shrink-0" /> BloomIQ Score &amp; basic Bloom report</li>
+                <li className="flex items-start gap-2"><Check size={14} className="text-emerald-600 mt-0.5 shrink-0" /> ZCORIQ Bloom Score &amp; basic Bloom report</li>
                 <li className="flex items-start gap-2"><Check size={14} className="text-emerald-600 mt-0.5 shrink-0" /> AI Tutor (5 turns/day) + Performance Coach (5/day)</li>
                 <li className="flex items-start gap-2"><Check size={14} className="text-emerald-600 mt-0.5 shrink-0" /> 1 Speed-Accuracy session &amp; 1 Teach-Back / day</li>
                 <li className="flex items-start gap-2"><Check size={14} className="text-emerald-600 mt-0.5 shrink-0" /> One free taste of X-Ray, Trap Detector, Rank Predictor, Visualizer, Voice Teacher &amp; Knowledge Graph</li>
@@ -726,7 +737,31 @@ function PricingInner() {
         <section className="mt-12">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500 mb-4">For schools</h2>
 
-          {(() => {
+          {!schoolMarketingVisible ? (
+            // Staged-launch coming-soon card. Shown when the
+            // school_marketing_visible flag is OFF (we're still in the
+            // independent-learner phase). Replaces the entire plans grid
+            // with a single tasteful waitlist CTA.
+            <div className="card flex items-center gap-4 p-5">
+              <div className="rounded-xl bg-emerald-100 p-3 text-emerald-700">
+                <Building2 size={24} />
+              </div>
+              <div className="flex-1">
+                <div className="font-semibold">For schools — coming soon</div>
+                <div className="text-sm text-slate-600 mt-0.5">
+                  We&apos;re launching for independent learners first. Join the
+                  school waitlist and we&apos;ll reach out the moment school
+                  onboarding opens.
+                </div>
+              </div>
+              <Link
+                href="/schools-coming-soon"
+                className="btn-primary inline-flex items-center gap-1.5 px-4 py-2 text-sm"
+              >
+                Join waitlist <ArrowRight size={14} />
+              </Link>
+            </div>
+          ) : (() => {
             if (!plansLoaded) {
               return (
                 <div className="grid sm:grid-cols-3 gap-3">
@@ -762,7 +797,7 @@ function PricingInner() {
                     <div className="text-right shrink-0">
                       <div className="text-2xl font-bold">Custom</div>
                       <a
-                        href="mailto:hello@bloomiq.app?subject=BloomIQ%20school%20pricing"
+                        href="mailto:hello@bloomiq.app?subject=ZCORIQ%20school%20pricing"
                         className="btn btn-primary mt-3"
                       >
                         <Mail size={14} /> Talk to us
@@ -817,7 +852,7 @@ function PricingInner() {
                           ))}
                         </ul>
                         <a
-                          href={`mailto:hello@bloomiq.app?subject=BloomIQ%20-%20${encodeURIComponent(p.label)}`}
+                          href={`mailto:hello@bloomiq.app?subject=ZCORIQ%20-%20${encodeURIComponent(p.label)}`}
                           className="btn btn-secondary text-sm mt-4 inline-flex items-center justify-center gap-1.5"
                         >
                           <Mail size={12} /> Get a quote
@@ -872,7 +907,7 @@ function PricingInner() {
           <div className="grid md:grid-cols-2 gap-4">
             {[
               {
-                q: "Can I try BloomIQ before paying?",
+                q: "Can I try ZCORIQ before paying?",
                 a: "Yes — the Free plan gives you 3 practice tests per day forever. No card required.",
               },
               {
@@ -902,7 +937,7 @@ function PricingInner() {
             <div className="w-full max-w-md card bg-white">
               <h2 className="text-xl font-bold">Quick details</h2>
               <p className="text-sm text-slate-600 mt-1">
-                Pay for <strong>{guestPlan.label}</strong>{guestPlan.priceLine && <> — {guestPlan.priceLine}</>}. We&apos;ll create your BloomIQ account and open Razorpay.
+                Pay for <strong>{guestPlan.label}</strong>{guestPlan.priceLine && <> — {guestPlan.priceLine}</>}. We&apos;ll create your ZCORIQ account and open Razorpay.
               </p>
               <form
                 className="space-y-3 mt-4"
@@ -965,7 +1000,7 @@ function PricingInner() {
         )}
 
         <p className="text-xs muted mt-10 text-center">
-          Razorpay processes all payments. We never see or store your card details.
+          Razorpay processes every payment. We never see, store, or transmit your card details — PCI-DSS scope stays with Razorpay. ZCORIQ only sees a tokenized payment ID after capture.
         </p>
 
         <div className="text-xs text-slate-500 text-center mt-4 border-t border-slate-200 pt-6">

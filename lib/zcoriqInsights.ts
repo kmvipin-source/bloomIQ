@@ -1,7 +1,7 @@
 /**
- * lib/bloomiqInsights.ts
+ * lib/zcoriqInsights.ts
  *
- * Pure helpers that turn a BloomIQ Score reveal payload into human-
+ * Pure helpers that turn a ZCORIQ Bloom Score reveal payload into human-
  * readable insights for the Future You screen. No side-effects, no DB
  * calls — every function takes inputs and returns strings/objects the
  * UI can render directly.
@@ -19,7 +19,7 @@
  */
 
 import type { BloomLevel } from "@/lib/bloom";
-import { BLOOM_LABEL } from "@/lib/bloomiqScore";
+import { BLOOM_LABEL } from "@/lib/zcoriqBloomScore";
 
 // ---------------------------------------------------------------------------
 // BLOOM SIGNATURE — a short personality-style label that captures the shape
@@ -276,7 +276,7 @@ export function computeUpgradeNarrative(
     monthlyPriceInr: 99,
     weeklyTimeTotal: `~${totalHrs} hours/week (~30 min/day)`,
     cta: `Start Premium — ₹99/month`,
-    guarantee: `Cancel anytime. Your BloomIQ Score updates after every drill — if it isn't moving, that's signal to change tactics or pause.`,
+    guarantee: `Cancel anytime. Your ZCORIQ Bloom Score updates after every drill — if it isn't moving, that's signal to change tactics or pause.`,
   };
 }
 

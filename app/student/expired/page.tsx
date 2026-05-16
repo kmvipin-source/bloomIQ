@@ -17,6 +17,12 @@
 // Re-extending the Free trial is intentionally NOT offered as a self-serve
 // option here. The platform admin controls the validity duration globally;
 // extensions for individual users would require an admin tool.
+//
+// F115 note (QA): school students should NEVER reach this page (their
+// access is gated by the school's subscription, not is_free_expired).
+// If they do reach it, the "Upgrade to Premium" CTAs are wrong copy.
+// Add a school-student branch: detect role+school_id, show "Your
+// school's subscription has lapsed; contact your Admin Head" instead.
 // =============================================================================
 
 import Link from "next/link";
@@ -52,7 +58,7 @@ export default function ExpiredPage() {
           </div>
           <h1 className="text-2xl font-bold">Your free access has ended</h1>
           <p className="mt-3 text-sm opacity-80 leading-relaxed max-w-xl mx-auto">
-            Pick the plan that fits how you study. Both unlock the full BloomIQ Score,
+            Pick the plan that fits how you study. Both unlock the full ZCORIQ Bloom Score,
             calibration, drills, and the AI toolkit — Premium Plus adds the
             competitive-exam suite (past-paper X-ray, mock-rank predictor, and more).
           </p>
@@ -79,7 +85,7 @@ export default function ExpiredPage() {
             <div className="text-xs opacity-70 mt-0.5">Most learners pick this</div>
             <ul className="mt-3 space-y-1.5 text-sm opacity-90 flex-1">
               <li className="flex gap-1.5"><Check size={14} className="mt-0.5 shrink-0" style={{ color: "#10b981" }} /> Unlimited daily drills (no 3/day cap)</li>
-              <li className="flex gap-1.5"><Check size={14} className="mt-0.5 shrink-0" style={{ color: "#10b981" }} /> Full BloomIQ Score + weekly active path</li>
+              <li className="flex gap-1.5"><Check size={14} className="mt-0.5 shrink-0" style={{ color: "#10b981" }} /> Full ZCORIQ Bloom Score + weekly active path</li>
               <li className="flex gap-1.5"><Check size={14} className="mt-0.5 shrink-0" style={{ color: "#10b981" }} /> AI tutor + Performance Coach</li>
               <li className="flex gap-1.5"><Check size={14} className="mt-0.5 shrink-0" style={{ color: "#10b981" }} /> Adaptive practice from your weakest topics</li>
             </ul>

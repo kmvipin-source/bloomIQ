@@ -1,6 +1,6 @@
 "use client";
 
-// Best-effort fire-and-forget BloomIQ score recompute. Called from every
+// Best-effort fire-and-forget ZCORIQ score recompute. Called from every
 // client surface that ends an attempt (quiz / drill / speed / sprint /
 // live) so the score badge and Future You reflect the latest activity.
 //

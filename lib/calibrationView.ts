@@ -1,4 +1,4 @@
-// BloomIQ — Client-safe interpretation helpers for question calibration.
+// ZCORIQ — Client-safe interpretation helpers for question calibration.
 // These are the SAME thresholds as lib/calibration.ts but live in their own
 // file so the bank UI (a client component) can import them without dragging
 // supabaseAdmin into the browser bundle.

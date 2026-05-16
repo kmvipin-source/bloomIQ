@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import { buildSkillFewShotBlock } from "@/lib/skillFewShot";
 import { groqJSON, groqJSONVision } from "@/lib/groq";
 import { BLOOM_LEVELS, isBloomLevel, type BloomLevel } from "@/lib/bloom";
-import { getBearer, supabaseServer, supabaseAdmin } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/lib/supabase/server";
+import { requireAuthenticated } from "@/lib/apiAuth";
 import { checkRateLimit, checkDailyCap } from "@/lib/rateLimit";
 import { consumeLifetimeUse } from "@/lib/freeQuota";
 import {
@@ -97,11 +98,11 @@ function topicCounts(qs: Q[]): Record<string, number> {
 
 export async function POST(req: Request) {
   try {
-    const token = getBearer(req);
-    if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    const sb = supabaseServer(token);
-    const { data: { user } } = await sb.auth.getUser();
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    // F22 fix (QA): shared requireAuthenticated — single-session
+    // enforcement (token iat >= profiles.session_iat) now applied.
+    const auth = await requireAuthenticated(req);
+    if ("error" in auth) return auth.error;
+    const { user, sb } = auth;
 
     // Vision endpoint — expensive. Burst 5, refill 10/hr, hard daily cap 20.
     const rate = checkRateLimit(user.id, "xray.analyze", { capacity: 5, refillPerHour: 10 });

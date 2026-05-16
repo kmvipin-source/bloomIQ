@@ -27,7 +27,7 @@ The product code is ready. The Razorpay **merchant account configuration** is th
 | UPI payment attempt | Manual user input | ❌ → see D5b |
 | Wallet payment attempt | Manual user input | ✅ — payment success |
 | `/api/checkout/verify` | Auto-fired by Razorpay handler | ✅ — HMAC verified, subscription upserted |
-| Post-payment success page | Real render | ✅ — H1 "You're all set, Zoya!", message "Welcome to BloomIQ Monthly. Your account is ready and your subscription is active until…" |
+| Post-payment success page | Real render | ✅ — H1 "You're all set, Zoya!", message "Welcome to ZCORIQ Monthly. Your account is ready and your subscription is active until…" |
 | `/api/auth/me` post-upgrade | Direct GET | ✅ — `is_free_expired: false`, tier reflects paid |
 | `/api/feature/usage` post-upgrade | Direct GET | ✅ — `tier: "individual"`, all caps `null` (uncapped) |
 | `/student` dashboard load | Navigate | ✅ — loads cleanly, NOT redirected to `/student/expired` |
@@ -109,7 +109,7 @@ These are all clean and need no changes:
 | **P1** | Optional: enable International Cards if targeting NRI customers. |
 | **P2** | Add `is_trial: false` to the subscription upsert in `/api/checkout/verify/route.ts` (D6 fix). |
 | **P2** | Exercise the renewal flow: artificially backdate a paid user's `expires_at` to ~3 days from now, navigate to `/pricing`, verify the renewal CTA appears and works. |
-| **P3** | Test a refund: in Razorpay test mode, issue a refund from the dashboard, see if any webhook reaches BloomIQ and updates the user's tier back to free. (If there's no webhook handler, that's a real gap — refunds will silently leave the user on Premium until manual intervention.) |
+| **P3** | Test a refund: in Razorpay test mode, issue a refund from the dashboard, see if any webhook reaches ZCORIQ and updates the user's tier back to free. (If there's no webhook handler, that's a real gap — refunds will silently leave the user on Premium until manual intervention.) |
 
 ---
 

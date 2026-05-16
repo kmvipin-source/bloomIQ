@@ -211,7 +211,7 @@ export default function AdminTeamPage() {
       <div className="card max-w-xl">
         <h2 className="font-semibold flex items-center gap-2 mb-1"><UserPlus size={16} /> Add an admin</h2>
         <p className="text-xs muted mb-4">
-          If the email already has a BloomIQ account, the flag flips on right away.
+          If the email already has a ZCORIQ account, the flag flips on right away.
           If not, we&apos;ll generate a single-use sign-in link for you to share —
           your colleague clicks it once and chooses their own password.
         </p>
@@ -306,7 +306,7 @@ export default function AdminTeamPage() {
             type="button"
             onClick={() =>
               copyTo(
-                `Hi! You've been added as a BloomIQ admin. Click this link to sign in (single-use, expires in ~1 hour):\n${invite.sign_in_link}\n\nYou'll be asked to set your own password right after. Welcome to the team!`,
+                `Hi! You've been added as a ZCORIQ admin. Click this link to sign in (single-use, expires in ~1 hour):\n${invite.sign_in_link}\n\nYou'll be asked to set your own password right after. Welcome to the team!`,
                 "share"
               )
             }

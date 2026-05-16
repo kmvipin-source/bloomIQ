@@ -1,36 +1,21 @@
 import { NextResponse } from "next/server";
-import { getBearer, supabaseServer, supabaseAdmin } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/lib/supabase/server";
+import { requirePlatformAdmin } from "@/lib/apiAuth";
 
 export const runtime = "nodejs";
 
 /**
- * /api/admin/team — manage the BloomIQ platform admin team.
+ * /api/admin/team — manage the ZCORIQ platform admin team.
  *
  * GET    -> list current platform admins
  * POST   -> grant platform_admin to a colleague by email
  * DELETE -> revoke platform_admin from a user by id
  */
 
-async function requireAdmin(req: Request) {
-  const token = getBearer(req);
-  if (!token) return { error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) };
-  const sb = supabaseServer(token);
-  const { data: { user } } = await sb.auth.getUser();
-  if (!user) return { error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) };
-  // Service-role read avoids the RLS race that occasionally 403'd a
-  // legitimate platform admin on the Vercel edge — same fix every
-  // other admin route in this tree already uses.
-  const adminCli = supabaseAdmin();
-  const { data: me } = await adminCli
-    .from("profiles")
-    .select("platform_admin")
-    .eq("id", user.id)
-    .maybeSingle();
-  if (!me?.platform_admin) {
-    return { error: NextResponse.json({ error: "Forbidden" }, { status: 403 }) };
-  }
-  return { user, sb };
-}
+// F171 fix (QA): local requireAdmin replaced with the shared
+// requirePlatformAdmin from lib/apiAuth.ts. Alias kept so the existing
+// three call sites need no change.
+const requireAdmin = requirePlatformAdmin;
 
 export async function GET(req: Request) {
   try {
@@ -272,6 +257,9 @@ export async function DELETE(req: Request) {
       .eq("platform_admin", true);
     if ((count || 0) <= 1) {
       return NextResponse.json(
+        // F183 note (QA): verified — refuse to delete the last platform
+        // admin. Without this a self-revoke would lock everyone out of
+        // /admin/* with no recovery path short of raw SQL.
         { error: "Can't revoke the last admin. Add another admin first." },
         { status: 400 }
       );

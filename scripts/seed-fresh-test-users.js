@@ -1,4 +1,4 @@
-// Seed a SECOND, parallel set of BloomIQ test accounts for manual testing.
+// Seed a SECOND, parallel set of ZCORIQ test accounts for manual testing.
 // Doesn't touch the existing "Test Academy" tree at all — uses brand-new
 // emails, school name, class name, and student usernames. Run alongside
 // seed-test-users.js without --reset and you'll have BOTH sets live.
@@ -230,7 +230,7 @@ async function main() {
   console.log(`🌱 Seeding fresh "${SCHOOL_NAME}" tree + new test users...`);
 
   // 0) Platform admin
-  console.log("\n[0/7] Platform admin (BloomIQ staff)...");
+  console.log("\n[0/7] Platform admin (ZCORIQ staff)...");
   const pa = TEST_USERS.platformAdmin;
   const paUser = await createAuthUser(sb, { ...pa, password: PASSWORD });
   await upsertProfile(sb, paUser.id, {

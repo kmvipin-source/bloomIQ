@@ -43,12 +43,12 @@ Reloads PostgREST at the end (`notify pgrst, 'reload schema'`).
   - Contract length input (D15, 1..10 years)
   - PO number input in the Invoice & payment card (D11)
   - State + GSTIN inputs (D12) under a new "School billing details (GST)" block
-  - "Recorded in BloomIQ at …" line under payment status (D3 visibility)
+  - "Recorded in ZCORIQ at …" line under payment status (D3 visibility)
   - "Download CSV" button in the past-invoices header (D16)
 
 ### Wave 3 — new surfaces
 
-- **`app/api/school/billing/route.ts`** — new. D7. Returns the school's own subscription details to the super_teacher (plan, expiry, contracted seats, invoice + PO + payment status, past invoices) via service role gated on `role === 'super_teacher'`. Skips admin uuids — schools see commercial info, not which BloomIQ staffer touched the row.
+- **`app/api/school/billing/route.ts`** — new. D7. Returns the school's own subscription details to the super_teacher (plan, expiry, contracted seats, invoice + PO + payment status, past invoices) via service role gated on `role === 'super_teacher'`. Skips admin uuids — schools see commercial info, not which ZCORIQ staffer touched the row.
 - **`app/school/billing/page.tsx`** — new. D7. Read-only billing dashboard mirroring the per-school admin page for the super_teacher. Renders a friendly "no active subscription" empty state with a link to `/pricing` when there's no plan.
 - **`components/Sidebar.tsx`** — adds a new "Account" group with the Billing link to the super_teacher sidebar.
 - **`app/api/admin/schools/[id]/invoices.csv/route.ts`** — new. D16. Streams a finance-friendly CSV of the live cycle plus every archived cycle. RFC-4180 quoting, CRLF terminators, content-disposition with a slug filename.

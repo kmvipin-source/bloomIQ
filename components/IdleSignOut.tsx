@@ -8,6 +8,9 @@ const IDLE_TIMEOUT_MS = 30 * 60 * 1000;       // 30 min hard cap, all roles
 const WARN_BEFORE_MS = 60 * 1000;              // 1-min "you'll be signed out" warning
 const ACTIVITY_EVENTS = ["mousemove", "mousedown", "keydown", "touchstart", "scroll"];
 const PROTECTED_PREFIXES = ["/student", "/teacher", "/school", "/admin", "/parent", "/settings", "/staff"];
+// F29 note (QA): localStorage is trivially tamperable. This module is
+// a PRIVACY guarantee (shared-device protection), NOT an access-control
+// boundary. Server-side session expiry remains the real security control.
 const LAST_ACTIVITY_KEY = "bloomiq:last_activity";
 
 /**

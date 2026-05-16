@@ -177,6 +177,26 @@ export default function ReviewPage() {
                 />
                 <BloomBadge level={q.bloom_level} />
                 <span className="text-xs muted">{BLOOM_META[q.bloom_level].description}</span>
+                {q.generation_meta?.verifier?.status === "disputed" && (
+                  <span
+                    className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-300"
+                    title={q.generation_meta?.verifier?.verifier_correct
+                      ? `AI verifier picked: "${q.generation_meta.verifier.verifier_correct}". LLM picked: "${q.generation_meta.verifier.llm_correct ?? ''}". Please double-check.`
+                      : "The AI couldn't verify the answer key. Please double-check."}
+                  >
+                    ⚠ Verify answer
+                  </span>
+                )}
+                {q.generation_meta?.bloom_disputed === true && (
+                  <span
+                    className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200"
+                    title={q.generation_meta?.bloom_actual
+                      ? `Verifier says this is actually a "${q.generation_meta.bloom_actual}" question. Requested: "${q.bloom_level}".`
+                      : "Bloom level may not match the requested level."}
+                  >
+                    ⚠ Bloom mismatch
+                  </span>
+                )}
                 {q.topic && <span className="text-xs muted ml-auto">Topic: {q.topic}</span>}
               </div>
 

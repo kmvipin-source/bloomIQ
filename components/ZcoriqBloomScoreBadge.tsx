@@ -1,10 +1,15 @@
 "use client";
+// F120 note (QA): if this badge supports a "dismiss" affordance for the
+// calibration prompt, the dismissal should remember itself for ~7 days
+// (localStorage key bloomiq:calib_dismissed_at). Today's behavior tends
+// to re-prompt on every page load, which trains students to ignore it.
+// Audit + adjust when the calibration UX is next touched.
 
 // =============================================================================
-// components/BloomIQScoreBadge.tsx
+// components/ZcoriqBloomScoreBadge.tsx
 // -----------------------------------------------------------------------------
 // Persistent top-right score chip for the student layout. Shows the 3-digit
-// BloomIQ Score plus the day-over-day delta arrow, or a "Get your BloomIQ"
+// ZCORIQ Bloom Score plus the day-over-day delta arrow, or a "Get your ZCORIQ"
 // CTA when the user hasn't calibrated yet. Tapping it opens /student/future
 // (the reveal screen) when calibrated, or /student/bloom-score (the
 // calibration intro) when not.
@@ -67,7 +72,7 @@ async function fetchScore(): Promise<{ userId: string; state: ScoreState } | nul
   };
 }
 
-export default function BloomIQScoreBadge() {
+export default function ZcoriqBloomScoreBadge() {
   const [state, setState] = useState<ScoreState | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
 
@@ -127,7 +132,7 @@ export default function BloomIQScoreBadge() {
       <div className="inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs"
            style={{ background: "rgba(0,0,0,0.04)" }}>
         <div className="w-3 h-3 rounded-full" style={{ background: "rgba(0,0,0,0.15)" }} />
-        <span className="opacity-50">BloomIQ</span>
+        <span className="opacity-50">ZCORIQ</span>
       </div>
     );
   }
@@ -145,7 +150,7 @@ export default function BloomIQScoreBadge() {
           border: "1px solid rgba(99,102,241,0.3)",
         }}
       >
-        <Sparkles size={12} /> Get your BloomIQ →
+        <Sparkles size={12} /> Get your ZCORIQ →
       </Link>
     );
   }
@@ -165,7 +170,7 @@ export default function BloomIQScoreBadge() {
       }}
       title={state.rank_label ? `Predicted: ${state.rank_label}` : undefined}
     >
-      <span className="opacity-60">BloomIQ</span>
+      <span className="opacity-60">ZCORIQ</span>
       <span className="font-bold text-sm" style={{ color: "#6366f1" }}>
         {state.score}
       </span>

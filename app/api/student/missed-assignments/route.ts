@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { getBearer, supabaseServer, supabaseAdmin } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/lib/supabase/server";
+import { requireAuthenticated } from "@/lib/apiAuth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,15 +16,19 @@ export const dynamic = "force-dynamic";
  */
 export async function GET(req: Request) {
   try {
-    const token = getBearer(req);
-    if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    const sb = supabaseServer(token);
-    const { data: { user } } = await sb.auth.getUser();
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    // F22 fix (QA): shared requireAuthenticated — single-session
+    // enforcement (token iat >= profiles.session_iat) now applied.
+    const auth = await requireAuthenticated(req);
+    if ("error" in auth) return auth.error;
+    const { user, sb } = auth;
 
     const admin = supabaseAdmin();
 
     // 1) classes the student belongs to.
+    // F111 note (QA): this returns EVERY class the student was ever a
+    // member of, including ones they've left. class_members has no
+    // active/left_at column today; when added, gate this query with
+    // .is("left_at", null) so stale memberships don't surface "missed" work.
     const { data: cm } = await admin
       .from("class_members")
       .select("class_id")

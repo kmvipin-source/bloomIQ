@@ -38,7 +38,7 @@ import {
   Sparkles, TrendingUp, Trophy, Target, ArrowRight, RefreshCw,
   Share2, Lock,
 } from "lucide-react";
-import { BLOOM_LABEL } from "@/lib/bloomiqScore";
+import { BLOOM_LABEL } from "@/lib/zcoriqBloomScore";
 import {
   computeSignature,
   computeStrength,
@@ -47,7 +47,7 @@ import {
   computeUpgradeNarrative,
   topicForGoal,
   type UpgradeAction,
-} from "@/lib/bloomiqInsights";
+} from "@/lib/zcoriqInsights";
 import type { BloomLevel } from "@/lib/bloom";
 import { useFeatureAccess } from "@/lib/featureAccess";
 import { CheckCircle2, AlertTriangle, Clock, Zap, Award, PlayCircle, Crown } from "lucide-react";
@@ -205,7 +205,7 @@ export default function FutureYouPage() {
           <Sparkles size={32} className="mx-auto mb-3 opacity-60" />
           <h1 className="text-xl font-bold">No calibration yet</h1>
           <p className="mt-2 opacity-70">
-            Take the 7-minute calibration to discover your BloomIQ Score and an
+            Take the 7-minute calibration to discover your ZCORIQ Bloom Score and an
             indicative readiness band for your exam goal. Self-assessment only —
             not a prediction of rank or admission.
           </p>
@@ -372,13 +372,13 @@ function Reveal({ data, animate }: { data: Reveal; animate: boolean }) {
     // of outcome claims.
     if (navigator.share) {
       navigator.share({
-        title: "My BloomIQ Score",
-        text: `My BloomIQ Score (self-assessment) is ${data.score}/900. Indicative readiness band: ${data.prediction.rank_label}. Try it →`,
+        title: "My ZCORIQ Bloom Score",
+        text: `My ZCORIQ Bloom Score (self-assessment) is ${data.score}/900. Indicative readiness band: ${data.prediction.rank_label}. Try it →`,
         url: window.location.origin + "/pricing",
       }).catch(() => { /* user cancelled */ });
     } else {
       navigator.clipboard?.writeText(
-        `My BloomIQ Score (self-assessment) is ${data.score}/900. Indicative readiness band: ${data.prediction.rank_label}. Try it: ${window.location.origin}/signup`
+        `My ZCORIQ Bloom Score (self-assessment) is ${data.score}/900. Indicative readiness band: ${data.prediction.rank_label}. Try it: ${window.location.origin}/signup`
       );
       alert("Copied to clipboard — paste into your story!");
     }
@@ -403,7 +403,7 @@ function Reveal({ data, animate }: { data: Reveal; animate: boolean }) {
           <AlertTriangle size={14} className="flex-shrink-0 mt-0.5" style={{ color: "#6366f1" }} />
           <div>
             <strong style={{ color: "#1e293b" }}>Indicative only — not a prediction.</strong>{" "}
-            BloomIQ Score is a self-assessment tool. The bands and tier descriptors below
+            ZCORIQ Bloom Score is a self-assessment tool. The bands and tier descriptors below
             are anchors for self-direction based on public approximate cutoffs. They are{" "}
             <strong>not</strong> a forecast of exam rank, admission, or outcome at any
             institution. Tier descriptors are generic and do not imply affiliation with
@@ -466,7 +466,7 @@ function Reveal({ data, animate }: { data: Reveal; animate: boolean }) {
       <div className="flex items-center justify-between mb-1">
         <div className="flex-1" />
         <div className="text-xs uppercase tracking-wider opacity-60 text-center flex-1">
-          Your BloomIQ Score
+          Your ZCORIQ Bloom Score
         </div>
         <div className="flex-1 flex justify-end">
           <Link
@@ -862,7 +862,7 @@ function Reveal({ data, animate }: { data: Reveal; animate: boolean }) {
       </div>
 
       <p className="text-xs opacity-60 text-center mt-6 leading-relaxed max-w-2xl mx-auto">
-        BloomIQ Score, the indicative bands, and the tier descriptors shown here are a
+        ZCORIQ Bloom Score, the indicative bands, and the tier descriptors shown here are a
         self-assessment heuristic — they are <strong>not</strong> a prediction of exam rank,
         admission, or outcome at any specific institution. Cutoff numbers are drawn from
         publicly reported approximate ranges and serve as self-direction anchors only.

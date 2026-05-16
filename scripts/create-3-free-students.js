@@ -205,7 +205,7 @@ async function main() {
   console.log("\n  All three are confirmed (no inbox click needed) and on the");
   console.log("  Free plan (no subscription row). They have an exam_goal already");
   console.log("  set, so the goal-picker is skipped and they land straight on");
-  console.log("  the Discover BloomIQ Score discovery hero.");
+  console.log("  the Discover ZCORIQ Bloom Score discovery hero.");
   console.log("\n  Tip: pass --reset to wipe + recreate next time.");
 }
 

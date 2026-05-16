@@ -1,4 +1,4 @@
-// BloomIQ — Empirical question calibration (light IRT).
+// ZCORIQ — Empirical question calibration (light IRT).
 // SERVER-ONLY: imports supabaseAdmin and must never be bundled into the client.
 //
 // Once a question accumulates >= minAttempts attempts we compute:

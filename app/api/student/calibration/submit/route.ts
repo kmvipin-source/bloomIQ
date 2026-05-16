@@ -1,12 +1,13 @@
 import { NextResponse } from "next/server";
-import { getBearer, supabaseServer, supabaseAdmin } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/lib/supabase/server";
+import { requireAuthenticated } from "@/lib/apiAuth";
 import {
   computeScore,
   computeBestYou,
   predictRankAndColleges,
   normalizeExamGoal,
   type ScorableAnswer,
-} from "@/lib/bloomiqScore";
+} from "@/lib/zcoriqBloomScore";
 import { BLOOM_LEVELS, type BloomLevel } from "@/lib/bloom";
 import { type CalibrationQuestion } from "@/lib/calibrationGenerator";
 
@@ -48,11 +49,11 @@ type SubmitBody = {
 
 export async function POST(req: Request) {
   try {
-    const token = getBearer(req);
-    if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    const sb = supabaseServer(token);
-    const { data: { user }, error: userErr } = await sb.auth.getUser();
-    if (userErr || !user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    // F22 fix (QA): shared requireAuthenticated — single-session
+    // enforcement (token iat >= profiles.session_iat) now applied.
+    const auth = await requireAuthenticated(req);
+    if ("error" in auth) return auth.error;
+    const { user, sb } = auth;
 
     const body = (await req.json().catch(() => ({}))) as SubmitBody;
     if (!body.session_id || !Array.isArray(body.responses) || body.responses.length === 0) {

@@ -232,7 +232,7 @@ export default function BulkAddStudents({
         <div class="name">${escapeHtml(o.fullName)}</div>
         <div class="row"><span class="lbl">Username</span><code>${escapeHtml(o.username || "")}</code></div>
         <div class="row"><span class="lbl">Password</span><code>${escapeHtml(o.password || "")}</code></div>
-        <div class="hint">Sign in at the Student tab on the BloomIQ login page.</div>
+        <div class="hint">Sign in at the Student tab on the ZCORIQ login page.</div>
       </div>
     `).join("");
     w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Student credentials - ${escapeHtml(className)}</title><style>

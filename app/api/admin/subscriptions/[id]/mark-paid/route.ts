@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { getBearer, supabaseServer, supabaseAdmin } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/lib/supabase/server";
+import { requirePlatformAdmin } from "@/lib/apiAuth";
 
 export const runtime = "nodejs";
 
@@ -58,19 +59,10 @@ type RouteContext = { params: Promise<{ id: string }> };
 
 export async function POST(req: Request, ctx: RouteContext) {
   try {
-    const token = getBearer(req);
-    if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    const sb = supabaseServer(token);
-    const { data: { user } } = await sb.auth.getUser();
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    const { data: me } = await sb
-      .from("profiles")
-      .select("platform_admin")
-      .eq("id", user.id)
-      .single();
-    if (!me?.platform_admin) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
+    // F171 fix (QA): inline platform_admin check → shared helper.
+    // F22 single-session iat enforcement comes along for free.
+    const auth = await requirePlatformAdmin(req);
+    if ("error" in auth) return auth.error;
 
     const { id: subscriptionId } = await ctx.params;
     if (!subscriptionId) {

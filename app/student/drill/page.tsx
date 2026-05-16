@@ -94,7 +94,7 @@ export default function DailyDrillPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Could not submit.");
       setResult(data as SubmitResult);
-      // Recompute BloomIQ score after a successful drill submission.
+      // Recompute ZCORIQ score after a successful drill submission.
       void triggerScoreRecompute("drill", null);
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Submit failed.");

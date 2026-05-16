@@ -391,7 +391,7 @@ export default function SpeedTrainerPage() {
       setResult(resp);
       setReveal(resp.questions || null);
       void loadHistory();
-      // Recompute BloomIQ score after a speed-trainer round.
+      // Recompute ZCORIQ score after a speed-trainer round.
       void triggerScoreRecompute("drill", null);
 
       // Best-effort: log confidence-calibration events alongside the speed

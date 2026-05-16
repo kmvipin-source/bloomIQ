@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
-import { getBearer, supabaseServer, supabaseAdmin } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/lib/supabase/server";
+import { requireAuthenticated } from "@/lib/apiAuth";
 import {
   computeScore,
   predictRankAndColleges,
   type ScorableAnswer,
-} from "@/lib/bloomiqScore";
+} from "@/lib/zcoriqBloomScore";
 import { BLOOM_LEVELS, type BloomLevel } from "@/lib/bloom";
 
 export const runtime = "nodejs";
@@ -13,7 +14,7 @@ export const dynamic = "force-dynamic";
 /**
  * POST /api/student/score/recompute
  *
- * Recomputes the caller's BloomIQ Score using:
+ * Recomputes the caller's ZCORIQ Bloom Score using:
  *   - their original calibration responses (anchor)
  *   - PLUS recent quiz attempt_answers (recency-weighted)
  *
@@ -43,11 +44,11 @@ const RECENT_WEIGHT = 1.5; // recent attempt answers count 1.5x in scoring
 
 export async function POST(req: Request) {
   try {
-    const token = getBearer(req);
-    if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    const sb = supabaseServer(token);
-    const { data: { user }, error: userErr } = await sb.auth.getUser();
-    if (userErr || !user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    // F22 fix (QA): shared requireAuthenticated — single-session
+    // enforcement (token iat >= profiles.session_iat) now applied.
+    const auth = await requireAuthenticated(req);
+    if ("error" in auth) return auth.error;
+    const { user, sb } = auth;
 
     const body = (await req.json().catch(() => ({}))) as RecomputeBody;
     const triggerEvent = body.trigger_event || "recompute";

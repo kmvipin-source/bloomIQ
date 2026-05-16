@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { getBearer, supabaseServer, supabaseAdmin } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/lib/supabase/server";
+import { requirePlatformAdmin } from "@/lib/apiAuth";
 
 export const runtime = "nodejs";
 
@@ -19,32 +20,14 @@ export const runtime = "nodejs";
  * DELETE — remove an unused SKU. Refused if any subscription points at it.
  */
 
-async function requireAdmin(req: Request) {
-  const token = getBearer(req);
-  if (!token) return { err: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) };
-  const sb = supabaseServer(token);
-  const { data: { user } } = await sb.auth.getUser();
-  if (!user) return { err: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) };
-  // Service-role read avoids the RLS race that 403'd legit platform
-  // admins on the Vercel edge.
-  const adminCli = supabaseAdmin();
-  const { data: me } = await adminCli
-    .from("profiles")
-    .select("platform_admin")
-    .eq("id", user.id)
-    .maybeSingle();
-  if (!me?.platform_admin) {
-    return { err: NextResponse.json({ error: "Forbidden" }, { status: 403 }) };
-  }
-  return { user };
-}
+// F171 fix (QA): local requireAdmin replaced with shared helper.
 
 type RouteContext = { params: Promise<{ id: string }> };
 
 export async function GET(req: Request, ctx: RouteContext) {
   try {
-    const auth = await requireAdmin(req);
-    if ("err" in auth) return auth.err;
+    const auth = await requirePlatformAdmin(req);
+    if ("error" in auth) return auth.error;
     void auth;
     const { id } = await ctx.params;
 
@@ -88,8 +71,8 @@ export async function PUT() {
 
 export async function DELETE(req: Request, ctx: RouteContext) {
   try {
-    const auth = await requireAdmin(req);
-    if ("err" in auth) return auth.err;
+    const auth = await requirePlatformAdmin(req);
+    if ("error" in auth) return auth.error;
     void auth;
     const { id } = await ctx.params;
 

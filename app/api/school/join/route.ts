@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
-import { getBearer, supabaseServer, supabaseAdmin } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/lib/supabase/server";
+import { requireAuthenticated } from "@/lib/apiAuth";
+// F49 fix: distributed rate limit (DB-backed) replaces the per-lambda
+// in-memory Map below, which was trivially bypassable by cycling
+// through Vercel function instances.
+import { enforceRateLimit } from "@/lib/rateLimitDb";
 
 export const runtime = "nodejs";
 
@@ -31,12 +36,23 @@ function shouldThrottle(userId: string): boolean {
  */
 export async function POST(req: Request) {
   try {
-    const token = getBearer(req);
-    if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    const sb = supabaseServer(token);
-    const { data: { user } } = await sb.auth.getUser();
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    // F22 fix (QA): shared requireAuthenticated — single-session
+    // enforcement (token iat >= profiles.session_iat) now applied.
+    const auth = await requireAuthenticated(req);
+    if ("error" in auth) return auth.error;
+    const { user, sb } = auth;
 
+    // F49 fix: distributed rate limit (replaces the in-memory shouldThrottle).
+    const rl = await enforceRateLimit(user.id, "school.join");
+    if (!rl.allowed) {
+      return NextResponse.json(
+        { error: "Too many join attempts. Wait a few minutes and try again.", retry_after_seconds: rl.retryAfterSeconds },
+        { status: 429, headers: { "Retry-After": String(rl.retryAfterSeconds) } }
+      );
+    }
+    // Keep the legacy in-memory check below as a belt-and-braces line of
+    // defense against pathological burst-within-one-lambda; the DB layer
+    // is the real limit.
     if (shouldThrottle(user.id)) {
       return NextResponse.json(
         { error: "Too many join attempts. Wait a few minutes and try again." },
@@ -50,7 +66,11 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Only teachers can join a school." }, { status: 403 });
     }
     if (prof.school_id) {
-      return NextResponse.json({ error: "You're already in a school. Leave it first to switch." }, { status: 409 });
+      // F71 fix: implies a "switch" UI that doesn't exist. Clearer text.
+      return NextResponse.json(
+        { error: "You're already in a school. Use the Leave School option in /settings first, then enter the new code." },
+        { status: 409 }
+      );
     }
 
     const body = await req.json().catch(() => ({}));
@@ -64,6 +84,10 @@ export async function POST(req: Request) {
       .maybeSingle();
     if (!school) return NextResponse.json({ error: "No school found with that code." }, { status: 404 });
 
+    // F59 note (QA): no audit-trail row for teacher self-join via join_code.
+    // For pilot/compliance, INSERT into school_events (event='teacher_joined',
+    // actor=user.id, school_id=school.id, at=now()) alongside this update.
+    // Schema TBD — defer to migration 98.
     const { error } = await admin.from("profiles").update({ school_id: school.id }).eq("id", user.id);
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
@@ -79,11 +103,11 @@ export async function POST(req: Request) {
  */
 export async function DELETE(req: Request) {
   try {
-    const token = getBearer(req);
-    if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    const sb = supabaseServer(token);
-    const { data: { user } } = await sb.auth.getUser();
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    // F22 fix (QA): shared requireAuthenticated — single-session
+    // enforcement (token iat >= profiles.session_iat) now applied.
+    const auth = await requireAuthenticated(req);
+    if ("error" in auth) return auth.error;
+    const { user, sb } = auth;
 
     const { data: prof } = await sb.from("profiles").select("role, school_id").eq("id", user.id).single();
     if (!prof || prof.role !== "teacher") {
@@ -94,6 +118,10 @@ export async function DELETE(req: Request) {
     }
     const admin = supabaseAdmin();
 
+    // F58 note (QA): teacher-leave correctly cleans up class_teachers AND
+    // owner_id pointers. If anyone reports stale memberships, this loop
+    // is the place — check classIds is populated.
+    //
     // Detach this teacher from any class in the school they're leaving:
     //   - drop their class_teachers rows for those classes
     //   - clear classes.owner_id where it pointed to them
@@ -120,16 +148,10 @@ export async function DELETE(req: Request) {
     }
 
     // Drop any pending teacher invites that targeted this teacher's email
-    // for classes in this school (defensive — invites should already be
-    // cleared once they joined; covers stale data).
     const { data: authUser } = await admin.auth.admin.getUserById(user.id);
     const teacherEmail = authUser?.user?.email?.toLowerCase();
     if (teacherEmail && classIds.length) {
-      await admin
-        .from("class_teacher_invites")
-        .delete()
-        .eq("email", teacherEmail)
-        .in("class_id", classIds);
+      await admin.from("class_teacher_invites").delete().eq("email", teacherEmail).in("class_id", classIds);
     }
 
     const { error } = await admin.from("profiles").update({ school_id: null }).eq("id", user.id);

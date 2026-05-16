@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getBearer, supabaseServer, supabaseAdmin } from "@/lib/supabase/server";
+import { requirePlatformAdmin } from "@/lib/apiAuth";
 import type {
   PlanProposalKind,
   PlanProposalPayload,
@@ -25,7 +26,16 @@ export const runtime = "nodejs";
 
 // ------- shared admin gate (same pattern as /api/admin/plans/route.ts) ----
 
-export async function requireAdmin(req: Request) {
+// F171 fix (QA): adapter dropped — the 4 sibling routes now use the
+// modern {error} shape. requireAdmin is a thin alias kept only so
+// the sibling imports don't need to be renamed in this PR. A future
+// PR can sweep `requireAdmin` → `requirePlatformAdmin` and delete
+// this alias.
+export const requireAdmin = requirePlatformAdmin;
+
+// Dead-code block below preserved for one PR cycle to make rollback
+// trivial; the bundler tree-shakes it out of production.
+async function _requireAdmin_legacy(req: Request) {
   const token = getBearer(req);
   if (!token) {
     return { err: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) };

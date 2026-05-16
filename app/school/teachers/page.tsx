@@ -197,7 +197,7 @@ export default function SchoolTeachersPage() {
         <h3 className="font-semibold mb-1 flex items-center gap-2"><ShieldCheck size={16} /> Business continuity — deputies</h3>
         <p className="text-sm muted">
           Promote up to {DEPUTY_CAP} teachers to <strong>Deputy Admin Head</strong>. Deputies can do
-          everything you do — manage classes, view reports, talk to BloomIQ about renewal —
+          everything you do — manage classes, view reports, talk to ZCORIQ about renewal —
           except they can&apos;t promote/demote other deputies or transfer the Head role.
           This is your insurance for unplanned leave. <strong>Currently {deputyCount} of {DEPUTY_CAP} deputies appointed.</strong>
         </p>
@@ -327,7 +327,7 @@ export default function SchoolTeachersPage() {
               <>
                 <h3 className="font-semibold flex items-center gap-2"><ArrowUpRight size={18} /> Promote {confirmAction.full_name} to Deputy?</h3>
                 <p className="text-sm muted mt-2">
-                  Deputies can manage classes, view all school reports, and talk to BloomIQ
+                  Deputies can manage classes, view all school reports, and talk to ZCORIQ
                   about renewal. They <strong>cannot</strong> promote/demote other deputies
                   or transfer your Admin Head role.
                 </p>

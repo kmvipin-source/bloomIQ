@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { groqJSON, groqJSONVision } from "@/lib/groq";
 import { BLOOM_LEVELS, BLOOM_META, type BloomLevel, isBloomLevel, blankBloomCounts } from "@/lib/bloom";
-import { getBearer, supabaseServer, supabaseAdmin } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/lib/supabase/server";
+import { requireAuthenticated } from "@/lib/apiAuth";
 import { checkRateLimit, checkDailyCap } from "@/lib/rateLimit";
 import {
   findMisconceptionDistractors,
@@ -407,11 +408,11 @@ Return JSON of the form { "questions": [ { "stem": "...", "options": ["A","B","C
 
 export async function POST(req: Request) {
   try {
-    const token = getBearer(req);
-    if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    const sb = supabaseServer(token);
-    const { data: { user } } = await sb.auth.getUser();
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    // F22 fix (QA): shared requireAuthenticated — single-session
+    // enforcement (token iat ≥ profiles.session_iat) now applied.
+    const auth = await requireAuthenticated(req);
+    if ("error" in auth) return auth.error;
+    const { user, sb } = auth;
     // /api/generate fires multiple LLM calls per request (one per Bloom
     // level + verifier + refinement). Tight burst limit; hard daily cap.
     const rate = checkRateLimit(user.id, "generate", { capacity: 5, refillPerHour: 10 });
@@ -420,7 +421,18 @@ export async function POST(req: Request) {
     if (!daily.allowed) return NextResponse.json({ error: `Daily limit reached (${daily.limit}).`, code: "daily_cap" }, { status: 429 });
 
     const body = await req.json();
-    const source: Source = (body.source as Source) || "notes";
+    // F149 fix: validate source against the enum instead of casting
+    // blind. A bogus source would otherwise fall through the switch
+    // and call notesPrompt with empty content.
+    const VALID_SOURCES: ReadonlyArray<Source> = ["notes", "image", "topic_syllabus", "topic_only"] as const;
+    const rawSource = String(body.source || "notes");
+    if (!(VALID_SOURCES as readonly string[]).includes(rawSource)) {
+      return NextResponse.json(
+        { error: `Invalid source '${rawSource}'. Allowed: ${VALID_SOURCES.join(", ")}.` },
+        { status: 400 }
+      );
+    }
+    const source: Source = rawSource as Source;
     const content: string = body.content || "";
     const topic: string = body.topic || "";
     const className: string = body.className || "";
@@ -433,7 +445,30 @@ export async function POST(req: Request) {
     // exactly the requested count, so larger asks just mean "give me
     // more on this Bloom level". 25 caps the prompt-token spend.
     const perLevel: number = Math.max(1, Math.min(25, Number(body.perLevel) || 2));
-    const numericalPercent: number = Math.max(0, Math.min(100, Number(body.numericalPercent) || 0));
+    // 2026-05-16: per-level individual counts. The client sends
+    //   perLevelCounts: { remember: 3, understand: 5, apply: 2, ... }
+    // We honour this when present; otherwise fall back to the shared
+    // `perLevel` for every requested level (legacy behaviour).
+    const rawPerLevelCounts =
+      body && typeof body === 'object' && body.perLevelCounts && typeof body.perLevelCounts === 'object'
+        ? (body.perLevelCounts as Record<string, unknown>)
+        : null;
+    function countForLevel(l: BloomLevel): number {
+      if (rawPerLevelCounts && l in rawPerLevelCounts) {
+        const v = Number(rawPerLevelCounts[l]);
+        if (Number.isFinite(v) && v > 0) return Math.max(1, Math.min(25, Math.floor(v)));
+      }
+      return perLevel;
+    }
+    // F147 fix: explicit reject of pathological numericalPercent inputs.
+    // The Math.max/min already clamped, but rejecting NaN / Infinity /
+    // negatives loudly is more useful than silent clamping for a direct
+    // API hit.
+    const numRaw = Number(body.numericalPercent);
+    if (body.numericalPercent != null && (Number.isNaN(numRaw) || !Number.isFinite(numRaw))) {
+      return NextResponse.json({ error: "numericalPercent must be a finite number between 0 and 100." }, { status: 400 });
+    }
+    const numericalPercent: number = Math.max(0, Math.min(100, numRaw || 0));
     const requested: string[] = Array.isArray(body.levels) ? body.levels : BLOOM_LEVELS;
     const levels: BloomLevel[] = requested.filter(isBloomLevel);
     // Audience-level signal (Phase 1) — explicit user pick overrides the default
@@ -575,17 +610,17 @@ export async function POST(req: Request) {
       try {
         switch (source) {
           case "image":
-            json = await groqJSONVision(contextAwareSystem, imagePrompt(contextAwareTopic, lvl, perLevel, numericalPercent, seedBlock), imageDataUrl);
+            json = await groqJSONVision(contextAwareSystem, imagePrompt(contextAwareTopic, lvl, countForLevel(lvl), numericalPercent, seedBlock), imageDataUrl);
             break;
           case "topic_syllabus":
-            json = await groqJSON(contextAwareSystem, syllabusPrompt(contextAwareTopic, className, syllabus, lvl, perLevel, numericalPercent, seedBlock));
+            json = await groqJSON(contextAwareSystem, syllabusPrompt(contextAwareTopic, className, syllabus, lvl, countForLevel(lvl), numericalPercent, seedBlock));
             break;
           case "topic_only":
-            json = await groqJSON(contextAwareSystem, topicOnlyPrompt(contextAwareTopic, lvl, perLevel, numericalPercent, seedBlock));
+            json = await groqJSON(contextAwareSystem, topicOnlyPrompt(contextAwareTopic, lvl, countForLevel(lvl), numericalPercent, seedBlock));
             break;
           case "notes":
           default:
-            json = await groqJSON(contextAwareSystem, notesPrompt(content, contextAwareTopic, lvl, perLevel, numericalPercent, seedBlock));
+            json = await groqJSON(contextAwareSystem, notesPrompt(content, contextAwareTopic, lvl, countForLevel(lvl), numericalPercent, seedBlock));
         }
       } catch (e) {
         // eslint-disable-next-line no-console
@@ -629,7 +664,7 @@ export async function POST(req: Request) {
       const { kept: passed, droppedLeak, droppedDup, droppedHistory, trimmed } = filterQuestionBatch(
         semanticallyDeduped as Array<{ stem: string; options: string[]; correct_index: number; explanation?: string }>,
         {
-          maxCount: perLevel,
+          maxCount: countForLevel(lvl),
           similarityThreshold: 0.7,
           historyStems: exclusion.stems,
         },
@@ -637,19 +672,19 @@ export async function POST(req: Request) {
       // eslint-disable-next-line no-console
       console.log(
         `[generate] level=${lvl}: kept=${passed.length}/${semanticallyDeduped.length} ` +
-        `(target=${perLevel}, dropped: leak=${droppedLeak.length} dup=${droppedDup.length} ` +
+        `(target=${countForLevel(lvl)}, dropped: leak=${droppedLeak.length} dup=${droppedDup.length} ` +
         `history=${droppedHistory.length} trimmed=${trimmed.length})`
       );
 
       // 2026-05-14 evening — AUTO-RETRY ON SHORTFALL (mirror of quick-test).
       let effectivePassed: typeof passed = passed;
-      if (passed.length < perLevel) {
-        const need = perLevel - passed.length;
+      if (passed.length < countForLevel(lvl)) {
+        const need = countForLevel(lvl) - passed.length;
         const alreadyHave = passed
           .map((q, i) => `  ${i + 1}. ${q.stem.slice(0, 120)}${q.stem.length > 120 ? "…" : ""}`)
           .join("\n");
         const retryUserPrompt =
-          `RETRY — your previous attempt yielded ${passed.length} of ${perLevel} usable questions at the "${lvl}" Bloom level.\n` +
+          `RETRY — your previous attempt yielded ${passed.length} of ${countForLevel(lvl)} usable questions at the "${lvl}" Bloom level.\n` +
           `Generate ${need} MORE distinct multiple-choice questions on different sub-areas / scenarios.\n\n` +
           `Already produced (do NOT repeat sub-area or scenario):\n${alreadyHave || "  (none)"}\n\n` +
           `Return JSON: { "questions": [ { "stem": "...", "options": ["A","B","C","D"], "correct_index": 0, "explanation": "..." } ] }`;
@@ -674,7 +709,7 @@ export async function POST(req: Request) {
           );
           effectivePassed = [...passed, ...retryKept];
           // eslint-disable-next-line no-console
-          console.log(`[generate] level=${lvl}: retry kept ${retryKept.length}/${retryValid.length}, total ${effectivePassed.length}/${perLevel}`);
+          console.log(`[generate] level=${lvl}: retry kept ${retryKept.length}/${retryValid.length}, total ${effectivePassed.length}/${countForLevel(lvl)}`);
         } catch (e) {
           // eslint-disable-next-line no-console
           console.warn(`[generate] level=${lvl}: retry failed (non-fatal):`, e instanceof Error ? e.message : e);
@@ -834,10 +869,50 @@ export async function POST(req: Request) {
     const stemEmbeddings = (await embedTexts(stemTexts)) || stemTexts.map(() => null);
     // eslint-disable-next-line no-console
     console.log(`[generate] embedded ${stemEmbeddings.filter((e) => Array.isArray(e)).length}/${stemTexts.length} stems`);
+    // 2026-05-15 (migration 90): tag every inserted question with the
+    // teacher's teaching context (their profile.exam_goal slug, sent by
+    // the client as body.examGoal). The question-bank UI uses this to
+    // filter "show me only Class 8 questions" / "only JEE questions" and
+    // the assemble flow uses it to keep a Class-8 quiz from accidentally
+    // pulling JEE-difficulty items. Falls back to null when the caller
+    // didn't send a goal (legacy callers / non-teacher entry points).
+    // 2026-05-16: per-generation category override from the teacher /generate page.
+    // F141 note (QA): the picker that drives category_override on the
+    // client renders one flat list. For learner_profile=competitive_exam
+    // teachers, the list is long (~20 items) and scanning is hard.
+    // Group the catalog by learner_profile in the UI (sections: "K-12",
+    // "Competitive", "Professional") so the picker is scannable. Server
+    // side stays the same — this is purely a UI grouping.
+    //
+    // Preference order: client-supplied category_override → bodyExamGoal → null.
+    // F148 fix: whitelist category_override against the same vocabulary the
+    // /teacher/generate form exposes. A direct API hit with an arbitrary
+    // string would otherwise write a malformed slug into question_bank.category
+    // that downstream filters can't match.
+    const VALID_CATEGORIES = new Set<string>([
+      'class5_8', 'class_9', 'class_10_boards', 'class_12_boards',
+      'jee_main', 'jee_advanced', 'neet_prep', 'cat_prep', 'upsc_prep',
+      'gate_prep', 'bank_exams', 'gmat_prep', 'gre_prep', 'clat_prep',
+      'bitsat_prep', 'sat_prep', 'nda_prep', 'cuet_prep', 'corporate', 'other',
+    ]);
+    const bodyCategoryRaw: string | null = typeof (body as Record<string, unknown>).category_override === 'string'
+      ? String((body as Record<string, unknown>).category_override).trim() || null
+      : null;
+    if (bodyCategoryRaw && !VALID_CATEGORIES.has(bodyCategoryRaw)) {
+      return NextResponse.json({ error: `Unknown category_override "${bodyCategoryRaw}".` }, { status: 400 });
+    }
+    const bodyCategoryOverride: string | null = bodyCategoryRaw;
+    const categoryToTag: string | null =
+      (bodyCategoryOverride && bodyCategoryOverride.length > 0 ? bodyCategoryOverride : null) ||
+      (bodyExamGoal && bodyExamGoal.trim() ? bodyExamGoal.trim() : null);
     const insertRows = allRows.map((r, i) => {
       const { quality, ...rest } = r;
       void quality;
-      return { ...rest, stem_embedding: stemEmbeddings[i] || null };
+      return {
+        ...rest,
+        stem_embedding: stemEmbeddings[i] || null,
+        category: categoryToTag,
+      };
     });
     const { error } = await sb.from("question_bank").insert(insertRows);
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });

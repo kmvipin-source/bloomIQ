@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { groqJSON } from "@/lib/groq";
-import { getBearer, supabaseServer } from "@/lib/supabase/server";
+import { supabaseServer } from "@/lib/supabase/server";
+import { requireAuthenticated } from "@/lib/apiAuth";
 import { buildTeacherContext } from "@/lib/teacherContext";
 import { checkCoachQuota, logCoachCall } from "@/lib/coachQuota";
 
@@ -33,7 +34,7 @@ type Digest = {
   actions: DigestAction[];
 };
 
-const SYSTEM = `You are the BloomIQ Teacher Coach generating this week's executive brief for a classroom teacher.
+const SYSTEM = `You are the ZCORIQ Teacher Coach generating this week's executive brief for a classroom teacher.
 
 Output JSON ONLY in this exact shape:
 {
@@ -96,11 +97,11 @@ function normaliseDigest(raw: Record<string, unknown>): Digest {
 
 export async function POST(req: Request) {
   try {
-    const token = getBearer(req);
-    if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    const sb = supabaseServer(token);
-    const { data: { user } } = await sb.auth.getUser();
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    // F22 fix (QA): shared requireAuthenticated — single-session
+    // enforcement (token iat >= profiles.session_iat) now applied.
+    const auth = await requireAuthenticated(req);
+    if ("error" in auth) return auth.error;
+    const { user, sb } = auth;
 
     const { data: prof } = await sb
       .from("profiles")

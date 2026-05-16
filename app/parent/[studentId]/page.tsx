@@ -83,7 +83,7 @@ export default function ParentDashboardPage() {
         <div className="max-w-4xl mx-auto px-6 py-4 flex items-center justify-between">
           <Link href="/" className="flex items-center gap-2">
             <span className="text-2xl">🌱</span>
-            <span className="font-bold tracking-tight">BloomIQ</span>
+            <span className="font-bold tracking-tight">ZCORIQ</span>
           </Link>
           <div className="text-xs muted">Parent view · read-only</div>
         </div>
@@ -152,7 +152,7 @@ export default function ParentDashboardPage() {
               <TrendingUp size={18} /> Thinking-level breakdown
             </h2>
             <p className="text-xs muted mt-1 mb-3">
-              BloomIQ scores every question by the kind of thinking it tests. Higher levels = deeper understanding.
+              ZCORIQ scores every question by the kind of thinking it tests. Higher levels = deeper understanding.
             </p>
             <div className="space-y-2">
               {bloomEntries.map(([lvl, b]) => (
@@ -221,7 +221,7 @@ export default function ParentDashboardPage() {
         )}
 
         <p className="text-xs muted text-center mt-10">
-          This is a read-only view of {childFirstName}&apos;s BloomIQ progress, shared by them.
+          This is a read-only view of {childFirstName}&apos;s ZCORIQ progress, shared by them.
           {childFirstName} can revoke this link anytime.
         </p>
       </div>

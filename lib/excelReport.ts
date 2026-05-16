@@ -141,7 +141,7 @@ export async function downloadWorkbook(wb: ExcelJS.Workbook, filename: string) {
 
 export function newWorkbook(): ExcelJS.Workbook {
   const wb = new ExcelJS.Workbook();
-  wb.creator = "BloomIQ";
+  wb.creator = "ZCORIQ";
   wb.created = new Date();
   return wb;
 }

@@ -348,7 +348,7 @@ export default function TeacherHome() {
       {profileLoaded && !schoolId && (
         <div className="mt-4 card">
           <h3 className="font-semibold flex items-center gap-2 mb-1"><Building2 size={16} /> Join your school</h3>
-          <p className="text-xs muted mb-3">If your school&apos;s Admin Head has set up BloomIQ, ask them for the school code and enter it here. Your classes and analytics will roll up to their dashboard. Skip this if you&apos;re using BloomIQ on your own.</p>
+          <p className="text-xs muted mb-3">If your school&apos;s Admin Head has set up ZCORIQ, ask them for the school code and enter it here. Your classes and analytics will roll up to their dashboard. Skip this if you&apos;re using ZCORIQ on your own.</p>
           <div className="flex gap-2 max-w-md">
             <input
               className="input text-center font-mono uppercase tracking-[0.2em]"

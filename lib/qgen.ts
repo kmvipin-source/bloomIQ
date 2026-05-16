@@ -1,6 +1,6 @@
 // lib/qgen.ts
 //
-// Server-only helpers that upgrade BloomIQ's Groq-based MCQ generation with:
+// Server-only helpers that upgrade ZCORIQ's Groq-based MCQ generation with:
 //
 //   1. Misconception-aware distractors  (findMisconceptionDistractors)
 //      Mines past `attempt_answers` joined to `question_bank` for the same
@@ -23,7 +23,7 @@
 // seeds => standard generation, no behavioural change.
 
 import { groqJSON } from "@/lib/groq";
-import { supabaseServer } from "@/lib/supabase/server";
+import { supabaseServer, supabaseAdmin } from "@/lib/supabase/server";
 import type { BloomLevel } from "@/lib/bloom";
 
 // --- public types ---------------------------------------------------------
@@ -107,7 +107,15 @@ export async function findMisconceptionDistractors(
   opts: DistractorSeedOpts
 ): Promise<DistractorSeed[]> {
   const limit = Math.max(1, Math.min(20, opts.limit ?? 5));
-  const sb = supabaseServer(opts.accessToken);
+  // F78 fix (Phase-4 QA): the qgenPipeline integration never passes an
+  // accessToken, so the previous `supabaseServer(opts.accessToken)` call
+  // produced an UNAUTHENTICATED client. RLS on question_bank evaluates
+  // auth.uid() as null, returns 0 rows, and the entire misconception-
+  // seed feature silently no-op'd in production. The query is owner-
+  // scoped already (the `.eq("owner_id", opts.ownerId)` filter), so we
+  // can safely use the service-role client when no accessToken was
+  // passed — opt-in to user-scoped auth only when a token is provided.
+  const sb = opts.accessToken ? supabaseServer(opts.accessToken) : supabaseAdmin();
 
   // Step 1: find the teacher's questions matching topic + bloom level.
   let qQuery = sb
@@ -210,6 +218,10 @@ export function formatDistractorSeedsForPrompt(seeds: DistractorSeed[]): string 
 
   return `
 
+// F80 note (QA): wording carefully avoids quoting the correct answer.
+// If you change the line below to include the correct option as
+// reference text, the model will leak it into a distractor. Keep
+// "for inspiration; you don't have to use these literally" intact.
 Common misconceptions students show on similar past questions (for inspiration; you don't have to use these literally — produce distractors that diagnose the same kinds of thinking errors):
 
 ${lines.join("\n")}

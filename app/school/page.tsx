@@ -303,7 +303,7 @@ export default function SchoolHome() {
         <div className="card mt-4">
           <h3 className="font-semibold mb-2 flex items-center gap-2"><UserCog size={16} /> Transfer Admin Head role</h3>
           <p className="text-sm muted mb-3">
-            Hand the school over to another teacher. They must already have a BloomIQ account.
+            Hand the school over to another teacher. They must already have a ZCORIQ account.
             You&apos;ll keep your account but be demoted to a regular teacher in this school.
           </p>
           <div className="flex flex-wrap gap-2">

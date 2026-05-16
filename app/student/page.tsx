@@ -75,15 +75,15 @@ export default function StudentHome() {
   // visit we show the goal-picker onboarding card instead of the
   // tile buffet. Drives downstream tile prioritisation. See migration 24.
   const [examGoal, setExamGoal] = useState<string | null>(null);
-  // BloomIQ Score calibration status. null = unknown (still loading),
+  // ZCORIQ Bloom Score calibration status. null = unknown (still loading),
   // false = user has not calibrated yet (we surface the discovery hero),
-  // true = user has calibrated (the BloomIQScoreBadge in the layout
+  // true = user has calibrated (the ZcoriqBloomScoreBadge in the layout
   // already shows their score, so the discovery hero hides).
-  const [hasBloomIQ, setHasBloomIQ] = useState<boolean | null>(null);
-  // BloomIQ calibration status is read from /api/auth/me below (which
+  const [hasZCORIQ, setHasZCORIQ] = useState<boolean | null>(null);
+  // ZCORIQ calibration status is read from /api/auth/me below (which
   // already returns has_calibration). Avoiding a duplicate
   // /api/student/score fetch here saves a round-trip per home-page mount
-  // and keeps school students out of the BloomIQ funnel by default —
+  // and keeps school students out of the ZCORIQ funnel by default —
   // they never see the discovery hero.
 
   // Feature gating. `allowed` is the set of feature keys the user's plan
@@ -146,11 +146,11 @@ export default function StudentHome() {
       setName(me.full_name || "");
       setIsSchool(!!me.is_school_student);
       setExamGoal(me.exam_goal || null);
-      // Only individual students see the BloomIQ discovery hero. School
-      // students don't go through calibration so leave hasBloomIQ at
+      // Only individual students see the ZCORIQ discovery hero. School
+      // students don't go through calibration so leave hasZCORIQ at
       // null (hero stays hidden).
       if (!me.is_school_student) {
-        setHasBloomIQ(!!me.has_calibration);
+        setHasZCORIQ(!!me.has_calibration);
       }
 
       if (!me.is_school_student) {
@@ -389,14 +389,14 @@ export default function StudentHome() {
           </div>
         )}
 
-        {/* BloomIQ Score discovery hero — first-run only. Shown when we
+        {/* ZCORIQ Bloom Score discovery hero — first-run only. Shown when we
             know the student has not yet calibrated. Disappears once they
             complete the 7-minute Bloom calibration; from then on, the
-            persistent BloomIQScoreBadge in the layout's top-right
+            persistent ZcoriqBloomScoreBadge in the layout's top-right
             carries the score everywhere. This is the killer first-
             impression real estate — placed above the at-a-glance
             scorecard so it's the dominant element of a fresh dashboard. */}
-        {hasBloomIQ === false && (
+        {hasZCORIQ === false && (
           <Link
             href="/student/bloom-score"
             className="block mt-4 rounded-2xl p-5 transition-all hover:scale-[1.01]"
@@ -411,7 +411,7 @@ export default function StudentHome() {
                   New &middot; 7 minutes
                 </div>
                 <div className="text-xl md:text-2xl font-bold mt-0.5">
-                  Discover your BloomIQ Score
+                  Discover your ZCORIQ Bloom Score
                 </div>
                 <p className="text-sm opacity-80 mt-1 max-w-lg">
                   A single 3-digit score (300&ndash;900) plus an indicative

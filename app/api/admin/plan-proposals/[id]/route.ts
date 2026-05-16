@@ -27,7 +27,7 @@ type RouteContext = { params: Promise<{ id: string }> };
 export async function GET(req: Request, ctx: RouteContext) {
   try {
     const auth = await requireAdmin(req);
-    if ("err" in auth) return auth.err;
+    if ("error" in auth) return auth.error;
     const { id } = await ctx.params;
 
     const admin = supabaseAdmin();
@@ -116,7 +116,7 @@ export async function GET(req: Request, ctx: RouteContext) {
 export async function PATCH(req: Request, ctx: RouteContext) {
   try {
     const auth = await requireAdmin(req);
-    if ("err" in auth) return auth.err;
+    if ("error" in auth) return auth.error;
     const { id } = await ctx.params;
 
     const admin = supabaseAdmin();

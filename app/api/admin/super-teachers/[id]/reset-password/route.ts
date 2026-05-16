@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { getBearer, supabaseServer, supabaseAdmin } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/lib/supabase/server";
+import { requirePlatformAdmin } from "@/lib/apiAuth";
 
 export const runtime = "nodejs";
 
@@ -7,7 +8,7 @@ export const runtime = "nodejs";
  * POST /api/admin/super-teachers/[id]/reset-password
  *
  * Platform-admin support tool: set a super_teacher's password to a known
- * value when they've forgotten theirs and the BloomIQ team needs to get
+ * value when they've forgotten theirs and the ZCORIQ team needs to get
  * them back in fast. Mirrors the teacher-resets-student flow at
  * /api/admin/students/[id]/reset-password.
  *
@@ -20,20 +21,10 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const token = getBearer(req);
-    if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    const sb = supabaseServer(token);
-    const { data: { user } } = await sb.auth.getUser();
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-    const { data: me } = await sb
-      .from("profiles")
-      .select("platform_admin")
-      .eq("id", user.id)
-      .maybeSingle();
-    if (!me?.platform_admin) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
+    // F171 fix (QA): inline platform_admin check replaced with shared
+    // helper. F22 iat enforcement now also gates this mutating route.
+    const auth = await requirePlatformAdmin(req);
+    if ("error" in auth) return auth.error;
 
     const { id: targetId } = await params;
     const body = await req.json().catch(() => ({}));

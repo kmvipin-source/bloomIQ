@@ -28,7 +28,7 @@ export default function LoginFrontDoor() {
       <div className="w-full max-w-3xl">
         <Link href="/" className="flex items-center gap-2 justify-center mb-8">
           <span className="text-3xl">🌱</span>
-          <span className="text-xl font-bold">BloomIQ</span>
+          <span className="text-xl font-bold">ZCORIQ</span>
         </Link>
 
         <h1 className="text-2xl sm:text-3xl font-bold text-center mb-2">Welcome.</h1>
@@ -64,13 +64,13 @@ export default function LoginFrontDoor() {
                 "sign up" slot on this card is therefore a mailto rather
                 than a /signup link. */}
             <a
-              href="mailto:hello@bloomiq.app?subject=BloomIQ%20school%20onboarding"
+              href="mailto:hello@bloomiq.app?subject=ZCORIQ%20school%20onboarding"
               className="btn btn-secondary w-full inline-flex items-center justify-center gap-1.5 whitespace-nowrap"
             >
               <Mail size={14} /> Talk to us
             </a>
             <span className="text-xs text-slate-500 mt-1">
-              Admin Head accounts are provisioned by BloomIQ — there is no
+              Admin Head accounts are provisioned by ZCORIQ — there is no
               self-serve sign-up.
             </span>
           </div>
@@ -114,9 +114,9 @@ export default function LoginFrontDoor() {
         </div>
 
         <div className="mt-8 text-center text-xs text-slate-500">
-          Your school isn&apos;t on BloomIQ yet?{" "}
+          Your school isn&apos;t on ZCORIQ yet?{" "}
           <a
-            href="mailto:hello@bloomiq.app?subject=BloomIQ%20school%20onboarding"
+            href="mailto:hello@bloomiq.app?subject=ZCORIQ%20school%20onboarding"
             className="text-emerald-700 font-semibold hover:underline"
           >
             Talk to us about onboarding <ArrowRight size={10} className="inline" />
@@ -124,7 +124,7 @@ export default function LoginFrontDoor() {
         </div>
 
         <p className="text-xs text-slate-500 text-center mt-3">
-          BloomIQ staff sign in via{" "}
+          ZCORIQ staff sign in via{" "}
           <Link href="/staff" className="text-emerald-700 font-semibold hover:underline">/staff</Link>.
         </p>
       </div>

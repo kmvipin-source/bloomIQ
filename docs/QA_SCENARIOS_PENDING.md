@@ -1,4 +1,4 @@
-# BloomIQ — QA scenarios pending for next session
+# ZCORIQ — QA scenarios pending for next session
 
 Scenarios queued from the dev sessions on 2026-05-02 that haven't yet
 been exercised end-to-end. Run alongside the existing regression list

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import crypto from "node:crypto";
-import { getBearer, supabaseServer, supabaseAdmin } from "@/lib/supabase/server";
+import { supabaseServer, supabaseAdmin } from "@/lib/supabase/server";
+import { requireAuthenticated } from "@/lib/apiAuth";
 
 export const runtime = "nodejs";
 
@@ -29,18 +30,17 @@ export const runtime = "nodejs";
  * looking up the plan by legacy slug.
  */
 
-const LEGACY_SLUG_MAP: Record<string, string> = {
-  individual_monthly: "premium_monthly",
-  individual_yearly: "premium_annual",
-};
+// F151 fix: LEGACY_SLUG_MAP shared with /api/checkout via lib/planLegacy.ts.
+import { LEGACY_SLUG_MAP } from "@/lib/planLegacy";
 
 export async function POST(req: Request) {
   try {
-    const token = getBearer(req);
-    if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    const sb = supabaseServer(token);
-    const { data: { user } } = await sb.auth.getUser();
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    // F22 fix (QA): shared requireAuthenticated — payment-verify
+    // route now also enforces single-session. Pairs with the same
+    // gate on /api/checkout (order creation).
+    const auth = await requireAuthenticated(req);
+    if ("error" in auth) return auth.error;
+    const { user, sb } = auth;
 
     const body = await req.json().catch(() => ({}));
     const orderId = String(body.razorpay_order_id || "");
@@ -68,10 +68,9 @@ export async function POST(req: Request) {
       .createHmac("sha256", keySecret)
       .update(`${orderId}|${paymentId}`)
       .digest("hex");
-    if (
-      expected.length !== signature.length ||
-      !crypto.timingSafeEqual(Buffer.from(expected, "hex"), Buffer.from(signature, "hex"))
-    ) {
+    // F160 fix: dropped redundant length check (hex regex above already
+    // guarantees both sides are 64 chars).
+    if (!crypto.timingSafeEqual(Buffer.from(expected, "hex"), Buffer.from(signature, "hex"))) {
       return NextResponse.json({ error: "Signature mismatch — payment not verified." }, { status: 400 });
     }
 
@@ -183,8 +182,16 @@ export async function POST(req: Request) {
       planRow.price_paise > 0 &&
       order.amount !== planRow.price_paise
     ) {
+      // F156 fix: clarify that the price changed mid-checkout (a real
+      // operational case when an admin edits a plan). User's card is
+      // authorized but not captured; Razorpay releases the hold.
       return NextResponse.json(
-        { error: "Order amount does not match the plan price. Refresh the page and try again." },
+        {
+          error:
+            "The plan price changed while you were paying. Your card was authorized but not captured — " +
+            "Razorpay will release the hold automatically. Refresh /pricing to see the new price and retry.",
+          code: "plan_price_changed_mid_checkout",
+        },
         { status: 409 }
       );
     }
@@ -192,10 +199,15 @@ export async function POST(req: Request) {
     // Map our plan tier ('premium', 'premium_plus', etc.) to the legacy
     // subscriptions.tier text the rest of the app already understands.
     // Keeps existing tier-checking code working without a sweeping rename.
+    // F69 + F158 fix: explicit dictionary including school_basic. Falls
+    // back to the plan tier itself rather than blindly mapping unknown
+    // school_* names to "premium" — silently mis-tagging a school's
+    // tier downstream is worse than failing the lookup.
     const legacyTierMap: Record<string, string> = {
       free: "free",
       premium: planRow.period_days >= 360 ? "premium" : "individual",
       premium_plus: "premium_plus",
+      school_basic: "premium",
       school_pilot: "premium",
       school_standard: "premium",
       school_plus: "premium_plus",
@@ -214,7 +226,10 @@ export async function POST(req: Request) {
         .select("school_id, is_school_student")
         .eq("id", user.id)
         .maybeSingle();
-      if (schoolProf?.is_school_student || schoolProf?.school_id) {
+      // F154 fix: only block actual school students. The previous
+      // `|| schoolProf?.school_id` clause wrongly rejected teachers on a
+      // school who wanted to buy a personal Premium plan.
+      if (schoolProf?.is_school_student) {
         return NextResponse.json(
           {
             error:
@@ -242,11 +257,19 @@ export async function POST(req: Request) {
     // at the cheaper Premium price. Force the user to wait out their
     // current term (or contact support for a refund/proration) instead
     // of silently overcharging or under-charging themselves.
+    // F153 fix: include school_* tiers so a user currently on a school
+    // plan who tries to self-buy a lower-tier personal plan hits the
+    // downgrade-blocked branch instead of slipping past TIER_RANK
+    // returning undefined.
     const TIER_RANK: Record<string, number> = {
       free: 0,
       individual: 1,
       premium: 2,
       premium_plus: 3,
+      school_basic: 2,
+      school_pilot: 2,
+      school_standard: 2,
+      school_plus: 3,
     };
     const existingTier = (existing as { tier?: string | null } | null)?.tier ?? null;
     const existingStatus = (existing as { status?: string | null } | null)?.status ?? null;
@@ -297,13 +320,27 @@ export async function POST(req: Request) {
       typeof order.amount === "number" && order.amount > 0
         ? order.amount
         : planRow.price_paise;
+    // F159 fix: visible warning when Razorpay returns a malformed order
+    // with no amount. Fallback keeps the row consistent; warning makes
+    // the symptom visible to ops.
+    if (typeof order.amount !== "number" || order.amount <= 0) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[checkout/verify] Razorpay order ${orderId} returned no amount; fell back to planRow.price_paise=${planRow.price_paise}.`,
+      );
+    }
 
     if (existing?.id) {
-      // Preserve the existing school_id link — a user paying for a
-      // personal upgrade while attached to a school subscription
-      // shouldn't lose the school context. The previous code blanked
-      // school_id unconditionally.
       const preservedSchoolId = (existing as { school_id?: string | null }).school_id ?? null;
+      // F157 fix: preserve started_at across paid → paid upgrades so
+      // LTV / cohort reporting keeps the "first paid" anchor. Reset
+      // only when there's no prior paid subscription.
+      const existingStartedAt = (existing as { started_at?: string | null }).started_at ?? null;
+      const existingTierLocal = (existing as { tier?: string | null }).tier ?? null;
+      const preservedStartedAt =
+        existingTierLocal && existingTierLocal !== "free" && existingStartedAt
+          ? existingStartedAt
+          : new Date().toISOString();
       const { error: updErr } = await admin
         .from("subscriptions")
         .update({
@@ -311,7 +348,7 @@ export async function POST(req: Request) {
           plan_id: planRow.id,
           price_paid_paise: pricePaidPaise,
           status: "active",
-          started_at: new Date().toISOString(),
+          started_at: preservedStartedAt,
           expires_at: expiresAt,
           school_id: preservedSchoolId,
           razorpay_payment_id: paymentId,
@@ -336,7 +373,19 @@ export async function POST(req: Request) {
           razorpay_payment_id: paymentId,
           is_trial: false,  // D6: a fresh paid subscription is never a trial.
         });
-      if (insErr) return NextResponse.json({ error: insErr.message }, { status: 500 });
+      // F165 note (QA): /api/checkout already logs IP+UA. If chargeback
+    // defense expands, mirror that log here at verify time so the audit
+    // trail covers both order-create and payment-confirm.
+    //
+    // F162 fix: if two parallel verifies for the same payment slip past
+      // the alreadyApplied check, the unique partial index throws 23505.
+      // Translate to a friendly "already applied" instead of a 500.
+      if (insErr) {
+        if (insErr.code === "23505") {
+          return NextResponse.json({ ok: true, already_applied: true, tier: legacyTier, plan_id: planRow.id, plan_slug: planRow.slug, expires_at: expiresAt });
+        }
+        return NextResponse.json({ error: insErr.message }, { status: 500 });
+      }
     }
 
     return NextResponse.json({

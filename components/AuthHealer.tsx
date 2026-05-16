@@ -18,24 +18,37 @@ export default function AuthHealer() {
   useEffect(() => {
     (async () => {
       const sb = supabaseBrowser();
+      // F24 fix: if signOut itself fails, unconditionally purge the
+      // supabase auth localStorage keys so the next page load can't
+      // resurrect the same stale session.
+      function purgeSupabaseLocalStorage() {
+        try {
+          const keys: string[] = [];
+          for (let i = 0; i < window.localStorage.length; i++) {
+            const k = window.localStorage.key(i);
+            if (k && /^sb-.+-auth-token/.test(k)) keys.push(k);
+          }
+          for (const k of keys) window.localStorage.removeItem(k);
+        } catch { /* ignore */ }
+      }
       try {
         const { error } = await sb.auth.getSession();
         if (error && /refresh token/i.test(error.message)) {
           await sb.auth.signOut().catch(() => {});
+          purgeSupabaseLocalStorage();
         }
       } catch (e) {
-        // Defensive: any boot-time auth error → clean signout
+        // Defensive: any boot-time auth error → clean signout + purge.
         const msg = e instanceof Error ? e.message : String(e);
         if (/refresh token|jwt|expired|not found/i.test(msg)) {
           try { await sb.auth.signOut(); } catch { /* ignore */ }
+          purgeSupabaseLocalStorage();
         }
       }
 
       // Also catch any later background-refresh errors thrown by the client
       sb.auth.onAuthStateChange((event) => {
-        if (event === "TOKEN_REFRESHED" || event === "SIGNED_OUT") {
-          // Healthy events — nothing to do
-        }
+        if (event === "TOKEN_REFRESHED" || event === "SIGNED_OUT") { /* healthy */ }
       });
     })();
   }, []);

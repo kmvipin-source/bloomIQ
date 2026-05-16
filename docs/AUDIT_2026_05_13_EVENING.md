@@ -1,4 +1,4 @@
-# BloomIQ comprehensive audit — 2026-05-13 evening
+# ZCORIQ comprehensive audit — 2026-05-13 evening
 
 Three parallel audits ran across the whole app (generate pipeline,
 student UX, teacher/admin/billing). This doc consolidates findings,
@@ -79,7 +79,7 @@ Lesson: audits run in worktrees with stale snapshots can give false positives. A
 32. Misconception diagnosis returns generic labels because few-shot examples are Bio-only. *(1 hr)*
 33. Niche-skill few-shot bank missing entirely (Mainframe, ISO 8583, HSM, RACF, etc.) — single biggest question-quality lever. *(half day content)*
 34. Mobile narrow layout: Sprint countdown banner overflows under 380px. *(15 min)*
-35. BloomIQ Score discovery hero has no dismiss → eats prime real estate forever. *(15 min)*
+35. ZCORIQ Bloom Score discovery hero has no dismiss → eats prime real estate forever. *(15 min)*
 36. Climber dead-end has arbitrary 1.2s stall. *(5 min)*
 37. Generate page `prefill_chip` from results lands as textbox text (now lower priority with co-equal sub-area design, but still imperfect). *(15 min)*
 38. Quiz pre-test screen shows Premium Plus benefit to free users with no upgrade link. *(10 min)*

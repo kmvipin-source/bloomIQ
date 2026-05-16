@@ -463,7 +463,7 @@ async function probeCalibrationsBloomScores(ctx) {
 
 // ─────────────────────────────────────────────────────────────────
 async function main() {
-  console.log("\x1b[1mBloomIQ RLS audit\x1b[0m");
+  console.log("\x1b[1mZCORIQ RLS audit\x1b[0m");
   console.log("Target:", SB_URL);
   let ctx;
   try {

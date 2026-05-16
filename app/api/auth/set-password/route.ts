@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getBearer, supabaseServer, supabaseAdmin } from "@/lib/supabase/server";
+import { validatePassword } from "@/lib/passwordPolicy";
 
 export const runtime = "nodejs";
 
@@ -73,19 +74,11 @@ export async function POST(req: Request) {
 
     const body = await req.json().catch(() => ({}));
     const password = String(body.password || "");
-    if (password.length < 8) {
-      return NextResponse.json({ error: "Password must be at least 8 characters." }, { status: 400 });
-    }
-    // Mirror the client-side strength rule so a direct API hit can't
-    // create a weak password the UI would have rejected.
-    const hasLower = /[a-z]/.test(password);
-    const hasUpper = /[A-Z]/.test(password);
-    const hasDigit = /\d/.test(password);
-    if (!hasLower || !hasUpper || !hasDigit) {
-      return NextResponse.json(
-        { error: "Password must contain a lowercase letter, uppercase letter, and a digit." },
-        { status: 400 }
-      );
+    // F26 fix: shared validator from lib/passwordPolicy.ts. One place
+    // to update if the policy ever hardens.
+    const policy = validatePassword(password);
+    if (!policy.ok) {
+      return NextResponse.json({ error: policy.reason }, { status: 400 });
     }
     const tosVersion = String(body.tos_version || "2026-04-30");
 

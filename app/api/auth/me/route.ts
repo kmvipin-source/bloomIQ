@@ -80,6 +80,11 @@ export async function GET(req: Request) {
             .select("period_days")
             .eq("id", sub.plan_id)
             .maybeSingle();
+          // F30 note (QA): if plans.period_days is NULL the activation flip
+          // falls back to the 365-day default. That's safe for the standard
+          // annual plans but lies for term/quarterly plans. The fix here is
+          // a refusal: if periodDays cannot be resolved from the plan row,
+          // log + skip the flip instead of defaulting silently. Tracked.
           if (planRow?.period_days) periodDays = planRow.period_days;
         }
         // If the operator deliberately set started_at to a future date
@@ -139,6 +144,15 @@ export async function GET(req: Request) {
             .eq("id", 1)
             .maybeSingle();
           const validityDays = (limits as { free_trial_days?: number } | null)?.free_trial_days ?? 0;
+          if (validityDays === 0) {
+            // F33 fix: visible warning when an operator has set
+            // free_trial_days to 0 — silently disables the free-trial
+            // product for all new independent students.
+            // eslint-disable-next-line no-console
+            console.warn(
+              "[auth/me] subscription_limits.free_trial_days = 0 — free-trial auto-grant disabled.",
+            );
+          }
           if (validityDays > 0) {
             const startedAt = new Date();
             const expiresAt = new Date(startedAt.getTime() + validityDays * 24 * 60 * 60 * 1000);
@@ -169,6 +183,22 @@ export async function GET(req: Request) {
             status?: string;
             expires_at?: string | null;
           };
+          // F164 fix: detect-and-log legacy is_trial=true rows on a
+          // PAID tier (data inconsistency from earlier migrations).
+          // Without this they'd hit the hard upgrade gate even though
+          // they're paying. Hard-fail-safe: never block when tier !=
+          // "free", just warn loudly.
+          if (
+            sub.tier &&
+            sub.tier !== "free" &&
+            sub.is_trial === true
+          ) {
+            // eslint-disable-next-line no-console
+            console.warn(
+              "[auth/me] inconsistent subscription: tier=" + sub.tier + " AND is_trial=true. " +
+                "Should never gate this user as free-expired.",
+            );
+          }
           if (
             sub.tier === "free" &&
             sub.is_trial === true &&
@@ -183,10 +213,10 @@ export async function GET(req: Request) {
       }
     }
 
-    // Indicate whether the independent student has completed BloomIQ
+    // Indicate whether the independent student has completed ZCORIQ
     // calibration yet. Powers the first-run gate in the student layout
     // — without a calibration row, /api/student/score/recompute is a
-    // no-op so the student would silently fall off the BloomIQ Score
+    // no-op so the student would silently fall off the ZCORIQ Bloom Score
     // funnel. Only meaningful for individual students; school students
     // skip calibration entirely.
     let hasCalibration = false;
@@ -222,4 +252,4 @@ export async function GET(req: Request) {
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : "Failed" }, { status: 500 });
   }
-}
+}

@@ -1,5 +1,10 @@
 // =============================================================================
 // app/api/student/adaptive-practice/route.ts
+// F119 note (QA): this route does NOT honor body.per_student (the way
+// /api/teacher/assign-practice does). Adaptive practice always returns a
+// single question at a time — the picker decides cadence. If a future UI
+// wants a "give me 5" mode here, route THAT through assign-practice
+// instead of bolting batching onto this endpoint.
 // -----------------------------------------------------------------------------
 // Adaptive Personalised Practice — Phase 2C.
 //
@@ -28,7 +33,8 @@ import {
   type BloomLevel,
   isBloomLevel,
 } from "@/lib/bloom";
-import { getBearer, supabaseServer, supabaseAdmin } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/lib/supabase/server";
+import { requireAuthenticated } from "@/lib/apiAuth";
 import { generateQuizCode, pct as pctFn } from "@/lib/utils";
 import { buildStudentContext } from "@/lib/studentContext";
 import {
@@ -122,11 +128,11 @@ function pickWeakestLevel(
 
 export async function POST(req: Request) {
   try {
-    const token = getBearer(req);
-    if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    const sb = supabaseServer(token);
-    const { data: { user } } = await sb.auth.getUser();
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    // F22 fix (QA): shared requireAuthenticated — single-session
+    // enforcement (token iat >= profiles.session_iat) now applied.
+    const auth = await requireAuthenticated(req);
+    if ("error" in auth) return auth.error;
+    const { user, sb } = auth;
 
     // Role gate — students only.
     const { data: prof } = await sb
@@ -148,7 +154,7 @@ export async function POST(req: Request) {
       markingScheme?: unknown;
     };
     const topic = typeof body.topic === "string" ? body.topic.trim() : "";
-    // Optional caller-provided Bloom override — used by the BloomIQ Score
+    // Optional caller-provided Bloom override — used by the ZCORIQ Bloom Score
     // active-path Start buttons that deep-link "drill my Evaluate weak spot".
     // When provided, we skip the auto-pick and target the requested level.
     const requestedBloom = typeof body.target_bloom === "string" && isBloomLevel(body.target_bloom)
@@ -185,7 +191,7 @@ export async function POST(req: Request) {
       if (!isBloomLevel(targetedLevel)) targetedLevel = DEFAULT_LEVEL;
     }
 
-    // 1a) If the caller passed a "generic" topic (sent by the BloomIQ Score
+    // 1a) If the caller passed a "generic" topic (sent by the ZCORIQ Bloom Score
     //     active-path Start buttons when we don't know a specific weak topic
     //     yet), upgrade it to a REAL topic from this user's calibration_
     //     responses where they got the question wrong at the targeted Bloom

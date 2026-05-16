@@ -3,7 +3,7 @@
 // =============================================================================
 // app/student/bloom-score/page.tsx
 // -----------------------------------------------------------------------------
-// BloomIQ Score Calibration — the killer first-run experience.
+// ZCORIQ Bloom Score Calibration — the killer first-run experience.
 //
 // 12 Bloom-tagged questions, ~7 minutes, ends with a routed reveal at
 // /student/future. Bloom labels are HIDDEN from the student during the
@@ -178,7 +178,7 @@ export default function BloomScoreCalibrationPage() {
             </div>
             <div>
               <div className="text-xs uppercase tracking-wider opacity-60">First-time setup</div>
-              <h1 className="text-2xl font-bold">Discover your BloomIQ Score</h1>
+              <h1 className="text-2xl font-bold">Discover your ZCORIQ Bloom Score</h1>
             </div>
           </div>
 
@@ -195,7 +195,7 @@ export default function BloomScoreCalibrationPage() {
           </p>
 
           <p className="mt-3 text-xs opacity-60 leading-relaxed">
-            BloomIQ Score is a self-assessment heuristic — bands and tier descriptors are
+            ZCORIQ Bloom Score is a self-assessment heuristic — bands and tier descriptors are
             anchors for self-direction, not a prediction of exam rank, admission, or
             outcome at any institution. Individual results vary.
           </p>
@@ -234,7 +234,7 @@ export default function BloomScoreCalibrationPage() {
     return (
       <div className="max-w-xl mx-auto pt-20 text-center">
         <div className="spinner mx-auto" />
-        <p className="mt-4 opacity-70">Calculating your BloomIQ Score…</p>
+        <p className="mt-4 opacity-70">Calculating your ZCORIQ Bloom Score…</p>
       </div>
     );
   }

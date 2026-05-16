@@ -145,20 +145,20 @@ export default async function PublicSharePage({ params }: PageProps) {
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-2">
             <span className="text-2xl">🌱</span>
-            <span className="font-bold tracking-tight">BloomIQ</span>
+            <span className="font-bold tracking-tight">ZCORIQ</span>
             <span className="text-[10px] uppercase tracking-wider font-bold text-emerald-700 bg-emerald-100 rounded-full px-2 py-0.5">
               Read-only
             </span>
           </div>
           <Link href="/" className="text-xs text-emerald-700 hover:underline">
-            What is BloomIQ?
+            What is ZCORIQ?
           </Link>
         </div>
 
         <div className="card mb-4">
           <h1 className="text-2xl font-bold">{studentName}&apos;s progress</h1>
           <p className="muted text-sm mt-1">
-            A read-only snapshot of {studentName.split(" ")[0]}&apos;s practice on BloomIQ.
+            A read-only snapshot of {studentName.split(" ")[0]}&apos;s practice on ZCORIQ.
             This link auto-expires in <strong>{daysLeft} day{daysLeft === 1 ? "" : "s"}</strong>.
             No sign-up needed.
           </p>
@@ -187,7 +187,7 @@ export default async function PublicSharePage({ params }: PageProps) {
           <div className="card mb-4">
             <h2 className="font-semibold mb-1">Thinking-level breakdown</h2>
             <p className="text-xs muted mb-3">
-              BloomIQ tags every question by Bloom&apos;s Taxonomy — six levels of
+              ZCORIQ tags every question by Bloom&apos;s Taxonomy — six levels of
               cognitive depth, from simple recall to creative synthesis.
             </p>
             <div className="space-y-2">
@@ -258,10 +258,10 @@ export default async function PublicSharePage({ params }: PageProps) {
 
         {/* Footer — light context for the recipient */}
         <div className="text-xs muted text-center mt-6 leading-relaxed">
-          Shared by {studentName} via BloomIQ. This page is private (link-only)
+          Shared by {studentName} via ZCORIQ. This page is private (link-only)
           and never indexed by search engines.{" "}
           <Link href="/" className="text-emerald-700 hover:underline">
-            Learn more about BloomIQ →
+            Learn more about ZCORIQ →
           </Link>
         </div>
       </div>

@@ -8,7 +8,7 @@ import { ArrowLeft, ArrowRight, Eye, EyeOff } from "lucide-react";
 import { track } from "@/lib/posthog";
 
 // Admin Head (super_teacher) accounts are NOT self-serve. They are provisioned
-// by BloomIQ staff via /admin/onboard-school after the school's payment lands,
+// by ZCORIQ staff via /admin/onboard-school after the school's payment lands,
 // which sends a Supabase invite email to the Admin Head. So /signup only
 // exposes the two self-serve roles below.
 type Role = "teacher" | "student";
@@ -85,7 +85,7 @@ function SignupInner() {
       <div className="w-full max-w-md">
         <Link href="/" className="flex items-center gap-2 justify-center mb-6">
           <span className="text-3xl">🌱</span>
-          <span className="text-xl font-bold">BloomIQ</span>
+          <span className="text-xl font-bold">ZCORIQ</span>
         </Link>
 
         <div className="card bg-emerald-50/70 border-emerald-200 flex items-center justify-between gap-3 mb-4 py-3">
@@ -133,7 +133,7 @@ function RolePicker() {
         </div>
         <div>
           <strong className="text-slate-700">Setting up a new school?</strong>{" "}
-          <a href="mailto:hello@bloomiq.app?subject=BloomIQ%20school%20onboarding" className="text-emerald-700 font-semibold">Talk to us</a>{" "}
+          <a href="mailto:hello@bloomiq.app?subject=ZCORIQ%20school%20onboarding" className="text-emerald-700 font-semibold">Talk to us</a>{" "}
           and we&apos;ll send the Admin Head an invite. (If you&apos;ve already been invited,{" "}
           <Link href="/login" className="text-emerald-700 font-semibold">sign in here</Link> instead.)
         </div>
@@ -142,6 +142,9 @@ function RolePicker() {
   );
 }
 
+// F38 note (QA): no CAPTCHA on this form yet. Before opening school
+// signups to the public, wire hCaptcha or Cloudflare Turnstile into
+// the password block below — bots will find this surface fast.
 function SignupForm({ role }: { role: Role }) {
   const router = useRouter();
   const search = useSearchParams();
@@ -244,6 +247,11 @@ function SignupForm({ role }: { role: Role }) {
       intent === "pro" &&
       (planParam === "individual_monthly" || planParam === "individual_yearly")
     ) {
+      // F25 note (QA): autostart path bypasses the signOut+relogin gate
+      // below, so a fresh signup → autostart never sees the login ToS
+      // prompt. Acceptable today because the signup form captures
+      // tos_accepted_at + tos_version inline; revisit if ToS revs land
+      // more frequently and the race becomes meaningful.
       router.push(`/pricing?autostart=${planParam}`);
       return;
     }

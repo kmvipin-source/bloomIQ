@@ -9,11 +9,11 @@ import { Eye, EyeOff, ShieldCheck, KeyRound, AlertCircle } from "lucide-react";
 const TOS_VERSION = "2026-04-30";
 
 /**
- * /staff — internal BloomIQ-staff sign-in.
+ * /staff — internal ZCORIQ-staff sign-in.
  *
  * Why this page exists:
  *   The public /login intentionally hides the Platform tab so casual
- *   visitors never see a "Platform" option. Until BloomIQ has a company
+ *   visitors never see a "Platform" option. Until ZCORIQ has a company
  *   intranet with SSO, internal staff need a clean, dedicated entry
  *   point. This is it.
  *
@@ -102,7 +102,7 @@ export default function StaffLoginPage() {
     try {
       const sb = supabaseBrowser();
       const raw = email.trim();
-      if (!raw || !raw.includes("@")) throw new Error("Enter your BloomIQ staff email.");
+      if (!raw || !raw.includes("@")) throw new Error("Enter your ZCORIQ staff email.");
 
       const { error } = await sb.auth.signInWithPassword({ email: raw, password });
       if (error) {
@@ -193,13 +193,13 @@ export default function StaffLoginPage() {
       <div className="w-full max-w-sm">
         <div className="flex items-center gap-2 justify-center mb-6">
           <span className="text-3xl">🌱</span>
-          <span className="text-xl font-bold">BloomIQ</span>
+          <span className="text-xl font-bold">ZCORIQ</span>
         </div>
 
         <div className="card">
           <div className="flex items-center gap-2 mb-1">
             <ShieldCheck size={18} style={{ color: "var(--brand-700, #047857)" }} />
-            <h1 className="text-lg font-bold">BloomIQ staff sign in</h1>
+            <h1 className="text-lg font-bold">ZCORIQ staff sign in</h1>
           </div>
           <p className="muted text-xs mb-5">
             Internal-only entry point. If you reached this page by mistake,{" "}
@@ -257,7 +257,7 @@ export default function StaffLoginPage() {
                   suppressHydrationWarning
                 />
                 <span>
-                  I agree to BloomIQ&apos;s{" "}
+                  I agree to ZCORIQ&apos;s{" "}
                   <Link href="/terms" target="_blank" className="text-emerald-700 hover:underline">Terms of Service</Link>{" "}
                   and{" "}
                   <Link href="/privacy" target="_blank" className="text-emerald-700 hover:underline">Privacy Policy</Link>.
@@ -326,7 +326,7 @@ export default function StaffLoginPage() {
         </div>
 
         <p className="text-[11px] muted text-center mt-4">
-          BloomIQ staff only. Public users — please use{" "}
+          ZCORIQ staff only. Public users — please use{" "}
           <Link href="/login" className="font-semibold underline">/login</Link>.
         </p>
       </div>

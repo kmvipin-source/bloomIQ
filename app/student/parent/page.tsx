@@ -113,7 +113,7 @@ export default function ParentLinksPage() {
 
   function whatsAppShare(invite: Invite): string {
     const text = encodeURIComponent(
-      `Here's my BloomIQ progress — you can check anytime, no signup needed:\n${fullLink(invite.token)}`
+      `Here's my ZCORIQ progress — you can check anytime, no signup needed:\n${fullLink(invite.token)}`
     );
     return `https://wa.me/?text=${text}`;
   }

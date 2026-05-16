@@ -7,7 +7,7 @@
 
 ## TL;DR — the one paragraph you need
 
-The Free plan today is **schizophrenic**. The pricing page promises Free users a generous starter experience (AI tutor, BloomIQ Score, practice tests, weekly active path). The database says Free unlocks exactly one feature: `single_device`. The dashboard locks ~14 features behind paywall tiles. The API layer enforces feature gates on exactly **2 routes** out of ~40 student-facing routes — meaning a Free user who navigates directly to most premium features will get them for free, burning your Groq/Gemini bill. The one hard cap that does work — 3 distinct quiz attempts per 24h — is enforced via a DB trigger and applies only to one route (`/api/student/attempt-start`).
+The Free plan today is **schizophrenic**. The pricing page promises Free users a generous starter experience (AI tutor, ZCORIQ Bloom Score, practice tests, weekly active path). The database says Free unlocks exactly one feature: `single_device`. The dashboard locks ~14 features behind paywall tiles. The API layer enforces feature gates on exactly **2 routes** out of ~40 student-facing routes — meaning a Free user who navigates directly to most premium features will get them for free, burning your Groq/Gemini bill. The one hard cap that does work — 3 distinct quiz attempts per 24h — is enforced via a DB trigger and applies only to one route (`/api/student/attempt-start`).
 
 You have to pick one of two strategies before launch — there is no "compromise". Recommendation in §6.
 
@@ -56,7 +56,7 @@ What is **not locked** on the tile grid (and therefore actually usable on Free):
 - Adaptive practice (`/student/practice`) — runs against the 3/day quota
 - My Tests / My Progress (`/student/tests`, `/student/progress`)
 - Daily Drill (`/student/drill`) — runs against the 3/day quota
-- BloomIQ Score calibration (`/student/bloom-score`) and Future-You reveal — one-time, no feature key gate
+- ZCORIQ Bloom Score calibration (`/student/bloom-score`) and Future-You reveal — one-time, no feature key gate
 - Student Coach (`/student/coach`) — no quota, no gate
 
 Everything else (Speed Trainer, Memory Tune-Up/SRS, Trap Detector, Misconception Detective, Past-Paper X-Ray, Mock Rank Predictor, Knowledge Graph, Teach-Back, Voice AI Teacher, Concept Visualizer, Confidence Calibration, Exam Sprint) is **dashboard-locked** for Free.
@@ -105,7 +105,7 @@ From `app/pricing/page.tsx` + `app/student/expired/page.tsx`, the marketing copy
 - Full Bloom-level mastery report
 - AI-generated flashcards on focus areas
 - Past-paper retention drills
-- BloomIQ Score + weekly active path
+- ZCORIQ Bloom Score + weekly active path
 - AI tutor + Performance Coach
 - Adaptive practice
 
@@ -118,7 +118,7 @@ Cross-referenced against the DB:
 | Full Bloom-level mastery report | **No DB gate either way** — works because no API enforces it. Accidental yes. |
 | AI-generated flashcards | **Accidental yes** — `/api/flashcards` has no gate. Free users get unlimited Groq calls. |
 | Past-paper retention drills | Ambiguous (SRS) — `/api/srs/*` has no gate, so yes by accident. |
-| BloomIQ Score + weekly active path | Calibration runs; "weekly active path" is unclear. Probably partial. |
+| ZCORIQ Bloom Score + weekly active path | Calibration runs; "weekly active path" is unclear. Probably partial. |
 | AI tutor | **Accidental yes** — `/api/tutor/chat` has no gate. Free users get unlimited tutor turns. |
 | Performance Coach | **Accidental yes** — `/api/student/coach` has no gate. |
 | Adaptive practice | Yes — runs against the 3/day quota. |
@@ -160,7 +160,7 @@ Free is a **demo trial**, not a product. Give the student enough to *taste* ever
 Concretely:
 
 - **3 quiz attempts per 24h** (keep the existing DB trigger, just rename "drills" → "tests" everywhere)
-- **BloomIQ Score: one-time only.** Once calibrated, locks. Recalibration is Premium.
+- **ZCORIQ Bloom Score: one-time only.** Once calibrated, locks. Recalibration is Premium.
 - **AI Tutor: 5 turns/day.** New per-day counter, hard cap.
 - **Teach-Back: 1 submission/day.**
 - **Speed Trainer: 1 session/day** (5 questions, the smallest count).
@@ -178,7 +178,7 @@ Concretely:
 
 - **Unlimited practice tests** (drop the 3/day cap entirely)
 - **AI Tutor: 20 turns/day**, then "Premium for unlimited"
-- **Speed Trainer, Teach-Back, Memory Tune-Up, BloomIQ Score: unlimited**
+- **Speed Trainer, Teach-Back, Memory Tune-Up, ZCORIQ Bloom Score: unlimited**
 - **Premium = Past-Paper X-Ray, Trap Detector, Misconception Detective, Rank Predictor, Knowledge Graph, Concept Visualizer, Voice Teacher, Confidence Calibration Profile** (the diagnosis/competitive-exam suite)
 
 Why this could work: differentiates on diagnostic insight, which is what Indian competitive aspirants pay 10× more for at coaching centres. Aakash doesn't sell more practice; they sell ranking/analysis. You mirror their wedge.

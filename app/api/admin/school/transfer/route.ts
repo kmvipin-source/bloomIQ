@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { getBearer, supabaseServer, supabaseAdmin, SCHOOL_STUDENT_DOMAIN } from "@/lib/supabase/server";
+import { supabaseAdmin, SCHOOL_STUDENT_DOMAIN } from "@/lib/supabase/server";
+import { requireAuthenticated } from "@/lib/apiAuth";
 
 export const runtime = "nodejs";
 
@@ -26,12 +27,11 @@ export const runtime = "nodejs";
  */
 export async function POST(req: Request) {
   try {
-    const token = getBearer(req);
-    if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-    const sb = supabaseServer(token);
-    const { data: { user } } = await sb.auth.getUser();
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    // F22 fix (QA): shared requireAuthenticated — single-session
+    // enforcement (token iat >= profiles.session_iat) now applied.
+    const auth = await requireAuthenticated(req);
+    if ("error" in auth) return auth.error;
+    const { user, sb } = auth;
 
     // 1) Caller must be the school's Admin HEAD specifically — not just any
     //    super_teacher. After the Deputy Admin Head feature shipped (migration
@@ -72,7 +72,9 @@ export async function POST(req: Request) {
     const body = await req.json().catch(() => ({}));
     const email = String(body.new_admin_email || "").trim().toLowerCase();
     if (!email) {
-      return NextResponse.json({ error: "Enter the new Admin Head\u2019s email." }, { status: 400 });
+      // F70 fix: prefer ASCII apostrophe \u2014 mixed smart/straight quotes
+      // across the codebase were a search-replace footgun.
+      return NextResponse.json({ error: "Enter the new Admin Head's email." }, { status: 400 });
     }
     if (email.endsWith(`@${SCHOOL_STUDENT_DOMAIN}`)) {
       return NextResponse.json(
@@ -104,7 +106,7 @@ export async function POST(req: Request) {
     }
     if (target.id === user.id) {
       return NextResponse.json(
-        { error: "You\u2019re already the Admin Head. Pick a different person." },
+        { error: "You're already the Admin Head. Pick a different person." },
         { status: 400 }
       );
     }
@@ -140,8 +142,30 @@ export async function POST(req: Request) {
       );
     }
 
-    // 5) Promote target — set role + school. on conflict do update via upsert
-    //    is not needed because the row already exists.
+    // F48 fix: target may belong to ANOTHER school as a teacher/deputy.
+    // Silently re-binding school_id strips the other school without
+    // notice. Hard-fail unless they're already in our school or unattached.
+    if (targetProf.school_id && targetProf.school_id !== me.school_id) {
+      const { data: theirSchool } = await admin
+        .from("schools")
+        .select("name")
+        .eq("id", targetProf.school_id)
+        .maybeSingle();
+      return NextResponse.json(
+        {
+          error: `That person currently belongs to "${theirSchool?.name || "another school"}". They must leave it before they can become Admin Head here.`,
+        },
+        { status: 409 }
+      );
+    }
+
+    // F47 fix: snapshot prior state BEFORE we mutate it so rollback
+    // can fully restore both role AND school_id (previous rollback
+    // only restored role, leaving school_id permanently overwritten).
+    const prevTargetRole = targetProf.role;
+    const prevTargetSchoolId = targetProf.school_id;
+
+    // 5) Promote target — set role + school.
     const { error: promoteErr } = await admin
       .from("profiles")
       .update({ role: "super_teacher", school_id: me.school_id })
@@ -157,11 +181,11 @@ export async function POST(req: Request) {
       .update({ super_teacher_id: target.id })
       .eq("id", me.school_id);
     if (bindErr) {
-      // Best-effort rollback: revert the target to teacher so we don't
-      // leave two super_teachers in the same school.
+      // F47 fix: restore BOTH role AND school_id so the target ends up
+      // exactly where they were before we mutated them.
       await admin
         .from("profiles")
-        .update({ role: "teacher" })
+        .update({ role: prevTargetRole, school_id: prevTargetSchoolId })
         .eq("id", target.id);
       return NextResponse.json({ error: `Bind failed: ${bindErr.message}` }, { status: 500 });
     }
@@ -179,9 +203,10 @@ export async function POST(req: Request) {
         .from("schools")
         .update({ super_teacher_id: user.id })
         .eq("id", me.school_id);
+      // F47 fix: full restore of target's prior state.
       await admin
         .from("profiles")
-        .update({ role: "teacher" })
+        .update({ role: prevTargetRole, school_id: prevTargetSchoolId })
         .eq("id", target.id);
       return NextResponse.json(
         { error: `Demote failed; transfer rolled back. ${demoteErr.message}` },

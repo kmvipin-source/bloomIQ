@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import nodemailer from "nodemailer";
-import { getBearer, supabaseServer } from "@/lib/supabase/server";
+import { supabaseServer } from "@/lib/supabase/server";
+import { requireAuthenticated } from "@/lib/apiAuth";
 import { BLOOM_LEVELS, BLOOM_META, blankBloomCounts, type BloomLevel } from "@/lib/bloom";
 import { pct } from "@/lib/utils";
 
@@ -13,16 +14,16 @@ export const runtime = "nodejs";
  * To enable real sending, set in .env.local:
  *   EMAIL=your@gmail.com
  *   PASS=your_gmail_app_password
- *   DIGEST_FROM=BloomIQ <your@gmail.com>
+ *   DIGEST_FROM=ZCORIQ <your@gmail.com>
  */
 
 export async function POST(req: Request) {
   try {
-    const token = getBearer(req);
-    if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    const sb = supabaseServer(token);
-    const { data: { user } } = await sb.auth.getUser();
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    // F22 fix (QA): shared requireAuthenticated — single-session
+    // enforcement (token iat >= profiles.session_iat) now applied.
+    const auth = await requireAuthenticated(req);
+    if ("error" in auth) return auth.error;
+    const { user, sb } = auth;
 
     const { quizId } = await req.json();
     // Restrict to the caller's own quiz. Without the owner_id filter
@@ -57,7 +58,7 @@ export async function POST(req: Request) {
 
     const html = `
       <div style="font-family: -apple-system, sans-serif; max-width: 600px;">
-        <h2 style="color: #047857;">🌱 BloomIQ — Weekly Digest</h2>
+        <h2 style="color: #047857;">🌱 ZCORIQ — Weekly Digest</h2>
         <p><strong>${quiz.name}</strong> · code <code>${quiz.code}</code></p>
         <p>Class average: <strong>${classAvg}%</strong> across ${completed.length} students</p>
         <h3>Bloom-level breakdown</h3>
@@ -71,10 +72,10 @@ export async function POST(req: Request) {
         <h3>At-risk students</h3>
         <p>${atRisk.length ? atRisk.join(", ") : "None — nice work!"}</p>
         <hr/>
-        <p style="color:#64748b;font-size:12px;">Sent by BloomIQ</p>
+        <p style="color:#64748b;font-size:12px;">Sent by ZCORIQ</p>
       </div>`;
 
-    const subject = `BloomIQ digest — ${quiz.name}`;
+    const subject = `ZCORIQ digest — ${quiz.name}`;
 
     const { EMAIL, PASS, DIGEST_FROM } = process.env;
     if (!EMAIL || !PASS) {

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { getBearer, supabaseServer, supabaseAdmin } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/lib/supabase/server";
+import { requireAuthenticated } from "@/lib/apiAuth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -13,21 +14,37 @@ export const dynamic = "force-dynamic";
  */
 export async function GET(req: Request) {
   try {
-    const token = getBearer(req);
-    if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    const sb = supabaseServer(token);
-    const { data: { user } } = await sb.auth.getUser();
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    // F22 fix (QA): shared requireAuthenticated — single-session
+    // enforcement (token iat ≥ profiles.session_iat) now applied.
+    const auth = await requireAuthenticated(req);
+    if ("error" in auth) return auth.error;
+    const { user, sb } = auth;
 
-    // Teacher reads via RLS-respecting client (teacher_id = auth.uid()).
-    const { data: rows, error } = await sb
-      .from("quiz_retake_requests")
-      .select("id, assignment_id, quiz_id, student_id, note, status, decision_note, created_at, decided_at")
-      .eq("teacher_id", user.id)
-      .order("created_at", { ascending: false });
+    // F109 fix: also count via service role so the UI can distinguish
+    // "no requests" from "RLS is hiding requests" (the latter signals
+    // a stale class_teachers membership).
+    const [{ data: rows, error }, { count: adminCount }] = await Promise.all([
+      sb
+        .from("quiz_retake_requests")
+        .select("id, assignment_id, quiz_id, student_id, note, status, decision_note, created_at, decided_at")
+        .eq("teacher_id", user.id)
+        .order("created_at", { ascending: false }),
+      supabaseAdmin()
+        .from("quiz_retake_requests")
+        .select("id", { count: "exact", head: true })
+        .eq("teacher_id", user.id),
+    ]);
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-    if (!rows?.length) return NextResponse.json({ ok: true, requests: [] });
+    if (!rows?.length) {
+      const rlsHidden = (adminCount ?? 0) > 0;
+      return NextResponse.json({
+        ok: true,
+        requests: [],
+        rls_hidden: rlsHidden,
+        hint: rlsHidden ? "Your retake requests are hidden by RLS — check your class_teachers membership." : undefined,
+      });
+    }
 
     const admin = supabaseAdmin();
     const quizIds = Array.from(new Set(rows.map((r) => r.quiz_id)));

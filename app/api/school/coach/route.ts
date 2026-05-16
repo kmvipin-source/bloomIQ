@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { groqText } from "@/lib/groq";
-import { getBearer, supabaseServer, supabaseAdmin } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/lib/supabase/server";
+import { requireAuthenticated } from "@/lib/apiAuth";
 import { buildSchoolContext } from "@/lib/schoolContext";
 import { checkCoachQuota, logCoachCall } from "@/lib/coachQuota";
 
@@ -22,7 +23,7 @@ export const maxDuration = 60;
 
 type ChatTurn = { role: "user" | "assistant"; content: string };
 
-const SYSTEM_TEMPLATE = (contextJson: string) => `You are the BloomIQ Principal Coach — a senior data-savvy school administrator who helps the Principal interpret their school's quiz performance data. You have access to the school's current state as a JSON object.
+const SYSTEM_TEMPLATE = (contextJson: string) => `You are the ZCORIQ Principal Coach — a senior data-savvy school administrator who helps the Principal interpret their school's quiz performance data. You have access to the school's current state as a JSON object.
 
 Rules:
 - Answer in 2-5 short paragraphs OR a tight bulleted list. Never wall-of-text.
@@ -65,11 +66,11 @@ function transcript(history: ChatTurn[]): string {
 
 export async function POST(req: Request) {
   try {
-    const token = getBearer(req);
-    if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    const sb = supabaseServer(token);
-    const { data: { user } } = await sb.auth.getUser();
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    // F22 fix (QA): shared requireAuthenticated — single-session
+    // enforcement (token iat >= profiles.session_iat) now applied.
+    const auth = await requireAuthenticated(req);
+    if ("error" in auth) return auth.error;
+    const { user, sb } = auth;
 
     // Role + school check. We only let super_teachers in — they're the only
     // role that's supposed to see school-wide aggregates. Use service-role

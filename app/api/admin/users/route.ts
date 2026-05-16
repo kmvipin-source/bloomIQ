@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { getBearer, supabaseServer, supabaseAdmin } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/lib/supabase/server";
+import { requirePlatformAdmin } from "@/lib/apiAuth";
 
 export const runtime = "nodejs";
 
@@ -14,25 +15,7 @@ export const runtime = "nodejs";
  * actions across the entire user base.
  */
 
-async function requirePlatformAdmin(req: Request) {
-  const token = getBearer(req);
-  if (!token) return { error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) };
-  const sb = supabaseServer(token);
-  const { data: { user } } = await sb.auth.getUser();
-  if (!user) return { error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) };
-  // Use the service role to read platform_admin to dodge any RLS race
-  // on profiles for callers whose JWT is fresh on the edge.
-  const admin = supabaseAdmin();
-  const { data: me } = await admin
-    .from("profiles")
-    .select("platform_admin")
-    .eq("id", user.id)
-    .maybeSingle();
-  if (!me?.platform_admin) {
-    return { error: NextResponse.json({ error: "Forbidden" }, { status: 403 }) };
-  }
-  return { user, admin };
-}
+// F171 fix (QA): requirePlatformAdmin moved to lib/apiAuth.ts.
 
 export async function GET(req: Request) {
   try {

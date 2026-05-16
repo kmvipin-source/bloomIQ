@@ -6,7 +6,7 @@
 // Why this exists
 // ---------------
 // Until 2026-05-13 a student could take a Java quiz, open /student/results,
-// pick "CAT" from the Predict-my-rank dropdown, and BloomIQ would happily
+// pick "CAT" from the Predict-my-rank dropdown, and ZCORIQ would happily
 // return "Your CAT AIR is ~12,300." That's nonsense: a 50-question Java MCQ
 // isn't a CAT mock. The rank predictor's cohort baselines (CAT ≈ 330k MBA
 // aspirants, NEET ≈ 2.3M medical aspirants) only make sense when the test

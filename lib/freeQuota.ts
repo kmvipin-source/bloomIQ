@@ -73,7 +73,7 @@ const LIFETIME_FEATURE_LABEL: Record<LifetimeFeature, string> = {
   voice_teacher:    "Voice AI Teacher",
   trap_detector:    "Distractor Trap Detector",
   knowledge_graph:  "Knowledge Graph",
-  bloom_score:      "BloomIQ Score calibration",
+  bloom_score:      "ZCORIQ Bloom Score calibration",
 };
 
 const DAILY_TO_COLUMN: Record<DailySurface, string> = {

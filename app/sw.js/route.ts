@@ -21,7 +21,7 @@ export function GET() {
     || process.env.VERCEL_GIT_COMMIT_SHA
     || `dev-${Date.now()}`;
 
-  const body = `// BloomIQ service worker — auto-generated, version ${buildId}
+  const body = `// ZCORIQ service worker — auto-generated, version ${buildId}
 const CACHE = "bloomiq-${buildId}";
 
 // Precache the offline shell + key public assets. We deliberately do

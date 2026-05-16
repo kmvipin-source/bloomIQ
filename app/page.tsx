@@ -25,7 +25,7 @@ export default function LandingPage() {
         <div className="max-w-6xl mx-auto px-6 py-3 flex items-center justify-between">
           <Link href="/" className="flex items-center gap-2">
             <span className="text-2xl">🌱</span>
-            <span className="font-bold tracking-tight text-lg">BloomIQ</span>
+            <span className="font-bold tracking-tight text-lg">ZCORIQ</span>
           </Link>
           <PublicNav />
         </div>
@@ -208,7 +208,7 @@ export default function LandingPage() {
         style={{ color: "var(--color-muted)", borderTop: "1px solid var(--color-border)" }}
       >
         <div>
-          Built for teachers and learners who care about <em>how</em> the thinking happens. © BloomIQ
+          Built for teachers and learners who care about <em>how</em> the thinking happens. © ZCORIQ
         </div>
         <div className="text-xs">
           <Link href="/terms" className="hover:underline">Terms of Service</Link>

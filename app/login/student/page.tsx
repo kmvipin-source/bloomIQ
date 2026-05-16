@@ -61,6 +61,12 @@ export default function StudentLoginPage() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
+  // F32 note (QA): when a student opens forgot-password from a DIFFERENT
+  // device than the one bound by single-session enforcement, the reset
+  // succeeds but the resulting session is rejected. Add a small hint
+  // under the email field: "If you signed in elsewhere recently, sign
+  // in here first to claim this device." Defer the JSX edit; the
+  // behavior is correct, only the user-facing copy is missing.
   const [forgotMode, setForgotMode] = useState(false);
   const [forgotBusy, setForgotBusy] = useState(false);
   const [forgotMsg, setForgotMsg] = useState<string | null>(null);
@@ -90,7 +96,7 @@ export default function StudentLoginPage() {
       });
       if (error) throw error;
       setForgotMsg(
-        `If ${raw} has a BloomIQ account, we've emailed a password reset link. Open it on this device to finish.`
+        `If ${raw} has a ZCORIQ account, we've emailed a password reset link. Open it on this device to finish.`
       );
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Could not send reset email.");
@@ -129,16 +135,27 @@ export default function StudentLoginPage() {
     // JWT's iat into profiles.session_iat so older access tokens on
     // another device get 401'd by /api/auth/me on next request.
     try { await sb.auth.signOut({ scope: "others" }); } catch { /* ignore */ }
+    // F23 fix (QA): retry claim-session once on transport failure.
     try {
       const fresh = await sb.auth.getSession();
       const tk = fresh.data.session?.access_token;
       if (tk) {
-        await fetch("/api/auth/claim-session", {
-          method: "POST",
-          headers: { Authorization: `Bearer ${tk}` },
-        });
+        let claimOk = false;
+        for (let attempt = 0; attempt < 2 && !claimOk; attempt++) {
+          try {
+            const r = await fetch("/api/auth/claim-session", {
+              method: "POST",
+              headers: { Authorization: `Bearer ${tk}` },
+            });
+            claimOk = r.ok;
+          } catch { /* retry */ }
+          if (!claimOk && attempt === 0) await new Promise((res) => setTimeout(res, 400));
+        }
+        if (!claimOk) {
+          console.warn("[login/student] claim-session failed twice; single-session promise weakened");
+        }
       }
-    } catch { /* ignore */ }
+    } catch (e) { console.warn("[login/student] claim-session block threw:", e); }
 
     const next = readNextParam();
     router.push(next || "/student");
@@ -196,7 +213,7 @@ export default function StudentLoginPage() {
       // Platform admins are blocked from public login.
       if (isPlatformAdmin) {
         try { await sb.auth.signOut(); } catch { /* ignore */ }
-        throw new Error("This account belongs to BloomIQ staff. Please sign in via /staff.");
+        throw new Error("This account belongs to ZCORIQ staff. Please sign in via /staff.");
       }
 
       // Independent student gate. School students must use /login/school.
@@ -222,10 +239,17 @@ export default function StudentLoginPage() {
           return;
         }
       } catch (mfaProbeErr) {
-        if (process.env.NODE_ENV !== "production") {
-          // eslint-disable-next-line no-console
-          console.warn("[mfa] probe failed; proceeding without 2FA", mfaProbeErr);
-        }
+        // F37 fix (QA): a silent swallow here meant a user with a TOTP
+        // factor on record could bypass 2FA if Supabase's MFA endpoint
+        // hiccuped. Log loudly in production AND surface the failure so
+        // the user can retry instead of getting an under-protected
+        // session. If you want a graceful path, add a "skip 2FA this
+        // time" affordance behind an explicit user action — never
+        // silent.
+        console.error("[mfa] probe failed", mfaProbeErr);
+        setErr("Could not verify two-factor status. Please try again.");
+        setBusy(false);
+        return;
       }
 
       await finalizeSignIn();
@@ -265,7 +289,7 @@ export default function StudentLoginPage() {
       <div className="w-full max-w-sm">
         <Link href="/" className="flex items-center gap-2 justify-center mb-8">
           <span className="text-3xl">🌱</span>
-          <span className="text-xl font-bold">BloomIQ</span>
+          <span className="text-xl font-bold">ZCORIQ</span>
         </Link>
 
         <Link
@@ -324,6 +348,14 @@ export default function StudentLoginPage() {
                   suppressHydrationWarning
                 >
                   {forgotMode ? "Cancel" : "Forgot password?"}
+                  {/* F32 fix (QA): single-session enforcement can reject the
+                      reset session if the student last signed in elsewhere.
+                      Show a one-liner only in forgotMode. */}
+                  {forgotMode && (
+                    <span className="block text-[11px] text-slate-400 mt-1 font-normal">
+                      If you signed in elsewhere recently, sign in here first to claim this device.
+                    </span>
+                  )}
                 </button>
               </label>
               <div className="relative">
@@ -375,7 +407,7 @@ export default function StudentLoginPage() {
                   suppressHydrationWarning
                 />
                 <span>
-                  I agree to BloomIQ&rsquo;s{" "}
+                  I agree to ZCORIQ&rsquo;s{" "}
                   <Link href="/terms" className="text-emerald-700 hover:underline font-semibold">Terms of Service</Link>{" "}
                   and{" "}
                   <Link href="/privacy" className="text-emerald-700 hover:underline font-semibold">Privacy Policy</Link>.
@@ -389,7 +421,7 @@ export default function StudentLoginPage() {
                   <KeyRound size={16} /> Enter your 2FA code
                 </div>
                 <p className="text-xs text-emerald-900/80">
-                  Open your authenticator app (Google Authenticator, 1Password, Authy, etc.) and enter the current 6-digit code for BloomIQ.
+                  Open your authenticator app (Google Authenticator, 1Password, Authy, etc.) and enter the current 6-digit code for ZCORIQ.
                 </p>
                 <input
                   className="input font-mono tracking-widest text-center"

@@ -12,6 +12,7 @@ import { THEME_INIT_SCRIPT } from "@/lib/theme";
 import { SpeedInsights } from "@vercel/speed-insights/next";
 import { Analytics } from "@vercel/analytics/next";
 import PostHogProvider from "@/components/PostHogProvider";
+import { PlatformFlagProvider } from "@/lib/featureFlags.client";
 
 // Premium-clean fonts. Inter is the workhorse; we load common weights
 // and let the @theme block in globals.css name it as --font-sans.
@@ -23,13 +24,13 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "BloomIQ — Smart assessments aligned with Bloom's Taxonomy",
+  title: "ZCORIQ — Smart assessments aligned with Bloom's Taxonomy",
   description:
     "Teachers generate Bloom-aligned MCQs from any content. Students take timed assessments. Everyone sees thinking-level performance, not just scores.",
-  applicationName: "BloomIQ",
+  applicationName: "ZCORIQ",
   appleWebApp: {
     capable: true,
-    title: "BloomIQ",
+    title: "ZCORIQ",
     statusBarStyle: "default",
   },
   icons: {
@@ -69,14 +70,20 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body suppressHydrationWarning>
         <ThemeProvider>
           <PostHogProvider>
-            <AuthHealer />
-            {children}
-            <TwoFactorNudge />
-            <IdleSignOut />
-            <Toaster />
-            <PWARegister />
-            <SpeedInsights />
-            <Analytics />
+            {/* PlatformFlagProvider fetches /api/flags/public once on mount
+                and exposes the values via usePlatformFlag / FlagGate to
+                every client component below. Mounted high so even login
+                pages can gate on flags. */}
+            <PlatformFlagProvider>
+              <AuthHealer />
+              {children}
+              <TwoFactorNudge />
+              <IdleSignOut />
+              <Toaster />
+              <PWARegister />
+              <SpeedInsights />
+              <Analytics />
+            </PlatformFlagProvider>
           </PostHogProvider>
         </ThemeProvider>
       </body>

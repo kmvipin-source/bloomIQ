@@ -2,7 +2,7 @@
 
 **Date**: 2026-05-12
 **Author**: Claude (read-only audit, no code changes)
-**Goal**: Map every place in the BloomIQ codebase that touches scoring, identify what will break when we introduce per-test marking schemes (JEE +4/−1, NEET +4/−1, CAT +3/−1, custom), and recommend a clinical phased plan to ship the feature without corrupting any report.
+**Goal**: Map every place in the ZCORIQ codebase that touches scoring, identify what will break when we introduce per-test marking schemes (JEE +4/−1, NEET +4/−1, CAT +3/−1, custom), and recommend a clinical phased plan to ship the feature without corrupting any report.
 
 ---
 
@@ -10,10 +10,10 @@
 
 **The architecture is friendlier than it looked.** Two design choices made years ago protect us:
 
-1. **`attempt_answers.is_correct` is the source of truth.** Every Bloom-mastery breakdown, every BloomIQ Score computation, every school-report aggregation either reads `is_correct` directly or computes from it. They do **not** read `quiz_attempts.score`.
+1. **`attempt_answers.is_correct` is the source of truth.** Every Bloom-mastery breakdown, every ZCORIQ Bloom Score computation, every school-report aggregation either reads `is_correct` directly or computes from it. They do **not** read `quiz_attempts.score`.
 2. **`quiz_attempts.score` is essentially display-only** — used on the student result card and in one teacher-reports `useMemo` aggregation. Everywhere else, the column is fetched but ignored.
 
-That means **BloomIQ Score, school-reports, principal coach, school digest, at-risk classification, Bloom mastery breakdowns, free-tier caps, leaderboards and analytics dashboards are all naturally immune** to marking-scheme changes. They never read the raw count.
+That means **ZCORIQ Bloom Score, school-reports, principal coach, school digest, at-risk classification, Bloom mastery breakdowns, free-tier caps, leaderboards and analytics dashboards are all naturally immune** to marking-scheme changes. They never read the raw count.
 
 The **two and only two surfaces that will break** with mixed schemes are:
 - **`app/student/quiz/[code]/page.tsx:237–242`** — submission handler hardcodes `if (correct) score++`. Needs to compute weighted marks.
@@ -54,7 +54,7 @@ Plus one bonus risk:
 | `/api/report/[attemptId]/route.ts:44, 122–134` | `attempt.score`, `.total` | Student result page: displays raw count + computed percentage. PDF report mirrors this. |
 | `/teacher/reports/page.tsx` (useMemo around L215–255) | `Att.score`, `.total` | **Mean percentage across attempts (client-side). The one aggregation that operates on raw scores.** |
 | `/api/school/reports/route.ts:139–156` | `quiz_attempts.score`, `.total`, also fetches `attempt_answers` | Score columns are fetched but **NOT used in any aggregation**. The school reports compute Bloom stats from `attempt_answers`. |
-| `/api/student/score/route.ts:94–108` | `bloomiq_scores.score`, `.percentile` | BloomIQ badge. Scheme-independent. |
+| `/api/student/score/route.ts:94–108` | `bloomiq_scores.score`, `.percentile` | ZCORIQ badge. Scheme-independent. |
 | `/school/page.tsx`, `/school/reports/page.tsx` | Mostly `attempt_answers` | Bloom-level breakdowns. Scheme-independent. |
 | `lib/aiGate.ts`, `lib/freeQuota.ts` | Nothing in score columns | Rate limits only. |
 
@@ -65,7 +65,7 @@ Plus one bonus risk:
 
 ### A.5 Pre-existing inconsistencies the audit surfaced (worth knowing)
 
-1. **Quiz `.score` field is redundant** for analytics — school reports and BloomIQ Score recompute from `attempt_answers`. Only display surfaces use it. This actually helps us: removing/changing `.score` semantics is low-blast-radius.
+1. **Quiz `.score` field is redundant** for analytics — school reports and ZCORIQ Bloom Score recompute from `attempt_answers`. Only display surfaces use it. This actually helps us: removing/changing `.score` semantics is low-blast-radius.
 2. **No negative-score protection** anywhere. Code presumes non-negative. Will need explicit `max(0, …)` clamps at display and aggregation.
 3. **`attempt_answers.bloom_level` can be NULL.** Reports silently drop NULL-bloom rows. Pre-existing data loss bug — flag for a separate fix.
 4. **Teacher reports' percentage aggregation runs client-side**, not in SQL. Means it can be updated without a migration but must read a new field consistently.
@@ -82,13 +82,13 @@ Severity scale: **High** = wrong numbers shown to users / GST-style audit risk �
 | 1 | Student result page raw display | High | `score: 4 / 10` is meaningless when scheme is +4/−1 (max would be 40, not 10). | Replace with `raw_score / max_score` from new columns. Show scheme on cover + result. |
 | 2 | Teacher reports cross-test mean | High | Averaging "60% on a JEE mock (with negatives)" + "90% on a practice quiz (no negatives)" is mathematically defensible but visually misleading. | Move aggregation to `percentageOf(attempt)` helper that uses `raw_score/max_score` with `max(0, …)` clamp. Add "across N tests (mixed schemes)" caption. |
 | 3 | Student trend chart | High | Same as #2 if we ever plot raw, not percentage. | Always plot percentage. |
-| 4 | Leaderboards (if/when added) | High | Comparing raw across schemes is invalid. | Per-test leaderboards, OR percentile-based, OR BloomIQ Score (scheme-independent). |
+| 4 | Leaderboards (if/when added) | High | Comparing raw across schemes is invalid. | Per-test leaderboards, OR percentile-based, OR ZCORIQ Bloom Score (scheme-independent). |
 | 5 | Negative raw scores | Medium | Result page would show "−6 / 40" with no clamp. | Show actual (transparent like CAT) but clamp percentage at 0. New `raw_negative` flag drives a coaching nudge. |
 | 6 | PDF report `${attempt.score} / ${attempt.total}` | High | Same as #1. | Update PDF generator to read new columns. |
 | 7 | "At-risk students" thresholds | Low | Uses percentages; if percentages are correct, this is safe. | Verify the percentage helper is consistent. |
 | 8 | Class average widget on `/school` home | Medium | If it reads `.score/.total`, it mixes meaning across attempts after rollout. | Switch to percentage helper. |
 | 9 | Bloom mastery breakdown | **Safe** | Reads `is_correct` only. No fix needed. | — |
-| 10 | BloomIQ Score (300–900) | **Safe** | Reads `is_correct` only. No fix needed. | — |
+| 10 | ZCORIQ Bloom Score (300–900) | **Safe** | Reads `is_correct` only. No fix needed. | — |
 | 11 | Free-tier caps / rate-limits | **Safe** | Don't touch score at all. | — |
 | 12 | School Coach / Principal Digest | **Safe** | Reads Bloom mix + counts, not raw score. | — |
 
@@ -102,7 +102,7 @@ Severity scale: **High** = wrong numbers shown to users / GST-style audit risk �
 
 1. **One source of truth function**: `lib/scoring.ts → computeScore(quiz, answers) → { raw_score, max_score, percentage, raw_negative, counts, by_section }`. Every read goes through this.
 2. **Marking scheme is per-test**, stored at quiz creation, snapshotted on the attempt. Editing a quiz's scheme **never** retroactively re-grades old attempts.
-3. **Bloom mastery and BloomIQ Score remain marks-independent** — they read `is_correct`. This is the single most important architectural property; it means we can ship marking schemes without touching the BloomIQ Score code at all.
+3. **Bloom mastery and ZCORIQ Bloom Score remain marks-independent** — they read `is_correct`. This is the single most important architectural property; it means we can ship marking schemes without touching the ZCORIQ Bloom Score code at all.
 4. **Backward compatibility**: every column is nullable / has a sensible default. `marking_scheme IS NULL` means flat +1/0. Existing rows behave exactly as today.
 
 ### C.2 Data model — what gets added
@@ -251,7 +251,7 @@ If `raw_score` went negative (e.g., student wildly guessed), show:
 ### Sites that intentionally do NOT change
 
 These were audited and confirmed marking-scheme-independent:
-- `app/api/student/score/recompute/route.ts` (BloomIQ Score) — reads `is_correct` only ✓
+- `app/api/student/score/recompute/route.ts` (ZCORIQ Bloom Score) — reads `is_correct` only ✓
 - `lib/bloomiqScore.ts` — reads correct/total per Bloom level ✓
 - `app/api/school/reports/route.ts` — reads `attempt_answers` for Bloom stats ✓
 - `app/school/reports/page.tsx`, `/school/page.tsx`, `/school/coach`, `/school/digest` — Bloom-mix based ✓
@@ -287,7 +287,7 @@ These were audited and confirmed marking-scheme-independent:
 3. **Existing-attempt re-display test**: open 5 random old attempts in the result page after Phase 3. Confirm displayed score = `score / total × 100` (same as today). Bloom mastery unchanged.
 4. **End-to-end Chrome test**: create one quiz per preset (PRACTICE, JEE_MAIN with negative on, JEE_MAIN with negative off, NEET, CAT, CUSTOM). Submit a known answer pattern. Assert displayed raw and percentage match hand-calculated values.
 5. **Mixed-cohort report test**: in `/teacher/reports`, view a class where students took 3 different schemes. Verify the mean-percentage caption says "across N tests (mixed schemes)" and the math is `Σ percentages / N`, not `Σ raw / Σ max`.
-6. **BloomIQ Score regression**: confirm BloomIQ Score for a student is byte-identical before and after Phase 0–5 (we should be unable to move it because Bloom mastery is `is_correct`-based).
+6. **ZCORIQ Bloom Score regression**: confirm ZCORIQ Bloom Score for a student is byte-identical before and after Phase 0–5 (we should be unable to move it because Bloom mastery is `is_correct`-based).
 7. **PDF audit**: download a PDF report from a JEE_MAIN attempt. Confirm it shows breakdown (correct count × +4, wrong count × −1).
 
 ---
@@ -321,7 +321,7 @@ These need your call before Phase 1 starts. I have a preferred answer for each �
 
 ## Section H — Why this audit was overdue
 
-The previous 21 days shipped: scoring → student dashboards → teacher reports → leaderboards-ish → BloomIQ Score → free-tier caps → Razorpay billing → school billing. Every one of those surfaces consumes scores, and every one of them was built assuming flat +1/0. The cumulative cost of *not* asking "what marking scheme applies?" up front is now ~12 hours of refactor work plus this audit.
+The previous 21 days shipped: scoring → student dashboards → teacher reports → leaderboards-ish → ZCORIQ Bloom Score → free-tier caps → Razorpay billing → school billing. Every one of those surfaces consumes scores, and every one of them was built assuming flat +1/0. The cumulative cost of *not* asking "what marking scheme applies?" up front is now ~12 hours of refactor work plus this audit.
 
 **Going forward** I'll add "what marking scheme governs this surface?" to the design-review checklist alongside "what feature gate?" and "what RLS?". Same way the cycle-math invariant got added to the billing checklist today.
 

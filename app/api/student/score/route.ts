@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
-import { getBearer, supabaseServer, supabaseAdmin } from "@/lib/supabase/server";
-import { predictRankAndColleges, normalizeExamGoal } from "@/lib/bloomiqScore";
+import { supabaseAdmin } from "@/lib/supabase/server";
+import { requireAuthenticated } from "@/lib/apiAuth";
+import { predictRankAndColleges, normalizeExamGoal } from "@/lib/zcoriqBloomScore";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -8,7 +9,7 @@ export const dynamic = "force-dynamic";
 /**
  * GET /api/student/score
  *
- * Returns the caller's most recent BloomIQ Score with the day-over-day
+ * Returns the caller's most recent ZCORIQ Bloom Score with the day-over-day
  * delta and the latest calibration's Future You context (so the score
  * badge can show "↑ 12 from yesterday" without a second round-trip).
  *
@@ -26,15 +27,15 @@ export const dynamic = "force-dynamic";
  *   }
  *
  * When the user has no calibration yet, returns has_calibration:false and
- * the badge renders the "Get your BloomIQ →" CTA.
+ * the badge renders the "Get your ZCORIQ →" CTA.
  */
 export async function GET(req: Request) {
   try {
-    const token = getBearer(req);
-    if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    const sb = supabaseServer(token);
-    const { data: { user }, error: userErr } = await sb.auth.getUser();
-    if (userErr || !user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    // F22 fix (QA): shared requireAuthenticated — single-session
+    // enforcement (token iat >= profiles.session_iat) now applied.
+    const auth = await requireAuthenticated(req);
+    if ("error" in auth) return auth.error;
+    const { user, sb } = auth;
 
     const admin = supabaseAdmin();
 

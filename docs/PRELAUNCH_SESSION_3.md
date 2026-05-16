@@ -52,7 +52,7 @@ Everything else green or test-rig artifact. **Free-plan caps system tested live 
 - **Re-tightened (migration 72):** Migration 71 had over-broadened the bypass; reverted because it accidentally re-opened D2.
 - **Final state (migration 73):** Bypass condition is `auth.uid() IS NULL`. Verified through every code path that students can never reach this bypass.
 - **Caught by:** `scripts/test-rls.js` after I hardened `expectWriteFails` to verify by service-role read-back.
-- **Impact had it shipped:** Any student could trivially grant themselves admin to BloomIQ's entire platform (every school, every subscription, every plan).
+- **Impact had it shipped:** Any student could trivially grant themselves admin to ZCORIQ's entire platform (every school, every subscription, every plan).
 
 ### D3 — `super_a reads schoolA subscription` returns 0 rows in test  ·  **TEST-RIG ARTIFACT · NOT A PRODUCT BUG**
 

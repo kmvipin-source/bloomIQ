@@ -134,7 +134,7 @@ function SetPasswordInner() {
         <div className="w-full max-w-sm fade-in">
           <Link href="/" className="flex items-center gap-2 justify-center mb-6">
             <span className="text-3xl">🌱</span>
-            <span className="text-xl font-bold">BloomIQ</span>
+            <span className="text-xl font-bold">ZCORIQ</span>
           </Link>
           <div className="card text-center">
             <div className="mx-auto w-12 h-12 rounded-full bg-amber-100 grid place-items-center mb-3">
@@ -178,7 +178,7 @@ function SetPasswordInner() {
       <div className="w-full max-w-sm fade-in">
         <Link href="/" className="flex items-center gap-2 justify-center mb-8">
           <span className="text-3xl">🌱</span>
-          <span className="text-xl font-bold">BloomIQ</span>
+          <span className="text-xl font-bold">ZCORIQ</span>
         </Link>
 
         <div className="card">

@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import { groqJSON } from "@/lib/groq";
 import { geminiJSON, geminiText, isGeminiConfigured } from "@/lib/gemini";
 import { fixFrameLayout, type LayoutElement } from "@/lib/visualizerLayout";
-import { getBearer, supabaseServer } from "@/lib/supabase/server";
+import { supabaseServer } from "@/lib/supabase/server";
+import { requireAuthenticated } from "@/lib/apiAuth";
 import { requireFeature } from "@/lib/featureAccess.server";
 import { checkRateLimit, checkDailyCap } from "@/lib/rateLimit";
 import { consumeLifetimeUse } from "@/lib/freeQuota";
@@ -406,11 +407,11 @@ function cleanFrames(arr: unknown): Frame[] {
 
 export async function POST(req: Request) {
   try {
-    const token = getBearer(req);
-    if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    const sb = supabaseServer(token);
-    const { data: { user } } = await sb.auth.getUser();
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    // F22 fix (QA): shared requireAuthenticated — single-session
+    // enforcement (token iat >= profiles.session_iat) now applied.
+    const auth = await requireAuthenticated(req);
+    if ("error" in auth) return auth.error;
+    const { user, sb } = auth;
     // Visualizer is expensive (two Gemini calls per request). Burst 3,
     // refill 6/hr, hard daily cap 15.
     const rate = checkRateLimit(user.id, "visualizer.create", { capacity: 3, refillPerHour: 6 });

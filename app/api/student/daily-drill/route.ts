@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { getBearer, supabaseServer, supabaseAdmin } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/lib/supabase/server";
+import { requireAuthenticated } from "@/lib/apiAuth";
 import { BLOOM_LEVELS, type BloomLevel, isBloomLevel } from "@/lib/bloom";
 import { checkDailyQuota, recordDailyUse } from "@/lib/freeQuota";
 
@@ -61,11 +62,10 @@ function startOfUtcDay(d: Date): Date {
 }
 
 async function buildDrill(req: Request) {
-  const token = getBearer(req);
-  if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  const sb = supabaseServer(token);
-  const { data: { user } } = await sb.auth.getUser();
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  // F22 fix (QA): shared requireAuthenticated — single-session enforcement applied.
+  const auth = await requireAuthenticated(req);
+  if ("error" in auth) return auth.error;
+  const { user, sb } = auth;
 
   const { data: prof } = await sb
     .from("profiles")

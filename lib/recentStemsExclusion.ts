@@ -35,6 +35,13 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { BloomLevel } from "@/lib/bloom";
 
+/** How many of the owner's most-recent question_bank embeddings to fetch
+ *  for the cross-session cosine dedup pass (P0.3). 100 covers the typical
+ *  teacher's last few weeks of generation without bloating the bandwidth.
+ *  Each row is 768 floats ≈ 6 KB JSON — 100 rows = ~600 KB transfer worst
+ *  case (Supabase returns vectors as JSON arrays). */
+const HISTORY_EMBEDDINGS_LIMIT = 100;
+
 // ─── Tunables ────────────────────────────────────────────────────────────
 
 /** How many days back to look. 30 days = "I might still remember this
@@ -351,4 +358,93 @@ export async function getRecentStemsForExclusion(
   const conceptsAlreadyCovered = topConceptsFromStems(stems);
   const promptBlock = buildPromptBlock(stems, conceptsAlreadyCovered);
   return { stems, conceptsAlreadyCovered, promptBlock };
+}
+
+// ─── Cross-session cosine dedup (P0.3) ───────────────────────────────────
+//
+// Migration 80 added `question_bank.stem_embedding vector(768)` and routes
+// have been WRITING it on every insert since. But until this commit, NO
+// READ PATH actually queried it — the cosineDedupAgainstHistory() helper
+// existed in lib/embeddings.ts and was never called.
+//
+// This function closes that loop. The caller fetches the embeddings the
+// owner has accumulated for the same topic/category and passes them into
+// cosineDedupAgainstHistory() alongside freshly-embedded candidates.
+//
+// Fail-open: any DB / RLS failure returns []. The generator pipeline
+// degrades gracefully to Jaccard-only history dedup, which is what we
+// had before this commit anyway — strictly no regression.
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * Fetch up to `HISTORY_EMBEDDINGS_LIMIT` recent stem_embedding vectors
+ * for this owner, optionally filtered to a category. Newest first.
+ *
+ * Why owner-scoped: a student's question_bank rows are owned by the
+ * student (independent-student path) or by the teacher (teacher path).
+ * Cosine history dedup should only see the SAME owner's previous output
+ * to avoid leaking question patterns between accounts.
+ *
+ * Why category-filtered when provided: a teacher who teaches Class 8
+ * maths AND JEE shouldn't have their Class-8 questions filtered against
+ * JEE-difficulty history — different cohorts, different vocab. Pass null
+ * to compare against all categories.
+ *
+ * @returns Array of 768-dim vectors (may be < limit if owner has fewer
+ *          rows, or empty on any failure).
+ */
+export async function fetchRecentEmbeddingsForOwner(
+  sb: SupabaseClient,
+  ownerId: string,
+  category: string | null,
+  limit: number = HISTORY_EMBEDDINGS_LIMIT,
+): Promise<number[][]> {
+  if (!ownerId) return [];
+  const cap = Math.max(1, Math.min(500, Math.floor(limit)));
+  try {
+    let q = sb
+      .from("question_bank")
+      .select("stem_embedding, created_at")
+      .eq("owner_id", ownerId)
+      .not("stem_embedding", "is", null)
+      .order("created_at", { ascending: false })
+      .limit(cap);
+    if (category && category.trim().length > 0) {
+      q = q.eq("category", category.trim());
+    }
+    const { data, error } = await q;
+    if (error || !data) {
+      if (error) {
+        // eslint-disable-next-line no-console
+        console.warn("[recentStemsExclusion] embedding fetch failed:", error.message);
+      }
+      return [];
+    }
+    type Row = { stem_embedding: number[] | string | null };
+    const out: number[][] = [];
+    for (const r of data as Row[]) {
+      const v = r.stem_embedding;
+      if (!v) continue;
+      // pgvector can come back as JSON array OR a stringified "[1,2,3]"
+      // depending on PostgREST settings. Handle both.
+      if (Array.isArray(v)) {
+        if (v.length > 0 && typeof v[0] === "number") out.push(v as number[]);
+      } else if (typeof v === "string") {
+        try {
+          const parsed = JSON.parse(v);
+          if (Array.isArray(parsed) && parsed.length > 0 && typeof parsed[0] === "number") {
+            out.push(parsed as number[]);
+          }
+        } catch { /* skip malformed */ }
+      }
+    }
+    return out;
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      "[recentStemsExclusion] embedding fetch threw:",
+      e instanceof Error ? e.message : e,
+    );
+    return [];
+  }
 }

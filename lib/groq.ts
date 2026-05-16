@@ -14,10 +14,10 @@ let _groqClient: Groq | null = null;
 function groqClient(): Groq {
   if (_groqClient) return _groqClient;
   _groqClient = new Groq({
-    apiKey:
-      process.env.GROQ_API_KEY ||
-      process.env.NEXT_PUBLIC_GROQ_API_KEY ||
-      "",
+    // F77 fix (QA): never fall back to NEXT_PUBLIC_GROQ_API_KEY —
+    // that prefix causes Next.js to inline the value into the client
+    // bundle, leaking the secret to every browser. Server-only name only.
+    apiKey: process.env.GROQ_API_KEY || "",
     // 30s default timeout — chat.completions can hang on Groq edge issues
     // and we don't want a single request to keep a Vercel lambda hot
     // past its 60s/90s limit. Callers can still set route-level
@@ -56,7 +56,10 @@ export const GROQ_VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct";
 // vision), each token billed. Real production prompts on this codebase
 // never need more than ~2500 tokens of output (a single quiz batch +
 // explanations). Cap conservatively.
-const MAX_OUTPUT_TOKENS_JSON = 2800;
+// F85 fix (QA): the previous 2800-token cap truncated JSON output on
+// batches of 18+ MCQs with explanations, causing GroqParseError. 4500
+// covers ~25 questions × 180 tokens; well under the model's 8k context.
+const MAX_OUTPUT_TOKENS_JSON = 4500;
 const MAX_OUTPUT_TOKENS_TEXT = 1600;
 
 /**
@@ -108,7 +111,20 @@ function shouldFallback(err: unknown): boolean {
   }
   if (typeof e.message === "string") {
     const m = e.message.toLowerCase();
-    if (m.includes("rate limit") || m.includes("quota") || m.includes("too many requests") || m.includes("429")) return true;
+    // F88 fix: cover more provider-specific phrasings — Groq emits both
+    // 'rate_limit_exceeded' and 'overloaded' style messages, and 503s
+    // often carry no status code on the SDK error.
+    if (
+      m.includes("rate limit") ||
+      m.includes("rate_limit") ||
+      m.includes("quota") ||
+      m.includes("too many requests") ||
+      m.includes("429") ||
+      m.includes("503") ||
+      m.includes("overloaded") ||
+      m.includes("service unavailable") ||
+      m.includes("temporarily unavailable")
+    ) return true;
   }
   return false;
 }
@@ -130,11 +146,17 @@ function shouldFallback(err: unknown): boolean {
  */
 function geminiFirst(): boolean {
   if ((process.env.LLM_PROVIDER || "").toLowerCase() === "gemini") return true;
-  const hasGroq = !!(process.env.GROQ_API_KEY || process.env.NEXT_PUBLIC_GROQ_API_KEY);
+  // F77 fix: server-only key only (see groqClient SECURITY note).
+  const hasGroq = !!process.env.GROQ_API_KEY;
   const hasGemini = !!process.env.GEMINI_API_KEY;
   if (!hasGroq && hasGemini) return true;
   return false;
 }
+
+// F89 fix (QA): the Gemini SDK call has no per-request timeout.
+// A hung Gemini connection occupies the lambda for its full
+// maxDuration. Cap at 30s (same as Groq's per-call cap).
+const GEMINI_TIMEOUT_MS = 30_000;
 
 async function geminiGenerate(
   modelName: string,
@@ -149,7 +171,10 @@ async function geminiGenerate(
     systemInstruction: systemPrompt,
     generationConfig: cfg,
   });
-  const res = await model.generateContent(userPrompt);
+  const timeoutP = new Promise<never>((_, rej) =>
+    setTimeout(() => rej(new Error(`Gemini timed out after ${GEMINI_TIMEOUT_MS / 1000}s`)), GEMINI_TIMEOUT_MS),
+  );
+  const res = await Promise.race([model.generateContent(userPrompt), timeoutP]);
   return res.response.text() || "";
 }
 
@@ -180,7 +205,11 @@ export async function groqJSON(systemPrompt: string, userPrompt: string) {
   if (geminiFirst() && geminiClient()) {
     return geminiJSONFallback(systemPrompt, userPrompt);
   }
-  try {
+  // F84 fix: one automatic retry on parse failure. Groq occasionally
+  // emits a truncated JSON when max_tokens hits or under high load;
+  // a single replay usually succeeds. Transport / rate-limit errors
+  // still hit the Gemini fallback path below.
+  async function runOnce(): Promise<Record<string, unknown>> {
     const res = await groqClient().chat.completions.create({
       model: GROQ_MODEL,
       temperature: 0.4,
@@ -193,12 +222,20 @@ export async function groqJSON(systemPrompt: string, userPrompt: string) {
     });
     const text = res.choices[0]?.message?.content || "{}";
     const parsed = parseJsonStrict(text);
-    if (parsed === null) {
-      // Caller can catch GroqParseError to retry or surface 502. Returning
-      // {} previously masked this as silent bad-data into the DB.
-      throw new GroqParseError(text.slice(0, 200));
-    }
+    if (parsed === null) throw new GroqParseError(text.slice(0, 200));
     return parsed;
+  }
+  try {
+    try {
+      return await runOnce();
+    } catch (firstErr) {
+      if (firstErr instanceof GroqParseError) {
+        // eslint-disable-next-line no-console
+        console.warn("[groq] parse failure on first attempt; retrying once.");
+        return await runOnce();
+      }
+      throw firstErr;
+    }
   } catch (err) {
     if (shouldFallback(err) && geminiClient()) {
       // eslint-disable-next-line no-console
@@ -223,7 +260,8 @@ export async function groqJSONVision(
   // (Gemini-only deploys auto-flip groqJSON / groqText to Gemini, but
   // vision would otherwise quietly 401 from Groq with no helpful
   // signal). Telling callers up-front lets them disable vision UI.
-  const hasGroq = !!(process.env.GROQ_API_KEY || process.env.NEXT_PUBLIC_GROQ_API_KEY);
+  // F77 fix: server-only key only (see groqClient SECURITY note).
+  const hasGroq = !!process.env.GROQ_API_KEY;
   if (!hasGroq) {
     throw new Error("Vision generation requires GROQ_API_KEY. Gemini vision fallback is not wired yet.");
   }
@@ -272,6 +310,87 @@ export async function groqText(systemPrompt: string, userPrompt: string) {
       return geminiTextFallback(systemPrompt, userPrompt);
     }
     throw err;
+  }
+}
+
+export default groqClient;
+onsole.warn("[groq] rate-limited / 503, falling back to Gemini:", (err as Error)?.message);
+      return geminiTextFallback(systemPrompt, userPrompt);
+    }
+    throw err;
+  }
+}
+
+export default groqClient;
+e
+      console.warn("[groq] rate-limited / 503, falling back to Gemini:", (err as Error)?.message);
+      return geminiTextFallback(systemPrompt, userPrompt);
+    }
+    throw err;
+  }
+}
+
+export default groqClient;
+systemPrompt, userPrompt);
+    }
+    throw err;
+  }
+}
+
+export default groqClient;
+ "";
+  } catch (err) {
+    if (shouldFallback(err) && geminiClient()) {
+      console.warn("[groq] rate-limited / 503, falling back to Gemini:", (err as Error)?.message);
+      return geminiTextFallback(systemPrompt, userPrompt);
+    }
+    throw err;
+  }
+}
+
+export default groqClient;
+throw err;
+  }
+}
+
+export default groqClient;
+
+    throw err;
+  }
+}
+
+export default groqClient;
+s[0]?.message?.content?.trim() || "";
+  } catch (err) {
+    if (shouldFallback(err) && geminiClient()) {
+      console.warn("[groq] rate-limited / 503, falling back to Gemini:", (err as Error)?.message);
+      return geminiTextFallback(systemPrompt, userPrompt);
+    }
+    throw err;
+  }
+}
+
+export default groqClient;
+throw err;
+  }
+}
+
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ],
+    });
+    return res.choices[0]?.message?.content?.trim() || "";
+  } catch (err) {
+    if (shouldFallback(err) && geminiClient()) {
+      console.warn("[groq] rate-limited / 503, falling back to Gemini:", (err as Error)?.message);
+      return geminiTextFallback(systemPrompt, userPrompt);
+    }
+    throw err;
+  }
+}
+
+export default groqClient;
+throw err;
   }
 }
 

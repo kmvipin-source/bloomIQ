@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { groqJSON, groqJSONVision } from "@/lib/groq";
-import { getBearer, supabaseServer, supabaseAdmin } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/lib/supabase/server";
+import { requireAuthenticated } from "@/lib/apiAuth";
 import { checkRateLimit, checkDailyCap } from "@/lib/rateLimit";
 import {
   findMisconceptionDistractors,
@@ -134,11 +135,11 @@ type GenSection = {
 
 export async function POST(req: Request) {
   try {
-    const token = getBearer(req);
-    if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    const sb = supabaseServer(token);
-    const { data: { user } } = await sb.auth.getUser();
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    // F22 fix (QA): shared requireAuthenticated — single-session
+    // enforcement (token iat >= profiles.session_iat) now applied.
+    const auth = await requireAuthenticated(req);
+    if ("error" in auth) return auth.error;
+    const { user, sb } = auth;
     // Papers generate is the heaviest LLM surface — multi-Bloom + vision
     // when an image source is used. Tighter caps than /generate.
     const rate = checkRateLimit(user.id, "papers.generate", { capacity: 3, refillPerHour: 6 });

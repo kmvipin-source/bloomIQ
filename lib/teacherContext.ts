@@ -116,6 +116,11 @@ function truncate(s: string, max: number): string {
   return s.slice(0, Math.max(0, max - 1)) + "…";
 }
 
+// F107 note (QA): buildTeacherContext is called on every Coach turn and
+// every generation request. Each call hits 5-7 tables. Cheap individually
+// but adds up under load. Add a tiny LRU (lru-cache, max 200, ttl 60s)
+// keyed on teacherId when scaling — the underlying tables change at
+// minute-or-slower cadence, so 60s staleness is safe for the use case.
 export async function buildTeacherContext(teacherId: string): Promise<TeacherContext> {
   const admin = supabaseAdmin();
   const asOf = new Date().toISOString();

@@ -1,4 +1,4 @@
-// Seed a complete BloomIQ org tree for manual testing.
+// Seed a complete ZCORIQ org tree for manual testing.
 //
 // Creates, in order:
 //   1) A school ("Test Academy")
@@ -69,7 +69,7 @@ const SCHOOL_DOMAIN = "bloomiq.invalid"; // synthetic domain for school-student 
 
 // All emails the script will manage — listed here so --reset knows what to wipe.
 const TEST_USERS = {
-  // BloomIQ internal staff. Logs in at /staff (the hidden platform-admin
+  // ZCORIQ internal staff. Logs in at /staff (the hidden platform-admin
   // route), not the public /login. profile.platform_admin = true.
   platformAdmin: {
     email: "ops@bloomiq.example.com",
@@ -264,11 +264,11 @@ async function main() {
 
   console.log(`🌱 Seeding "${SCHOOL_NAME}" + test users...`);
 
-  // 0) Platform admin — BloomIQ internal staff. Must exist before anything
+  // 0) Platform admin — ZCORIQ internal staff. Must exist before anything
   //    else in production (this is the user who runs /admin/onboard-school
   //    to invite the Admin Head). For seed purposes we create it standalone:
   //    no school, no class, no plan.
-  console.log("\n[0/8] Platform admin (BloomIQ staff)...");
+  console.log("\n[0/8] Platform admin (ZCORIQ staff)...");
   const pa = TEST_USERS.platformAdmin;
   const paUser = await createAuthUser(sb, { ...pa, password: PASSWORD });
   await upsertProfile(sb, paUser.id, {

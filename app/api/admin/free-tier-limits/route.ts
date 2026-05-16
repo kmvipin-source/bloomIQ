@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { getBearer, supabaseServer, supabaseAdmin } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/lib/supabase/server";
+import { requirePlatformAdmin } from "@/lib/apiAuth";
 import {
   DAILY_SURFACES,
   LIFETIME_FEATURES,
@@ -30,27 +31,10 @@ export const runtime = "nodejs";
 // The older /api/admin/free-trial-settings endpoint is deprecated.
 // =============================================================================
 
-async function requireAdmin(req: Request): Promise<{ ok: true } | { ok: false; res: Response }> {
-  const token = getBearer(req);
-  if (!token) {
-    return { ok: false, res: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) };
-  }
-  const sb = supabaseServer(token);
-  const { data: { user } } = await sb.auth.getUser();
-  if (!user) {
-    return { ok: false, res: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) };
-  }
-  const admin = supabaseAdmin();
-  const { data: prof } = await admin
-    .from("profiles")
-    .select("platform_admin")
-    .eq("id", user.id)
-    .maybeSingle();
-  if (!prof?.platform_admin) {
-    return { ok: false, res: NextResponse.json({ error: "Platform admin only." }, { status: 403 }) };
-  }
-  return { ok: true };
-}
+// F171 fix (QA): local requireAdmin removed; using shared
+// requirePlatformAdmin from lib/apiAuth.ts. Call-site error shape
+// changes from { ok, res } to discriminated { error } union — patches
+// below adjust the two call sites accordingly.
 
 const EDITABLE_DAILY_COLUMNS = DAILY_SURFACES.map(dailySurfaceColumn);
 const EDITABLE_LIFETIME_COLUMNS = LIFETIME_FEATURES.map(lifetimeFeatureColumn);
@@ -67,8 +51,8 @@ const ALL_EDITABLE: readonly string[] = [
 ];
 
 export async function GET(req: Request) {
-  const auth = await requireAdmin(req);
-  if (!auth.ok) return auth.res;
+  const auth = await requirePlatformAdmin(req);
+  if ("error" in auth) return auth.error;
 
   const admin = supabaseAdmin();
   const { data: row, error } = await admin
@@ -91,8 +75,8 @@ export async function GET(req: Request) {
 }
 
 export async function PATCH(req: Request) {
-  const auth = await requireAdmin(req);
-  if (!auth.ok) return auth.res;
+  const auth = await requirePlatformAdmin(req);
+  if ("error" in auth) return auth.error;
 
   let body: Record<string, unknown>;
   try {

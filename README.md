@@ -1,8 +1,259 @@
-# 🌱 BloomIQ
+# 🌱 ZCORIQ
 
 **Assess _how_ students think — not just what they recall.**
 
-BloomIQ is an end-to-end Bloom's Taxonomy-driven assessment platform. Three role tiers (school principals, teachers, students), two student modes (school-managed vs independent subscription), AI-generated content from five sources, Bloom-level analytics, printable exam papers, and reporting suites.
+ZCORIQ is an end-to-end Bloom's Taxonomy-driven assessment platform. Three role tiers (school principals, teachers, students), two student modes (school-managed vs independent subscription), AI-generated content from five sources, Bloom-level analytics, printable exam papers, and reporting suites.
+
+---
+
+## ✅ RESOLVED (2026-05-16) — Staged-launch feature-flag system shipped
+
+Decision picked: **"Go — build it as designed"**, with the additional
+constraint that activating / deactivating the school feature must be
+trivially simple. Implemented and merged in this session.
+
+**What shipped (files):**
+
+- `supabase/migrations/95_platform_feature_flags.sql` — three tables
+  (`platform_flags`, `platform_flag_overrides`, `platform_flag_audit`)
+  + RLS + the three seed flags.
+- `lib/featureFlags.ts` — server evaluator, 60s in-process cache, env
+  panic-switch override, fail-safe DB-outage fallback.
+- `lib/featureFlags.client.tsx` — `<PlatformFlagProvider>`, `<FlagGate>`,
+  `usePlatformFlag()` hook. Provider mounted in `app/layout.tsx`.
+- `app/api/flags/public/route.ts` — public-readable flag bundle for the
+  client.
+- `app/api/admin/feature-flags/route.ts` (+ `overrides/`, `audit/`) —
+  admin-only mutation surface.
+- `app/admin/feature-flags/page.tsx` — admin control UI.
+- `app/schools-coming-soon/page.tsx` — waitlist landing.
+- Enforcement: `app/api/admin/onboard-school/route.ts` returns 503 when
+  `school_signup_enabled` is OFF; `app/pricing/page.tsx` swaps the
+  For-Schools section for a coming-soon card when
+  `school_marketing_visible` is OFF.
+- `components/Sidebar.tsx` — added "Feature Flags" entry under platform-admin nav.
+- `.env.test.example` — documents the `FLAG_*` env panic switches.
+
+### How to flip the school feature on or off (read this first)
+
+There are **three ways**, in increasing order of friction. Pick the one
+that matches the situation:
+
+1. **Admin UI flip — the normal path.** Sign in as a platform admin,
+   visit `/admin/feature-flags`, click the green `ON` / grey `OFF` pill
+   next to `school_signup_enabled` (or `school_marketing_visible`). Add
+   a one-line reason; it lands in the audit log. Propagates everywhere
+   within ~60 seconds. No redeploy.
+2. **Pilot one school without flipping the global** — same UI, click
+   "manage pilot allowlist" on the flag, "+ add school override". Pass
+   the school UUID, choose enabled = yes, write a note (required), pick
+   an expiry (default 90 days). That single school flips ON; the global
+   stays OFF for everyone else.
+3. **Env panic switch — for emergencies and tests.** Set
+   `FLAG_SCHOOL_SIGNUP_ENABLED=off` (or `=on`) in the environment. Wins
+   over EVERY DB value and every override, instantly, no DB call. Use
+   this when something is on fire and you need a guaranteed-correct
+   answer. The admin UI loudly shows when a flag is pinned by env.
+
+The three starter flags:
+
+| Flag | Default | What it does |
+|---|---|---|
+| `school_marketing_visible` | ON | Show the For-Schools tier on `/pricing`. OFF = coming-soon waitlist card. |
+| `school_signup_enabled` | OFF | Allow new school onboarding via `/api/admin/onboard-school`. OFF = 503. Existing schools unaffected. |
+| `independent_signup_enabled` | ON | Kill switch for the independent-learner signup path. |
+
+Adding a new flag: add a line to `FLAG_REGISTRY` in
+`lib/featureFlags.ts` + a single `INSERT` in a new migration. The admin
+UI auto-renders it.
+
+**Existing schools are not gated** — only the *new-onboarding* path
+(`/api/admin/onboard-school`) checks `school_signup_enabled`. Already-
+onboarded principals, teachers, and students keep working regardless.
+
+---
+
+## ✅ RESOLVED (2026-05-16, later) — 183-finding QA audit complete + F22 single-session enforcement shipped
+
+A 9-phase Senior-QA-Architect audit (Functional, Workflow, Role-based, Input validation, AI quality, Cross-module, Regression, UX, Error handling, Performance) was run across every module of ZCORIQ. **183 distinct findings catalogued; all 183 have a fix, an in-code breadcrumb, or a documented deliberate exemption.**
+
+**Full handoff document:** [`AUDIT.md`](AUDIT.md) — single source of truth, includes every fix tag with file + one-line rationale, the codemod scripts used, and the remaining queue for future PRs.
+
+### Highlights (what to know without opening AUDIT.md)
+
+**~100 functional / security fixes shipped as actual code, including:**
+- **F76 critical** — `lib/recentStemsExclusion.ts` had a duplicate function definition + orphan code that was breaking the AI pipeline at compile time. Truncated to remove the duplicate.
+- **F77 critical security** — `NEXT_PUBLIC_GROQ_API_KEY` fallback removed from `lib/groq.ts` (Next.js was inlining the secret into the browser bundle).
+- **F78 critical silent failure** — `findMisconceptionDistractors` was calling `supabaseServer` with no token, which became an anon client, which RLS denied, which silently no-op'd. The whole feature was off in production.
+- **F122 critical accuracy** — Teacher generation form's "Generated X of Y" toast was lying — used `perLevel × levelCount` instead of the actual sum-of-per-level counts.
+- **Payments hardened** — F156 plan-price-mid-checkout error, F157 paid→paid started_at preservation, F162 idempotency on 23505, F165 IP+UA logged at order create, F152 double-click guard.
+- **AI pipeline** — F84 Groq retry-once on parse failure, F85 token cap 2800 → 4500, F86 multilingual prompt-injection patterns, F89 30s Gemini timeout, F95 non-ASCII repetition clamp.
+
+**1 dedicated PR-sized refactor — F22 + F171 — fully shipped:**
+- New `lib/apiAuth.ts` with shared `requireAuthenticated()` + `requirePlatformAdmin()` helpers
+- **124 routes migrated to the shared helper.** Single source of truth for "who is authenticated" and "who is a platform admin".
+- **F22 single-session enforcement now active on every payment endpoint, every teacher/student write, every admin mutation** (was previously only on `/api/auth/me`). A stolen access token issued before a later sign-in elsewhere is now rejected with `session_superseded` 401 on every mutating route.
+- **8 routes deliberately not migrated** — every one is intentional and documented (auth/me, claim-session, set-password, login-audit, flags/public, plus 2 with their own richer local helpers, plus the adapter file's dead-code legacy block).
+
+**3 new SQL migrations** to apply with `supabase db push`:
+- `95_platform_feature_flags.sql` — staged-launch feature flag system (above)
+- `96_school_waitlist.sql` — backs the new `/api/waitlist/schools` endpoint
+- `97_handle_new_user_hardening.sql` — `handle_new_user` trigger validates role explicitly, rejects unknown roles
+
+**2 new shared libs** — `lib/passwordPolicy.ts` (F26), `lib/planLegacy.ts` (F151), plus the F22/F171 `lib/apiAuth.ts`.
+
+**~50 in-code breadcrumbs** — every deferred hazard now has a `// FXX note (QA):` comment at the relevant code site, pointing back to `AUDIT.md`. The next maintainer sees them inline instead of having to remember to open the audit doc.
+
+### Verification status (read carefully before deploying)
+
+**Done in this session:**
+- `npx tsc -p tsconfig.check.json` — clean exit after every batch (TypeScript type-check passes across all 235 modified files)
+- `npx eslint app/ lib/ components/` — clean exit (no warnings, no errors)
+- All codemod scripts under `scripts/refactor-f22-f171*.mjs` and `scripts/apply-audit-fixes-r*.mjs` are re-runnable and idempotent
+- Every change visible in `git diff --stat HEAD` (235 files, +3,949 / −3,217 lines) for line-by-line review
+
+**NOT done — must run before any deploy:**
+1. `supabase db push` for migrations 95, 96, 97 — these were authored but cannot be applied from the codemod sandbox
+2. The three ad-hoc DB tests:
+   - `node scripts/test-invariants.js` — schema-shape + FK integrity + RLS-enabled checks across ~60 invariants
+   - `node scripts/test-rls.js` — multi-persona RLS leak audit (positive + negative cases per role)
+   - `node scripts/test-billing-e2e.js` — full B2B billing pipeline against live Supabase
+   - (These were tried in-session but the sandbox has no DNS reach to Supabase — `EAI_AGAIN`. They need to run from a machine with network access to your project.)
+3. `npm run dev` smoke test of the new UI affordances:
+   - F124 batch warnings on `/teacher/generate` (>25 amber, >40 red)
+   - F125 numerical-percent slider disabled when no apply/analyze/evaluate level picked
+   - F126 source-tab switch confirmation when the prior tab has content
+   - F138 inline good/bad topic helper text
+   - F144 + F145 post-generate "View in question bank" / "Generate another batch" buttons
+   - F175 "Platform Admins" filter chip on `/admin/users`
+   - F16 inline Delete button on orphan-flag rows in `/admin/feature-flags`
+4. F22 spot-check: sign in to the same account on two browsers, perform a mutating action from the older session, confirm it now returns `session_superseded` 401
+5. Payment flow end-to-end on the Razorpay test gateway — order create → verify → second-click reuse → 23505 idempotency surface
+
+### Where the codemods live
+
+```
+scripts/
+  apply-audit-fixes-r{1..10}.mjs        # 10 rounds of the 183-finding audit
+  refactor-f22-f171.mjs                  # Step 1: helper + 4 routes
+  refactor-f22-f171-step2.mjs            # Step 2: 5 more admin routes
+  refactor-f22-f171-step2c.mjs           # Step 2c: 5 more
+  refactor-f22-f171-step2d.mjs           # Step 2d: closed admin migration
+  refactor-f22-step3.mjs                 # Step 3 batch 1: 5 mutating
+  refactor-f22-step3b.mjs                # Step 3 batch 2: 5 mutating
+  refactor-f22-step3c.mjs                # Step 3 batch 3: 5 mutating
+  refactor-f22-step3-finale.mjs          # 71 routes in one sweep
+  refactor-f22-step3-finale-2.mjs        # +13 more
+  refactor-f22-step3-finale-3.mjs        # multi-line imports
+  refactor-f22-step3-mopup.mjs           # partial-migration fix-ups
+```
+
+Every script reports `Applied / Skipped` at the end. Skipped is always safe — the script refuses to write partial migrations.
+
+### Resume phrase for next session
+
+Open a new session and say:
+
+> **"Resume from the 2026-05-16 audit handoff — see AUDIT.md."**
+
+I'll re-read `AUDIT.md` and pick up the small remaining queue (mostly Section 1 product decisions, a handful of UI items needing a designer, and a couple of routes with local helpers that need manual review).
+
+---
+
+### Original design block (for historical reference)
+
+### The decision you're making
+
+Should I build the staged-launch / pilot-allowlist feature-flag system as designed below?
+
+Three answers possible when you're ready:
+
+1. **"Go — build it as designed"** → I implement migration 95 + lib/featureFlags.ts + /admin/feature-flags page + 3 enforcement points + waitlist landing page. ETA ~1.5 days.
+2. **"Tweak first — change X"** → tell me what to change, I rework the design, you re-approve.
+3. **"Skip it — too much infra for one feature"** → I fall back to a hardcoded `process.env.NEXT_PUBLIC_SCHOOL_LAUNCH=false` env var. Lighter, no pilot allowlist support. ETA ~30 min.
+
+### Recommended resume phrase
+
+Open a new session and say:
+
+> **"Resume the staged-launch feature-flag work from the 2026-05-16 README block."**
+
+I'll re-read this block and execute whichever option you picked.
+
+---
+
+### Design recap — for your re-read
+
+**The shape:** global default + per-school allowlist + audit log, evaluated by a single `isFlagEnabledFor()` server function. Same pattern as LaunchDarkly, Statsig, Unleash. Lets you flip features without redeploying.
+
+**Three new tables (migration 95):**
+
+```sql
+platform_flags          (name, global_default, description, updated_by, updated_at)
+platform_flag_overrides (flag_name, entity_type, entity_id, enabled, note, added_by, added_at, expires_at)
+platform_flag_audit     (id, flag_name, action, actor_id, entity_type, entity_id, before_state, after_state, reason, at)
+```
+
+**Three starter flags:**
+
+- `school_marketing_visible` — default `true` — show "For Schools" tier on pricing/landing
+- `school_signup_enabled` — default `false` — gate NEW school signups (independent users unaffected)
+- `independent_signup_enabled` — default `true` — kill switch for independent path if ever needed
+
+**Evaluator function** (server-side, cached 60s):
+
+```typescript
+isFlagEnabledFor(flagName, { schoolId?, userId? }): { enabled, reason }
+  // 1. Per-school override (highest priority) — pilot allowlist
+  // 2. Per-user override — internal QA, demos
+  // 3. Global default — fallback
+```
+
+**Three enforcement points:**
+
+1. `/login/school`, `/signup/school` page routes → redirect to `/schools-coming-soon` waitlist when off
+2. `/pricing` "For Schools" tier card → render "Coming soon — join waitlist" when off
+3. `/api/admin/onboard-school` server route → 503 with `{ error: "School onboarding paused" }` when off
+
+**Admin UI at `/admin/feature-flags`:**
+
+- Global on/off toggle per flag + last-changed audit line
+- Pilot allowlist panel: add school by name + reason + optional expiry; remove; per-override stats
+- Audit log: last 50 flag actions with who/when/why
+
+**Your workflow examples:**
+
+| Action | Steps |
+|---|---|
+| Launch independent only | Default state. Schools flag off globally, marketing visible with waitlist. |
+| Pilot with 1 school | Add school to `school_signup_enabled` allowlist with 30-day expiry + reason note. |
+| Add 3 more pilot schools | Same admin UI, 3 more entries. |
+| Review pilot health | Admin UI shows per-pilot stats: signups, tests created, last activity. |
+| Public launch | Flip `school_signup_enabled` global_default = true. One click. |
+| Emergency rollback | Flip global_default = false. Pilots in allowlist keep working (soft) or pull plug (hard). |
+| Re-activate | Same flip. Instant. No redeploy. |
+
+**Bonus capabilities included for free:**
+
+- Per-user overrides for internal QA / demo accounts
+- Auto-expiring overrides (90-day default — no forgotten pilots)
+- Generic infra reusable for every future staged rollout (AI Coach v2, ZCORIQ Bloom Score v2, etc.)
+
+**Existing-user grandfathering:** the flag only gates NEW signups. Existing `schools` and `class_teachers` rows continue working. Hard mode (revoke existing access) is opt-in per call site.
+
+**My recommendation from the conversation:**
+
+- Option 3 (hybrid): marketing visible with waitlist, signup gated, in-product zero-school for independent learners
+- Two flags not one (`marketing_visible` + `signup_enabled` flip on different days)
+- DB-backed not env-backed (admin flips without redeploy)
+- 90-day default expiry on every pilot override
+
+**Honest caveats:**
+
+1. Building 3-table infra for 1 feature is overkill if this is your ONLY staged rollout ever. If you expect 5+ more (AI Coach, Insights v2), the system pays for itself fast.
+2. Pilot allowlists are sticky — default expiries avoid year-old forgotten entries.
+
+**Cost estimate:** ~1.5 days of focused work, all additive, zero risk to existing flows.
 
 ---
 
@@ -15,7 +266,7 @@ This project uses **Next.js 16** with breaking changes — APIs, conventions, an
 ## 👤 First-time account creation & login — by role
 
 How a fresh account becomes a working account, for each of the five
-roles BloomIQ supports. All flows go through the same Supabase Auth
+roles ZCORIQ supports. All flows go through the same Supabase Auth
 backend; the differences are in what gets gated, what's required
 before features unlock, and who can self-onboard vs needs admin
 intervention.
@@ -72,7 +323,7 @@ admin-rostered. Same logic for password resets — teacher administers.
 | First-run gating | If their school has no `join_code`, one is auto-generated on first dashboard visit (handled in `/school/page.tsx` legacy-recovery path). |
 | Plan | School plan; visible in the badge top-right. Plan changes go via support@bloomiq.app — not self-serve. |
 
-### 5. Platform admin (BloomIQ internal staff)
+### 5. Platform admin (ZCORIQ internal staff)
 
 | Step | Where | What happens |
 |---|---|---|
@@ -146,7 +397,253 @@ platform-admin invite flow at `/admin/onboard-school` instead.
 
 ---
 
-## 🆕 Latest session — 2026-05-14 (End-to-end audit & quality stack — profile-aware competitive-exam framing, LLM topic validation, dynamic topic grounding, semantic dedup, auto-retry, shortfall transparency, world-class SYSTEM prompts)
+## 🧭 Naming convention — ZCORIQ vs Bloom
+
+**Product name: ZCORIQ.** **Taxonomy: Bloom's.** They compose:
+a ZCORIQ Bloom Score is a single number, derived from Bloom-level mastery, owned by the ZCORIQ product.
+
+What got renamed in the May 2026 rebrand:
+
+- User-visible text (page titles, navbar, emails, marketing copy) — `BloomIQ` → `ZCORIQ`, `BloomIQ Score` → `ZCORIQ Bloom Score`.
+- TypeScript identifiers and file names that prefixed `BloomIQ` to a product concept — `BloomIQScoreBadge` → `ZcoriqBloomScoreBadge`; `lib/bloomiqScore.ts` → `lib/zcoriqBloomScore.ts`; `lib/bloomiqInsights.ts` → `lib/zcoriqInsights.ts`.
+
+What deliberately stayed `bloomiq_` / unchanged, and why:
+
+- **Database column names** like `bloomiq_score` and the historical migration files (`66_bloomiq_score_calibration.sql`, `schema.sql`). Renaming a production column is a multi-phase migration (ADD → dual-write → migrate reads → DROP) with real downtime risk. Internal column names are never user-visible and don't justify that risk for a cosmetic rebrand. If a clean DB rename is wanted later, it should be a dedicated maintenance window with its own plan.
+- **Historical migration files' content.** Migrations are an immutable audit log of what shipped. Renaming them would lie about history.
+- **Bloom-taxonomy identifiers and phrases** like `BloomLevel`, `BLOOM_META`, `BLOOM_LEVELS`, `bloom_level`, `BloomBadge`, `BloomHero`, `BloomReports`, `bloomVerifier`, "Bloom mastery", "Bloom levels", "Bloom's taxonomy". These reference the educational framework, not the product brand, and survive the rebrand untouched.
+
+- **`package.json` `name` field.** Affects deploy / CI / npm references; renaming is decoupled from the in-product rebrand.
+
+If you're searching the codebase and see `bloomiq_score` in a SQL file or `bloomiq_score` in a `.select(...)` call, that's by design — it's pointing at the DB column, which kept the old name.
+
+---
+
+## 🆕 Latest session — 2026-05-16 (Quality, provenance, parity: shared qgen pipeline, generation provenance, cross-session cosine dedup, Bloom verifier, prompt-safety, per-Bloom counts, per-generation category override, prominent assign-time mismatch alert, student library, teacher fan-outs)
+
+A multi-priority session that lands the foundation primitives ZCORIQ needs to
+(a) make question quality auditable, (b) catch the same-question-rephrased
+complaint at the source, and (c) close the worst parity gaps between the
+independent-learner and teacher surfaces. Most of this drop is *additive*
+library + migration code that future route refactors will compose into the
+live pipeline; the visible-today changes are flagged at the bottom.
+
+### Foundation (P0)
+
+- **`lib/qgenPipeline.ts` — shared generation pipeline (P0.1).** Three
+  composable surfaces: `prepareGenerationContext()` (read-only assembly of
+  distractor seeds, exclusion stems, history embeddings, prompt fragments),
+  `postProcessCandidates()` (leak detection → in-batch Jaccard → in-batch
+  cosine → cross-session cosine → answer-key verifier → optional Bloom
+  verifier → per-row provenance), and `generateQuestions()` (the wrapper for
+  routes that follow the standard "build prompt → call Groq → post-process"
+  shape). Routes opt in one at a time; until they do, existing behaviour is
+  unchanged. Provenance blob is wired but the column landing means even
+  unmigrated routes can persist it as `{}`. (Route-by-route migration is
+  the next session's work.)
+
+- **Migration 91 — `question_bank.generation_meta jsonb` (P0.2).** New
+  nullable jsonb column (default `'{}'`) with GIN index and a partial index
+  on disputed verdicts. Stores per-question provenance: which route, which
+  intent, requested Bloom, prompt version, verifier verdict (status / model
+  / both candidates' picks), embedding presence, dedup counts, retry count,
+  Bloom dispute flag. Existing inserts get the default `{}` and continue
+  unchanged. Pure additive.
+
+- **Cross-session cosine dedup actually queried (P0.3).** Migration 80
+  added `stem_embedding vector(768)` and routes have been writing it on
+  every insert — but no READ PATH actually queried it until now.
+  `lib/recentStemsExclusion.fetchRecentEmbeddingsForOwner()` fetches the
+  owner's most-recent 100 vectors, optionally category-scoped; the pipeline
+  feeds them into `cosineDedupAgainstHistory()` alongside freshly-embedded
+  candidates. This is the single fix that closes the "I got the same
+  question rephrased on day two" complaint that triggered the original
+  pgvector work.
+
+### Quality + trust (P1)
+
+- **Verifier disputes surfaced on `/teacher/review` (P1.4).** When the
+  answer-key verifier disagrees with the LLM's stored `correct_index`, the
+  review card shows an amber `⚠ Verify answer` badge with a tooltip
+  comparing both picks. Verdict shape: `generation_meta.verifier.{status,
+  reason, model, llm_correct, verifier_correct}`. Visible immediately for
+  rows generated through the new pipeline; older rows stay un-badged
+  (correct empty-state behaviour).
+
+- **`lib/bloomVerifier.ts` — Bloom-level second-pass verifier (P1.5).** One
+  Groq call per BATCH (not per question) returns each item's actual Bloom
+  level + rationale. Items off by ≥ 2 levels get
+  `generation_meta.bloom_disputed=true` and the review card shows an amber
+  `⚠ Bloom mismatch` badge with the verifier's level in the tooltip.
+  Fail-open. Feature-flagged at call site.
+
+- **`lib/promptSafety.ts` — prompt-injection sanitizer (P1.6).** Strips
+  role-tag markers, "ignore previous instructions" family, code fences,
+  HTML tags, unicode-whitespace smuggling. Hard-caps each splice point at
+  800 chars. Drop-in `sanitizeUserText()` + `sanitizeUserFields()`. Library
+  is ready; routes need to swap their `topic`/`additional_focus`/
+  `learner_profile` splices to call this first (next session).
+
+- **Student question library — `/student/library` (P1.7).** New page that
+  closes the biggest parity gap. Independent students browse every question
+  they've ever generated, filter by topic / Bloom / category / free-text,
+  paginate, and "Re-quiz on this topic" with one click. Backed by
+  `/api/student/library` which RLS-scopes to the caller. Soft-deleted rows
+  (migration 92) auto-hide. Favourites + per-question attempt history are
+  deferred for a follow-up (additive, needs one table).
+
+### Workflow + operations (P2)
+
+- **Teacher fan-outs — flashcards & adaptive practice (P2.8).** New
+  `/api/teacher/assign-flashcards` and `/api/teacher/assign-practice`
+  endpoints. Flashcards fan out shared deck content per student
+  (cheap — one Groq call, N inserts); adaptive practice queues
+  per-student tickets that the student client picks up on next sign-in
+  (preserves the personal-weakspot-mining RLS context). Backed by
+  migration 94 (`flashcard_assignments`, `practice_assignments`) with full
+  RLS: student reads/updates own, teacher reads what they assigned.
+
+- **Migration 92 — soft-delete + rejection_reason (P2.9).** Adds
+  `deleted_at timestamptz` and `rejection_reason text` to `question_bank`,
+  with a length check and partial indexes for active-rows + rejection-
+  reason analytics. Lets the review UI capture WHY a question was rejected
+  (chip picker — factual / disputed / too_easy / too_hard / off_topic /
+  duplicate / poorly_worded / other) so future prompt-tuning can train on
+  rejection patterns. Pure additive.
+
+- **Migration 93 + `lib/rateLimitDb.ts` — distributed rate limiter (P2.10).**
+  Replaces the N×-bypassable in-process Map with a `rate_limit_counters`
+  table + atomic `rpc_rate_limit_increment()` SECURITY DEFINER function.
+  Per-user-per-route hourly buckets, fail-open on DB errors, one round-trip
+  per protected request. Conservative defaults per route (8–60 / hour);
+  enforce only on the 4–5 high-cost AI routes.
+
+### Polish (P3)
+
+- **`lib/embeddingTelemetry.ts` — embedding-failure visibility (P3.11).**
+  Drop-in for `embedTexts()` that returns the vectors plus a telemetry blob
+  (failure rate, total-failure flag, surface-banner flag). Fires above 25%
+  failure or on full call failure. `embeddingBannerMessage()` returns
+  ready-to-render copy: "Semantic dedup was weakened this run — small chance
+  of repetition."
+
+- **`lib/useTopicValidation.ts` — shared topic-validation hook (P3.12).**
+  Single source of truth for the 800ms-debounced /api/topic-validate
+  pattern duplicated across five surfaces. AbortController per keystroke,
+  40-entry LRU cache, fail-open on network error. Migration is per-surface
+  swap (next session).
+
+- **`lib/stretchChallenge.ts` — opt-in stretch mode for students (P3.13).**
+  Lets a motivated learner deliberately escalate their practice up to two
+  tiers (e.g. Class 10 → JEE Main) with an explicit amber acknowledgement.
+  `stretchEligibility()` computes the eligibility + banner message;
+  `resolveStretchCategory()` is the server-side gate that records consent in
+  `generation_meta.stretch_challenge_acknowledged`.
+
+### Teacher-side specifics that landed live in this session
+
+- **Per-generation category override picker on `/teacher/generate`.** The
+  class identity is unchanged (no new schema on `classes`). When the
+  teacher selects a class, a new "Generate FOR" dropdown appears with the
+  class's grade-derived category preselected as "(class default)". The full
+  catalog is one click away — Class 5-8, Class 9, Class 10 boards, Class 12
+  boards, JEE Main, JEE Advanced, NEET, CAT, UPSC, GATE, Bank exams, GMAT,
+  GRE, CLAT, BITSAT, SAT, NDA, CUET, Corporate. Picking a non-default value
+  shows a small "Generating <X> for <Class> (class default is <Y>). Resets
+  after this batch." note, and the picker snaps back to the default after
+  every successful generation. Server (`/api/generate`) honours
+  `body.category_override` with preference over `body.examGoal`, falling
+  back to null. Closes the "how does a teacher generate UPSC / Bank exam /
+  JEE questions without abandoning their class structure?" gap.
+
+- **Per-Bloom-level individual count selectors.** Below the single shared
+  "Questions per level" input, a grid of one number-spinner per Bloom level
+  now lets teachers ask for, say, 3 Remember + 5 Understand + 2 Apply + 1
+  Analyze instead of a uniform `perLevel × N`. The shared input remains as
+  the fallback default for any level the teacher doesn't override; "Reset to
+  shared default" clears overrides in one click. The server
+  (`app/api/generate/route.ts`) gains a `countForLevel()` helper used at
+  every prompt-build, dedup-slice, retry-shortfall, and log-message site —
+  backwards-compatible when the client sends no overrides.
+
+- **Generate-time difficulty-mismatch banner.** Below the Generate button,
+  an amber alert fires when the teacher's chosen override (or the class
+  default) differs from the class's grade-derived tier by ≥ 1 step. Live
+  client-side computation via
+  `lib/questionCategory.validateGenerationFitForGrade()` (no API round-trip
+  for the banner; the same helper is also exposed via
+  `/api/teacher/generation-fit` for surfaces that want a canonical answer).
+  Severity-graded (none / soft / hard / block) so the UI can vary tone.
+  Heads-up only — never blocks.
+
+- **Assign-time mismatch promoted to prominent banner on
+  `/teacher/quizzes/new`.** The pre-existing `classQuestionMismatchWarning()`
+  return (powered by `lib/questionCategory.ts`) was rendered as a thin
+  caption; it's now an unmissable amber card with the heading **"Category
+  mismatch — please confirm"** and a clarifying "You can still proceed if
+  this is a deliberate stretch challenge — but double-check" tip. Same
+  data source, much louder treatment.
+
+- **"Mock paper (competitive exam)" intent chip renamed to "Stretch
+  reasoning paper".** Description is now "Apply / Analyze / Evaluate
+  focus" — the chip's Bloom blueprint (3 hard levels × 5 each) is unchanged
+  but the misleading "detects CAT/JEE/NEET from topic" framing is gone,
+  because the new category-override picker is the explicit way to declare
+  competitive-exam intent.
+
+### Honest scorecard
+
+- Migrations **91, 92, 93, 94** are SQL files in `supabase/migrations/`.
+  They take effect only after `supabase db push` (or pasting them into the
+  Supabase SQL editor in order). Until then, the new columns / tables don't
+  exist and the corresponding UI badges naturally don't fire — correct
+  empty-state behaviour, not a bug.
+
+- The shared `lib/qgenPipeline.ts` is library code. **No existing route
+  imports it yet.** Routes that read its outputs (review-page badges,
+  embedding-failure banner) populate only when the route they came from is
+  pipeline-wired. That route-by-route surgery is the next session.
+
+- The four user-facing changes (category override picker, per-Bloom counts,
+  generate-time banner, assign-time prominent alert) **are live in
+  `npm run dev`** with a hard refresh (Ctrl+Shift+R).
+
+- A new student-facing page lives at `/student/library` — empty until the
+  student generates questions; then they're browsable.
+
+### Files added (15 new, 5 edited)
+
+```
+lib/qgenPipeline.ts                 538  P0.1  pipeline orchestration
+lib/bloomVerifier.ts                198  P1.5  Bloom-level second-pass verifier
+lib/promptSafety.ts                 155  P1.6  prompt-injection sanitizer
+lib/rateLimitDb.ts                  161  P2.10 distributed rate limiter
+lib/embeddingTelemetry.ts           138  P3.11 embedding-failure visibility
+lib/useTopicValidation.ts           166  P3.12 shared topic-validation hook
+lib/stretchChallenge.ts             144  P3.13 student opt-in stretch mode
+app/api/teacher/generation-fit/     130  generate-time fit API
+app/api/teacher/assign-flashcards/  182  P2.8  fan-out endpoint
+app/api/teacher/assign-practice/    166  P2.8  fan-out endpoint
+app/api/student/library/            100  P1.7  library listing endpoint
+app/student/library/page.tsx        246  P1.7  library page
+supabase/migrations/91_..._meta.sql  81  P0.2  generation_meta column
+supabase/migrations/92_..._delete.sql 55  P2.9  soft-delete + rejection_reason
+supabase/migrations/93_..._limit.sql  99  P2.10 distributed rate limit
+supabase/migrations/94_..._assigns.sql 116 P2.8 teacher assignment tables
+```
+
+Edited: `lib/questionCategory.ts` (added `validateGenerationFit`,
+`validateGenerationFitForGrade`), `lib/recentStemsExclusion.ts` (added
+`fetchRecentEmbeddingsForOwner`), `lib/types.ts` (added
+`Question.generation_meta`), `app/teacher/generate/page.tsx` (category
+override picker, per-Bloom count grid, mismatch banner, Mock paper chip
+rename), `app/teacher/review/page.tsx` (verifier + Bloom dispute badges),
+`app/teacher/quizzes/new/page.tsx` (prominent assign-time mismatch banner),
+`app/api/generate/route.ts` (per-level counts + category_override).
+
+---
+
+## 🆕 Earlier session — 2026-05-14 (End-to-end audit & quality stack — profile-aware competitive-exam framing, LLM topic validation, dynamic topic grounding, semantic dedup, auto-retry, shortfall transparency, world-class SYSTEM prompts)
 
 A full-day audit + fix marathon driven by tester feedback. The crux of the
 session: **make question quality reliable on any topic the user types — no
@@ -297,7 +794,7 @@ The old page name "Confidence Calibration" read like an *interactive* feature (s
   * Chart heading: "Stated confidence vs actual accuracy" → **"What you said vs what actually happened"** with a leading sentence explaining the pin (grey) and bar (coloured) before the user sees them.
   * Per-row caption: "You said ~95% · actually 80%" → **"You felt ~95% sure · really got 80% right"**.
   * Strategy panel — this was the worst offender. Old: *"On JEE Main / NEET-style papers (-1 wrong, +4 right), only attempt confidence bands where your accuracy × 4 beats your error rate × 1."* New: *"Many entrance exams (like JEE Main and NEET) take 1 mark off for a wrong answer and give 4 marks for a right one. Blank answers get zero — no gain, no loss. Looking at how often you're actually right in each confidence band, here's the safe call:"* Column headers became **"Worth answering"** / **"Better to leave blank"** with a one-line explanation under each.
-  * Banner at the top points users at the *new* BloomIQ Score calibration (`/student/bloom-score`) so people looking for the 7-minute Future-You reveal don't land here by mistake.
+  * Banner at the top points users at the *new* ZCORIQ Bloom Score calibration (`/student/bloom-score`) so people looking for the 7-minute Future-You reveal don't land here by mistake.
 * **`app/student/speed/page.tsx`** — added a bridge link in the results section so students discover Confidence Insights organically after a Speed Trainer run.
 * **`app/student/layout.tsx`** — removed the hard `/student/calibration` redirect on first run; it now opens only when the student picks "Diagnose a weakness".
 
@@ -396,7 +893,7 @@ lib/studentGoalTiles.ts                                  modified — Confidence
 components/MarkingSchemePicker.tsx                       NEW — reusable picker with PRACTICE/JEE/NEET/CAT/Custom + effective-rule preview
 components/CurrentGoalChip.tsx                           NEW — persistent goal chip (school-student-safe)
 components/StudentGoalPicker.tsx                         modified — Professional/training tile + auto-derive learner_profile
-app/student/calibration/page.tsx                         modified — full plain-English rewrite + bridge banner to BloomIQ Score
+app/student/calibration/page.tsx                         modified — full plain-English rewrite + bridge banner to ZCORIQ Bloom Score
 app/student/speed/page.tsx                               modified — Confidence Insights bridge link in results
 app/student/results/[id]/page.tsx                        modified — "Review your answers" section
 app/student/settings/goal/page.tsx                       NEW — master goal-change screen
@@ -430,7 +927,7 @@ app/teacher/quizzes/new/page.tsx                         modified — neutralize
 
 User report: *"Users take a test on Java, but the mock rank predictor can predict rank on CAT — can you check and make it foolproof?"*
 
-Reproduced exactly: a student takes a Java (or Kubernetes, or AWS, or any corporate-skill) quiz, opens `/student/results/[id]`, picks **CAT** from the Predict-my-rank dropdown, and BloomIQ happily returns a CAT All-India Rank. A 50-question Java MCQ does not map to a CAT cohort and the resulting "AIR" was misleading. Two compounding problems:
+Reproduced exactly: a student takes a Java (or Kubernetes, or AWS, or any corporate-skill) quiz, opens `/student/results/[id]`, picks **CAT** from the Predict-my-rank dropdown, and ZCORIQ happily returns a CAT All-India Rank. A 50-question Java MCQ does not map to a CAT cohort and the resulting "AIR" was misleading. Two compounding problems:
 
 1. `/api/rank/predict` silently coerced any unknown `exam_type` to `JEE_MAIN`, hiding client bugs behind a default the student never picked.
 2. The route never looked at what the quiz was actually about, so the same Kubernetes attempt could be scored against the CAT / NEET / JEE_MAIN cohort interchangeably.
@@ -501,7 +998,7 @@ See **"Where to pick up tomorrow"** at the bottom of this section.
 **API endpoints — new:**
 * `POST /api/admin/subscriptions/[id]/suspend` — flips `status='suspended'`, stamps audit trail. **Zero data touched.** Classes, students, tests, attempts, invoices all stay. Feature gates (via `useFeatureAccess`) treat status=suspended exactly like an expired sub.
 * `POST /api/admin/subscriptions/[id]/reactivate` — flips back to `active`, clears suspension fields. The cycle window (started_at / expires_at) is **untouched** — re-activation is purely about feature access, not term length.
-* `GET /api/school/billing` — D7 school-side read-only billing view. Returns plan, cycle dates, PO number, payment status, past invoice archive. Excludes admin uuids (no leaking which BloomIQ staffer touched the row). Gated on `role='super_teacher'` with a `school_id`.
+* `GET /api/school/billing` — D7 school-side read-only billing view. Returns plan, cycle dates, PO number, payment status, past invoice archive. Excludes admin uuids (no leaking which ZCORIQ staffer touched the row). Gated on `role='super_teacher'` with a `school_id`.
 * `GET /api/admin/schools/[id]/invoices.csv` — D16 finance export. Streams RFC-4180 CSV of live cycle + every archived cycle. Bearer auth required (anchors-with-no-headers don't work, so the UI uses a JS click handler + blob download — same pattern the invoice PDF bridge uses).
 * `POST /api/admin/super-teachers/[id]/reset-password` — support tool, platform-admin gated. Mirrors the existing teacher-resets-student endpoint. Refuses to act on platform_admin accounts and on non-super_teacher accounts (defence in depth).
 
@@ -527,7 +1024,7 @@ In English: Save activates the school immediately (they can use the product befo
 * New "Contract length (years, optional)" input (D15 — 1..10)
 * New "PO number (optional)" input in the Invoice & payment card (D11)
 * New "School billing details (GST)" block with State + GSTIN inputs (D12)
-* "Recorded in BloomIQ at &lt;timestamp&gt;" sub-line under payment status (D3 visibility)
+* "Recorded in ZCORIQ at &lt;timestamp&gt;" sub-line under payment status (D3 visibility)
 * "Download CSV" button in the past-invoices block (D16). JS-driven Bearer fetch + blob download.
 * **Past-due warning** (amber) when `payment_received_at IS NULL` and >30 days since `started_at`. Nudges the operator to consider Suspend.
 * **Suspended strip** (red) shows when `status='suspended'` with the audit reason + timestamp.
@@ -563,7 +1060,7 @@ Driven via the Chrome extension on `localhost:3000`, signed in as `ops@bloomiq.e
 
 | Defect | What we verified | Status |
 |---|---|---|
-| D3 — payment audit | "Recorded in BloomIQ at 11/5/2026, 11:34:50 pm" visible under payment status | ✅ |
+| D3 — payment audit | "Recorded in ZCORIQ at 11/5/2026, 11:34:50 pm" visible under payment status | ✅ |
 | D10 — plans.grace_period_days | Default 14 picked up from plan when not overridden | ✅ |
 | D11 — po_number | `PO/2026/BLM-001` persisted on subscription + visible in CSV | ✅ |
 | D12 — GST invoice | TAX INVOICE PDF renders CGST 9% + SGST 9% (same state, Karnataka) | ✅ |
@@ -726,7 +1223,7 @@ hidden behind it on `/pricing`. Most students never got to compare.
 Replaced with a **two-column upgrade panel**:
 
 - **Premium** (indigo) — labelled "Most learners pick this". Bullets:
-  unlimited daily drills, full BloomIQ Score + weekly active path,
+  unlimited daily drills, full ZCORIQ Bloom Score + weekly active path,
   AI tutor + Coach, adaptive practice from weakest topics. CTA:
   "Choose Premium" → `/pricing?tier=premium`.
 - **Premium Plus** (violet) — with a "BEST FOR EXAM PREP" ribbon.
@@ -772,9 +1269,9 @@ highlight the right card.
 
 ---
 
-## 🆕 Earlier session — 2026-05-10 morning (BloomIQ Score + Future You: the killer first-run feature; 7-day Free-plan validity)
+## 🆕 Earlier session — 2026-05-10 morning (ZCORIQ Bloom Score + Future You: the killer first-run feature; 7-day Free-plan validity)
 
-The headline shift: BloomIQ now has a **single 3-digit "BloomIQ Score" (300–900)** that every independent student sees from the moment they sign in. It powers a dramatic "Future You" reveal page predicting their exam-day rank and named target colleges, with a "Best You" delta showing how much they'd lift if they fix their weakest Bloom levels. The score sits permanently in the layout's top-right and updates after every quiz or drill. Plus a hard-gated 7-day Free-plan validity window — admin-editable from `/admin/plans` — that converts free-plan tyre-kickers into upgrade prompts on day 8.
+The headline shift: ZCORIQ now has a **single 3-digit "ZCORIQ Bloom Score" (300–900)** that every independent student sees from the moment they sign in. It powers a dramatic "Future You" reveal page predicting their exam-day rank and named target colleges, with a "Best You" delta showing how much they'd lift if they fix their weakest Bloom levels. The score sits permanently in the layout's top-right and updates after every quiz or drill. Plus a hard-gated 7-day Free-plan validity window — admin-editable from `/admin/plans` — that converts free-plan tyre-kickers into upgrade prompts on day 8.
 
 ### What shipped — the killer-feature flow
 
@@ -801,13 +1298,13 @@ The headline shift: BloomIQ now has a **single 3-digit "BloomIQ Score" (300–90
 - The drill topic is the student's ACTUAL weakest topic from `calibration_responses` (rows where `is_correct=false`, ranked by frequency, filtered to the target Bloom level when possible) — not a generic "mix of subjects". Falls back to a single-subject string per exam goal (e.g. "NEET Biology — Class 11/12 NCERT") when no calibration signal is available.
 - Server-side belt-and-suspenders: `/api/student/adaptive-practice` re-checks the topic and upgrades it from `calibration_responses` if it still looks generic.
 
-**Persistent BloomIQ Score badge in the layout:**
+**Persistent ZCORIQ Bloom Score badge in the layout:**
 - Top-right of every `/student/*` page (except the calibration quiz and the reveal itself).
-- Shows the 3-digit score + day-over-day trend arrow + delta. Tap to open `/student/future`. Uncalibrated users see a "Get your BloomIQ →" CTA instead.
+- Shows the 3-digit score + day-over-day trend arrow + delta. Tap to open `/student/future`. Uncalibrated users see a "Get your ZCORIQ →" CTA instead.
 - 1-minute in-memory cache so it doesn't re-fetch on every navigation; refetches on window focus.
 
 **Discovery hero on `/student` home:**
-- First-run only (when `has_calibration=false`). Big gradient card titled "Discover your BloomIQ Score" with a 7-minute setup pitch.
+- First-run only (when `has_calibration=false`). Big gradient card titled "Discover your ZCORIQ Bloom Score" with a 7-minute setup pitch.
 - Auto-disappears once the student calibrates.
 
 **"Change goal" affordance + stale-calibration banner:**
@@ -865,8 +1362,8 @@ The headline shift: BloomIQ now has a **single 3-digit "BloomIQ Score" (300–90
 
 **Modified:**
 - `components/StudentGoalPicker.tsx` — added `class_5_8` and `class_9` options.
-- `app/student/layout.tsx` — mounts the BloomIQ badge + intercepts is_free_expired.
-- `app/student/page.tsx` — shows the BloomIQ Score discovery hero on first-run.
+- `app/student/layout.tsx` — mounts the ZCORIQ badge + intercepts is_free_expired.
+- `app/student/page.tsx` — shows the ZCORIQ Bloom Score discovery hero on first-run.
 - `app/admin/plans/page.tsx` — mounts the FreeTrialSettings card.
 - `app/student/practice/page.tsx` — reads `?bloom=`, `?topic=`, `?auto=1` query params, auto-fires drill on deep link.
 - `app/api/auth/me/route.ts` — auto-grants Free trial + computes is_free_expired.
@@ -879,7 +1376,7 @@ The headline shift: BloomIQ now has a **single 3-digit "BloomIQ Score" (300–90
 
 1. `node scripts/create-3-free-students.js` from project root — creates the test students.
 2. Sign in as `free.student.1@bloomiq-test.local` / `TestPass123!` (Class 12 student).
-3. Goal-picker is skipped (already set). The "Discover your BloomIQ Score" hero card is visible.
+3. Goal-picker is skipped (already set). The "Discover your ZCORIQ Bloom Score" hero card is visible.
 4. Tap it → take 12 calibration questions — ~7 minutes.
 5. Land on `/student/future` with a 300–900 score, predicted "Top X% in board exams" + named DU/CUET colleges, Bloom signature, weekly time-to-Best-You estimate, and the personalised Premium pitch tied to your gaps.
 6. Tap "Try a free drill" — lands on `/student/practice?bloom=<level>&topic=<weakest topic>&auto=1`, auto-fires, redirects to the quiz in ~5 seconds. Questions are drawn from your weakest specific topic (e.g. "Photosynthesis"), at your weakest Bloom level.
@@ -889,7 +1386,7 @@ The headline shift: BloomIQ now has a **single 3-digit "BloomIQ Score" (300–90
 
 - **Best You retargeting:** when current score climbs to or past the original Best You target, a "Re-calibrate" prompt surfaces — but the underlying Best You stays frozen at the calibration-time projection. v2 could re-derive Best You on each recompute.
 - **Trial expiry warning banner:** before day 7, a "Your free access expires in N days" banner on `/student` would soften the lockout. Not built yet.
-- **Score history line chart:** the `bloomiq_scores` time-series captures every score update, but there's no visualisation yet (the active-path "See score history" CTA links to `/student/progress`, which exists but isn't yet wired to render the BloomIQ time-series).
+- **Score history line chart:** the `bloomiq_scores` time-series captures every score update, but there's no visualisation yet (the active-path "See score history" CTA links to `/student/progress`, which exists but isn't yet wired to render the ZCORIQ time-series).
 - **Per-action drill-count target:** the active-path 3-dot strip uses a hardcoded weekly target of 3. Could be derived from each action's `weeklyTime` for accuracy.
 - **Topic Layer-2 server upgrade:** when a generic topic is detected, the API queries calibration_responses for a real weakest topic. This already works but doesn't yet know about `attempt_answers` patterns post-calibration — so over time, when a student's calibration is months old but their recent quiz attempts paint a different picture, the topic upgrade could pull from attempt_answers too.
 
@@ -897,7 +1394,7 @@ The headline shift: BloomIQ now has a **single 3-digit "BloomIQ Score" (300–90
 
 ## 🆕 Earlier session — 2026-05-09 / 2026-05-10 morning (B2B billing: negotiated price, GST invoices, renewal workflow, modern expiry)
 
-The headline shift: BloomIQ now has a **complete operator-driven B2B
+The headline shift: ZCORIQ now has a **complete operator-driven B2B
 billing pipeline** for school deals — from negotiated-price onboarding
 through GST-compliant invoice generation, NEFT payment recording,
 year-on-year renewal cycles with audit trail, and modern-app expiry
@@ -1069,11 +1566,11 @@ Plus accepts new body fields: `started_at` (ISO date), `activation_pending`
 
 **Help system updates:**
 - New "How does renewal work? When do I pay?" topic under Account & Plan
-  on `/help` for super_teachers — explains both NEFT (BloomIQ emails GST
+  on `/help` for super_teachers — explains both NEFT (ZCORIQ emails GST
   invoice → school pays via bank → we mark received → plan extends) and
   Razorpay paths, plus the 7-day amber warning, the 14-day grace, and
   the email-us-anytime fallback. Fixed stale "managed by Anthropic / sales"
-  copy → "managed by the BloomIQ team".
+  copy → "managed by the ZCORIQ team".
 
 ### Files touched
 
@@ -1181,7 +1678,7 @@ Plus accepts new body fields: `started_at` (ISO date), `activation_pending`
   ever has multiple payments (e.g. partial advance + balance).
 - **Customer-facing "renew now" Razorpay button for school plans** —
   RenewBanner exists and works for personal subscriptions, but for
-  schools we deliberately route through the BloomIQ team via mailto
+  schools we deliberately route through the ZCORIQ team via mailto
   because B2B contracts include negotiation, GST invoice, NEFT —
   none of which fit a self-serve checkout button.
 
@@ -1552,7 +2049,7 @@ cannot fish for data outside their own class.
 The Calibrate now button, the difficulty / discrimination pills next to
 every question in the library, the calibrating progress badges, and a
 live test-stats card that briefly shipped earlier in the same session —
-all gone from the composer. Reasoning: in BloomIQ's current usage profile
+all gone from the composer. Reasoning: in ZCORIQ's current usage profile
 (typical teacher: ~30 questions × ~4 students), calibration almost never
 reaches the 20-attempts-per-question threshold needed for statistical
 signal, so the UI was pure cost. The genuinely useful signal it captured
@@ -1843,7 +2340,7 @@ Deputy + acting-cover features:
 
 - **Login page Admin Head footer fixed** — the "New here? Create an
   account" link previously pointed every tab at `/signup`, but `/signup`
-  intentionally hides the Admin Head role (provisioned by BloomIQ via
+  intentionally hides the Admin Head role (provisioned by ZCORIQ via
   `/admin/onboard-school`). Replaced with a "Talk to us" mailto on the
   Admin Head tab, "Platform admin accounts are invite-only" line on the
   platform tab, and the original signup link kept on Teacher / Student
@@ -2461,7 +2958,7 @@ page. Short answer parked in this README so it doesn't get lost:
 ## 🆕 Earlier session — 2026-05-01 late night (Plans simplification: drop versioning, edit-in-place catalogue)
 
 A focused architectural refactor. The Plan-Admin module shipped earlier
-in the day was over-engineered for BloomIQ's actual business model —
+in the day was over-engineered for ZCORIQ's actual business model —
 versioned rows with grandfathering snapshots, draft → submit → approve
 workflow, plan_audit log. Realistic operational consequence: every
 price tweak created a new plan row, the table grew without bound, and
@@ -2570,7 +3067,7 @@ until needed.
 
 ## 🆕 Earlier session — 2026-05-01 evening (Theme system, admin invite overhaul, world-class aesthetics pass)
 
-After the morning's plan-admin push, this session was about everything *around* the product — how it looks, how new admins get in, and how interactions feel — taking BloomIQ from "competent indie app" to something that visually competes with Linear, Notion, and Stripe. Three big tracks plus a few critical fixes.
+After the morning's plan-admin push, this session was about everything *around* the product — how it looks, how new admins get in, and how interactions feel — taking ZCORIQ from "competent indie app" to something that visually competes with Linear, Notion, and Stripe. Three big tracks plus a few critical fixes.
 
 ### 1. Theme system — 5 themes × 2 modes
 
@@ -2683,7 +3180,7 @@ password too".
 **`/admin/team` UI** now shows:
 - After a new grant: a green panel with the sign-in link, a copy
   button for just the link, and a copy button for a ready-to-paste
-  share message (`"You've been added as a BloomIQ admin. Click this
+  share message (`"You've been added as a ZCORIQ admin. Click this
   link to sign in (single-use, expires ~1hr)..."`).
 - A **"Send link"** button on every admin row, alongside Revoke. One
   click = fresh link in the same panel, smooth-scrolled into view.
@@ -2797,7 +3294,7 @@ Optional — weekly digest emails:
 ```
 EMAIL=youraccount@gmail.com
 PASS=your_gmail_app_password
-DIGEST_FROM=BloomIQ <youraccount@gmail.com>
+DIGEST_FROM=ZCORIQ <youraccount@gmail.com>
 ```
 
 `SUPABASE_SERVICE_ROLE_KEY` is required for Add Student / Reset Password / Co-teacher invite / Platform Admin flows. Get from Supabase Dashboard → Settings → API → service_role.
@@ -2847,7 +3344,7 @@ profiles.role:
 
 > Internal role name stays `super_teacher` for backwards compatibility, but the user-facing label everywhere in the UI is **Admin Head**. One school has exactly one Admin Head (enforced by partial unique index on `schools.super_teacher_id`); ownership transfers via `/api/admin/school/transfer`.
 
-Plus `profiles.platform_admin` boolean — BloomIQ staff (separate from `super_teacher`). Bootstrap first platform admin via SQL; afterwards self-serve from `/admin/team`.
+Plus `profiles.platform_admin` boolean — ZCORIQ staff (separate from `super_teacher`). Bootstrap first platform admin via SQL; afterwards self-serve from `/admin/team`.
 
 ```sql
 update public.profiles
@@ -3014,7 +3511,7 @@ which Supabase Auth re-surfaces as the misleading `Database error saving new use
 
 ## 🛡️ RLS audit (open HIGH findings)
 
-BloomIQ's RLS layer is correctly enabled on every table inspected, but several SELECT policies are too permissive. The most serious are in `supabase/schema.sql`: `profiles`, `quizzes`, `quiz_questions`, and `question_bank` all have `for select to authenticated using (true)` policies that were never narrowed by later migrations. **Fix before going to production with multi-school traffic.**
+ZCORIQ's RLS layer is correctly enabled on every table inspected, but several SELECT policies are too permissive. The most serious are in `supabase/schema.sql`: `profiles`, `quizzes`, `quiz_questions`, and `question_bank` all have `for select to authenticated using (true)` policies that were never narrowed by later migrations. **Fix before going to production with multi-school traffic.**
 
 | Table | Risk | Issue |
 |---|---|---|
@@ -3318,7 +3815,7 @@ app/
   auth/set-password/        universal set-password screen (invite + reset)
   pricing/                  public; Razorpay autostart on ?autostart=
   terms/, privacy/          public legal pages
-  admin/                    BloomIQ staff (platform_admin only)
+  admin/                    ZCORIQ staff (platform_admin only)
     onboard-school/         provision paying school
     team/                   manage platform_admin team
     plans/, plans/new, plans/[id]/edit/    plan catalogue admin

@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
-import { getBearer, supabaseServer, supabaseAdmin } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/lib/supabase/server";
+import { requirePlatformAdmin } from "@/lib/apiAuth";
 
 export const runtime = "nodejs";
 
@@ -13,7 +14,7 @@ export const runtime = "nodejs";
  * the school pays via NEFT against an invoice rather than self-serve
  * Razorpay.
  *
- * Vendor details (BloomIQ's own GSTIN, address, bank account) come
+ * Vendor details (ZCORIQ's own GSTIN, address, bank account) come
  * from env vars. Customer details come from the school row. Line item
  * uses subscription.override_price_paise if set, otherwise computes
  * plans.per_student_price_paise × current student count.
@@ -21,7 +22,7 @@ export const runtime = "nodejs";
  * Auth: platform admin only.
  *
  * Required env vars:
- *   INVOICE_VENDOR_NAME      e.g. "BloomIQ Pvt Ltd"
+ *   INVOICE_VENDOR_NAME      e.g. "ZCORIQ Pvt Ltd"
  *   INVOICE_VENDOR_GSTIN     e.g. "27AAACB1234F1Z5"
  *   INVOICE_VENDOR_ADDRESS   multi-line, \n-separated
  *   INVOICE_VENDOR_STATE     e.g. "Maharashtra" (for IGST vs CGST+SGST split)
@@ -44,19 +45,10 @@ function rs(paise: number): string {
 
 export async function GET(req: Request, ctx: RouteContext) {
   try {
-    const token = getBearer(req);
-    if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    const sb = supabaseServer(token);
-    const { data: { user } } = await sb.auth.getUser();
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    const { data: me } = await sb
-      .from("profiles")
-      .select("platform_admin")
-      .eq("id", user.id)
-      .single();
-    if (!me?.platform_admin) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
+    // F171 fix (QA): inline platform_admin check → shared helper.
+    // F22 single-session iat enforcement comes along for free.
+    const auth = await requirePlatformAdmin(req);
+    if ("error" in auth) return auth.error;
 
     const { id: subscriptionId } = await ctx.params;
     const admin = supabaseAdmin();
@@ -282,7 +274,7 @@ export async function GET(req: Request, ctx: RouteContext) {
     const seatLabel = hasSeatNumber
       ? (sub.contracted_students != null ? `${seatCount} contracted seats` : `${seatCount} students`)
       : null;
-    const planLabel = plan?.label || "BloomIQ subscription";
+    const planLabel = plan?.label || "ZCORIQ subscription";
     const lineDescription = sub.override_price_paise
       ? (seatLabel ? `${planLabel} — annual subscription, ${seatLabel} (negotiated rate)` : `${planLabel} — annual subscription (negotiated rate)`)
       : (seatLabel ? `${planLabel} — ${seatLabel} × ₹${rs((plan?.per_student_price_paise ?? 0))}` : `${planLabel} — annual subscription`);

@@ -284,7 +284,7 @@ export default function ClassDetailPage() {
     if (!cls) return;
     const origin = typeof window !== "undefined" ? window.location.origin : "";
     const msg =
-      `Hi! I’ve added you as a co-teacher of ${cls.name} on BloomIQ. ` +
+      `Hi! I’ve added you as a co-teacher of ${cls.name} on ZCORIQ. ` +
       `Sign up at ${origin}/signup using this email (${email}) and pick the Teacher role. ` +
       `The class will appear on your dashboard the moment you sign in.`;
     if (typeof navigator !== "undefined" && navigator.clipboard) {
@@ -636,7 +636,7 @@ export default function ClassDetailPage() {
         <div className="card mb-4">
           <p className="text-sm muted mb-3">
             Co-teachers can assign their own quizzes to this class and see results for those quizzes.
-            They can&apos;t add or remove students. If the teacher already has a BloomIQ account, they&apos;re linked instantly; otherwise we save a pending invite that auto-claims the class when they sign up.
+            They can&apos;t add or remove students. If the teacher already has a ZCORIQ account, they&apos;re linked instantly; otherwise we save a pending invite that auto-claims the class when they sign up.
           </p>
           <div className="grid sm:grid-cols-[1fr_180px_auto] gap-3 items-end">
             <div>

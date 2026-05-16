@@ -332,7 +332,7 @@ export default function SchoolClassesPage() {
   function copyInvite(c: ClassRow, email: string) {
     const origin = typeof window !== "undefined" ? window.location.origin : "";
     const msg =
-      `Hi! I’ve set you as the primary teacher of ${c.name} on BloomIQ. ` +
+      `Hi! I’ve set you as the primary teacher of ${c.name} on ZCORIQ. ` +
       `Sign up at ${origin}/signup using this email (${email}) and pick the Teacher role. ` +
       `The class will appear on your dashboard automatically once you sign in.`;
     if (typeof navigator !== "undefined" && navigator.clipboard) {

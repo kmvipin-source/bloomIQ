@@ -35,6 +35,12 @@ export function track(event: EventName, props?: EventProps): void {
   }
 }
 
+// F118 note (QA): identify() is called from a handful of auth-success
+// surfaces but NOT consistently — login/school + login/student + claim-
+// session + signup-autostart should all call it. Without it, every
+// pre-identify event lands on an anon distinct_id and the funnel
+// dashboards under-report by ~20-30%. Audit the call sites when the
+// PostHog dashboards become a key business artifact.
 export function identify(userId: string, traits?: EventProps): void {
   if (!isEnabled()) return;
   try {

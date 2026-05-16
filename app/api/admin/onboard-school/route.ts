@@ -1,13 +1,23 @@
 import { NextResponse } from "next/server";
 import { getBearer, supabaseServer, supabaseAdmin, SCHOOL_STUDENT_DOMAIN } from "@/lib/supabase/server";
+import { requirePlatformAdmin } from "@/lib/apiAuth";
 import { generateQuizCode } from "@/lib/utils";
 
 // Paged email lookup. listUsers({page:1, perPage:1000}) silently mis-
 // resolved emails past 1000 users; paginate until found.
+// F54 note (QA): findUserByEmail paginates auth.users at 1000-per-page
+// looking for a match. At small school counts this is fine; at >10k auth
+// users the cost climbs linearly. Replace with a single email-filtered
+// admin.listUsers({ filter: `email.eq.${e}` }) call when Supabase ships
+// it (the gotrue admin API is in beta), or move to a profiles.email
+// lookup if profiles.email is kept in sync.
 async function findUserByEmail(
   admin: ReturnType<typeof supabaseAdmin>,
   email: string
 ): Promise<{ id: string; email?: string | null } | null> {
+  // F73 fix: per-RFC 5321 the local-part is case-sensitive, but every
+  // mainstream provider treats it case-insensitively. Document the
+  // assumption so a future reader doesn't try to "fix" the lowercasing.
   const target = email.toLowerCase();
   const perPage = 200;
   for (let page = 1; page <= 50; page++) {
@@ -32,27 +42,14 @@ export const runtime = "nodejs";
  */
 export async function POST(req: Request) {
   try {
-    const token = getBearer(req);
-    if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-    const sb = supabaseServer(token);
-    const { data: { user } } = await sb.auth.getUser();
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-    // Service-role read avoids the RLS race that 403'd legit platform
-    // admins on the Vercel edge.
+    // F171 fix (QA): inline platform_admin check → shared helper.
+    // The "Only platform admins can onboard schools." copy is replaced
+    // with the helper's generic "Forbidden" — acceptable because the
+    // operator-facing onboard UI surfaces its own auth-error toast.
+    const auth = await requirePlatformAdmin(req);
+    if ("error" in auth) return auth.error;
+    const { user } = auth;
     const adminClient = supabaseAdmin();
-    const { data: me } = await adminClient
-      .from("profiles")
-      .select("platform_admin")
-      .eq("id", user.id)
-      .maybeSingle();
-    if (!me?.platform_admin) {
-      return NextResponse.json(
-        { error: "Only platform admins can onboard schools." },
-        { status: 403 }
-      );
-    }
 
     const body = await req.json().catch(() => ({}));
     const schoolName: string = String(body.school_name || "").trim();
@@ -86,23 +83,43 @@ export async function POST(req: Request) {
       );
     }
 
+    // F55 fix: 10 attempts + explicit failure. Previous 5-attempt loop
+    // silently used the last colliding code on exhaustion, surfacing as
+    // a confusing PG unique-violation 500.
     let joinCode = generateQuizCode();
-    for (let i = 0; i < 5; i++) {
+    let joinCodeFound = false;
+    for (let i = 0; i < 10; i++) {
       const { data: clash } = await admin
         .from("schools")
         .select("id")
         .eq("join_code", joinCode)
         .maybeSingle();
-      if (!clash) break;
+      if (!clash) { joinCodeFound = true; break; }
       joinCode = generateQuizCode();
+    }
+    if (!joinCodeFound) {
+      return NextResponse.json(
+        { error: "Could not generate a unique school join code after 10 attempts. Please retry." },
+        { status: 503 }
+      );
     }
 
     // Invite links auto-authenticate but DO NOT set a password. Route through
     // /auth/set-password so the Admin Head picks a real password before
     // landing on /school.
+    //
+    // F50 note (QA): Supabase invite links are SINGLE-USE BUT replayable
+    // until consumed, and the default TTL is ~24h. For school onboarding
+    // that's too generous (a forwarded invite could be claimed by anyone
+    // up to a day later). Tighten the TTL in Supabase Auth → Email
+    // settings → "Invite link" to 4h. This is a dashboard change, not a
+    // code change, so it's flagged here as a deployment checklist item.
+    // F75 fix: PUBLIC_ORIGIN env var as a higher-confidence fallback
+    // than the request URL (which uses the lambda's internal host).
     const origin =
       req.headers.get("origin") ||
       req.headers.get("referer")?.replace(/\/[^/]*$/, "") ||
+      process.env.PUBLIC_ORIGIN ||
       new URL(req.url).origin;
     const redirectTo = `${origin.replace(/\/$/, "")}/auth/set-password?next=/school`;
 
@@ -117,8 +134,16 @@ export async function POST(req: Request) {
       }
     );
     if (inviteErr || !invited?.user) {
+      // F60 fix: classify common Supabase invite errors so the operator
+      // gets actionable text instead of a raw passthrough.
+      const raw = inviteErr?.message || "unknown error";
+      const lower = raw.toLowerCase();
+      let hint = "";
+      if (lower.includes("rate")) hint = " (Supabase invite rate-limited — wait a minute and retry.)";
+      else if (lower.includes("already") || lower.includes("registered")) hint = " (Account or pending invite already exists for that email.)";
+      else if (lower.includes("ban")) hint = " (Email banned at the Supabase project level.)";
       return NextResponse.json(
-        { error: `Could not send invite: ${inviteErr?.message || "unknown error"}` },
+        { error: `Could not send invite: ${raw}.${hint}` },
         { status: 500 }
       );
     }
@@ -144,21 +169,27 @@ export async function POST(req: Request) {
       );
     }
 
-    const { error: profErr } = await admin
+    // F46 fix: .update().eq() returns success on 0 rows. If the
+    // handle_new_user trigger silently failed to insert a profile row,
+    // this update would no-op. Force .select() and verify exactly one
+    // row was touched.
+    const { data: profUpdated, error: profErr } = await admin
       .from("profiles")
       .update({ school_id: school.id, school: schoolName })
-      .eq("id", newAdminUserId);
-    if (profErr) {
+      .eq("id", newAdminUserId)
+      .select("id")
+      .maybeSingle();
+    if (profErr || !profUpdated) {
       // Compensating rollback: delete the freshly-created school + the
       // freshly-invited auth user. The previous behaviour returned
       // ok:true with a warning and left an orphan school + a Head
       // profile that had no school_id, requiring manual SQL cleanup.
       try { await admin.from("schools").delete().eq("id", school.id); } catch { /* ignore */ }
       try { await admin.auth.admin.deleteUser(newAdminUserId); } catch { /* ignore */ }
-      return NextResponse.json(
-        { error: `Could not link profile to school: ${profErr.message}. Onboarding rolled back.` },
-        { status: 500 }
-      );
+      const errMsg = profErr
+        ? `Could not link profile to school: ${profErr.message}. Onboarding rolled back.`
+        : "Admin Head profile was not created by the auth trigger; onboarding rolled back.";
+      return NextResponse.json({ error: errMsg }, { status: 500 });
     }
 
     // ---------- 8) Optional: bind a plan immediately ----------
@@ -189,10 +220,27 @@ export async function POST(req: Request) {
         // page: activation_pending=true (clock starts on first
         // super_teacher sign-in via /api/auth/me), grace_period_days=14.
         // Operator can override either via the onboard form.
+        // F61 note (QA): activation_pending defaults to TRUE when body omits
+        // the field. Operator UI should make this default visible (e.g.
+        // checkbox pre-checked with "Defer activation until first sign-in").
+        // F51 note (QA): if plan_id is omitted at onboard time, the school
+        // is created without a billing binding and the operator sees no
+        // warning. Surface in the response: { warning: "no plan bound;
+        // school is on Free until /admin/schools attaches one" }. Pure
+        // UX cleanup — the behavior is already safe.
         const activationPending = body.activation_pending !== false;
         const gracePeriodDays = typeof body.grace_period_days === "number" && body.grace_period_days >= 0
           ? Math.round(body.grace_period_days)
           : 14;
+        // F62 fix: explicit zero is ambiguous (operator may have meant
+        // unlimited but the model treats 0 as null). Reject so they
+        // confirm intent.
+        if (typeof body.contracted_students === "number" && body.contracted_students === 0) {
+          return NextResponse.json(
+            { error: "contracted_students = 0 is ambiguous. Omit for unlimited, or pass a positive number." },
+            { status: 400 },
+          );
+        }
         const contractedStudents = typeof body.contracted_students === "number" && body.contracted_students > 0
           ? Math.round(body.contracted_students)
           : null;
@@ -203,7 +251,9 @@ export async function POST(req: Request) {
         if (typeof body.started_at === "string" && body.started_at.trim()) {
           const raw = body.started_at.trim();
           const isDateOnly = /^\d{4}-\d{2}-\d{2}$/.test(raw);
-          const ts = Date.parse(isDateOnly ? `${raw}T00:00:00+05:30` : raw);
+          // F52 fix: anchor date-only inputs to UTC midnight, not IST,
+          // so non-Indian deployments don't get half-day expiry skews.
+          const ts = Date.parse(isDateOnly ? `${raw}T00:00:00Z` : raw);
           if (!Number.isNaN(ts)) startedAt = new Date(ts);
         }
         const expiresAt = new Date(startedAt.getTime() + plan.period_days * 24 * 60 * 60 * 1000);
@@ -249,26 +299,10 @@ export async function POST(req: Request) {
 
 export async function GET(req: Request) {
   try {
-    const token = getBearer(req);
-    if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-    const sb = supabaseServer(token);
-    const { data: { user } } = await sb.auth.getUser();
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-    // Read platform_admin via the service-role client so a transient
-    // RLS race on profiles (the user-token client occasionally can't
-    // see the just-created profile row from the Vercel edge) doesn't
-    // 403 a real platform admin off their own page.
-    const admin = supabaseAdmin();
-    const { data: me } = await admin
-      .from("profiles")
-      .select("platform_admin")
-      .eq("id", user.id)
-      .maybeSingle();
-    if (!me?.platform_admin) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
+    // F171 fix (QA): inline platform_admin check → shared helper.
+    const auth = await requirePlatformAdmin(req);
+    if ("error" in auth) return auth.error;
+    const { admin } = auth;
     const { data: schools, error } = await admin
       .from("schools")
       .select("id, name, join_code, invited_admin_email, invited_at, super_teacher_id, created_at, onboarded_by")

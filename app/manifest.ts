@@ -2,8 +2,8 @@ import type { MetadataRoute } from "next";
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "BloomIQ",
-    short_name: "BloomIQ",
+    name: "ZCORIQ",
+    short_name: "ZCORIQ",
     description:
       "Bloom-aligned multiple-choice assessments. Teachers generate, students take, everyone sees thinking-level performance.",
     start_url: "/",

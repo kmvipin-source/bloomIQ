@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { groqJSON } from "@/lib/groq";
-import { getBearer, supabaseServer, supabaseAdmin } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/lib/supabase/server";
+import { requireAuthenticated } from "@/lib/apiAuth";
 import { buildStudentContext } from "@/lib/studentContext";
 import { BLOOM_LEVELS, type BloomLevel } from "@/lib/bloom";
 import {
@@ -37,7 +38,7 @@ type Digest = {
   actions: DigestAction[];
 };
 
-const SYSTEM = `You are the BloomIQ Student Coach generating a weekly self-reflection brief for a student.
+const SYSTEM = `You are the ZCORIQ Student Coach generating a weekly self-reflection brief for a student.
 
 Output JSON ONLY:
 {
@@ -114,11 +115,11 @@ function normaliseDigest(raw: Record<string, unknown>): Digest {
 
 export async function POST(req: Request) {
   try {
-    const token = getBearer(req);
-    if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    const sb = supabaseServer(token);
-    const { data: { user } } = await sb.auth.getUser();
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    // F22 fix (QA): shared requireAuthenticated — single-session
+    // enforcement (token iat >= profiles.session_iat) now applied.
+    const auth = await requireAuthenticated(req);
+    if ("error" in auth) return auth.error;
+    const { user, sb } = auth;
 
     const { data: prof } = await sb
       .from("profiles")

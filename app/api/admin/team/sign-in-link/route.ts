@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { getBearer, supabaseServer, supabaseAdmin } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/lib/supabase/server";
+import { requirePlatformAdmin } from "@/lib/apiAuth";
 
 export const runtime = "nodejs";
 
@@ -29,24 +30,11 @@ export const runtime = "nodejs";
  */
 export async function POST(req: Request) {
   try {
-    const token = getBearer(req);
-    if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-    const sb = supabaseServer(token);
-    const { data: { user } } = await sb.auth.getUser();
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-    // Service-role read avoids the RLS race that 403'd legit platform
-    // admins on the Vercel edge.
-    const adminCli = supabaseAdmin();
-    const { data: me } = await adminCli
-      .from("profiles")
-      .select("platform_admin")
-      .eq("id", user.id)
-      .maybeSingle();
-    if (!me?.platform_admin) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
+    // F171 fix (QA): inline platform_admin check → shared helper.
+    // The helper does its own service-role profile read so the RLS-race
+    // dodge that this route documented is preserved.
+    const auth = await requirePlatformAdmin(req);
+    if ("error" in auth) return auth.error;
 
     const body = await req.json().catch(() => ({}));
     const userId: string = String(body.user_id || "").trim();

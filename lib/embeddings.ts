@@ -25,6 +25,10 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
 const EMBED_MODEL = "text-embedding-004";
+// F93 note (QA): EMBED_DIM is hardcoded to match Gemini text-embedding-004.
+// If Google ships a model with different dimensions, embedTexts will
+// silently return null and dedup falls back to Jaccard. Bump both
+// constants together; never split.
 const EMBED_DIM = 768;
 
 let _client: GoogleGenerativeAI | null = null;
@@ -69,6 +73,15 @@ export async function embedTexts(texts: string[]): Promise<(number[] | null)[] |
   if (!c) return null;
   const safeInputs = texts.slice(0, MAX_EMBED_BATCH);
   const overflow = texts.length - safeInputs.length;
+  // F79 fix: log when we silently drop excess inputs so callers can
+  // see they need to chunk upstream. The truncation was previously
+  // invisible — caller got nulls back and assumed Jaccard fallback.
+  if (overflow > 0) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[embeddings] embedTexts received ${texts.length} inputs; capped at ${MAX_EMBED_BATCH}. Last ${overflow} got null embeddings.`,
+    );
+  }
   try {
     const model = c.getGenerativeModel({ model: EMBED_MODEL });
     // Chunked parallelism — at most EMBED_CHUNK_SIZE in flight at any
@@ -192,5 +205,4 @@ export function cosineDedupInBatch(
   return { keptIndices: kept, droppedIndices: dropped };
 }
 
-/** The embedding dimension the rest of the app should assume. */
 export const EMBEDDING_DIM = EMBED_DIM;

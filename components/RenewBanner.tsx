@@ -24,7 +24,7 @@ import { AlertCircle, Clock, ArrowRight } from "lucide-react";
  *     disappears. This is what an independent paying student sees.
  *
  *   - School-admin mode (schoolName passed): no Razorpay button — school
- *     plans are billed offline by the BloomIQ team — instead a mailto:
+ *     plans are billed offline by the ZCORIQ team — instead a mailto:
  *     CTA pre-filled with the school name so the super-teacher can ask
  *     us to renew. School STUDENTS still don't see the banner (they
  *     have nothing to do about it); only the super_teacher does, and
@@ -136,7 +136,7 @@ export default function RenewBanner({
         order_id: order.order_id,
         amount: order.amount_paise,
         currency: order.currency,
-        name: "BloomIQ",
+        name: "ZCORIQ",
         description: `Renewal — ${order.plan?.label || planSlug}`,
         prefill: { email: user.email || undefined },
         theme: { color: "#10b981" },
@@ -175,7 +175,7 @@ export default function RenewBanner({
     ? `Renew school plan — ${schoolName}`
     : "";
   const mailtoBody = isSchoolAdminMode
-    ? `Hi BloomIQ team,\n\nPlease renew our school plan for ${schoolName}.\nOur current plan: ${planSlug}\nExpires: ${new Date(expiresAt).toLocaleDateString()}\n\nThanks!`
+    ? `Hi ZCORIQ team,\n\nPlease renew our school plan for ${schoolName}.\nOur current plan: ${planSlug}\nExpires: ${new Date(expiresAt).toLocaleDateString()}\n\nThanks!`
     : "";
   const mailtoHref = isSchoolAdminMode
     ? `mailto:support@bloomiq.app?subject=${encodeURIComponent(mailtoSubject)}&body=${encodeURIComponent(mailtoBody)}`

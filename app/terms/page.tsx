@@ -2,16 +2,16 @@ import Link from "next/link";
 import PublicNav from "@/components/PublicNav";
 
 export const metadata = {
-  title: "Terms of Service — BloomIQ",
-  description: "BloomIQ Terms of Service.",
+  title: "Terms of Service — ZCORIQ",
+  description: "ZCORIQ Terms of Service.",
 };
 
 /**
- * /terms — BloomIQ Terms of Service.
+ * /terms — ZCORIQ Terms of Service.
  *
  * IMPORTANT: This is a reasonable starting template assembled from common SaaS
  * boilerplate. It is NOT legal advice and has not been reviewed by counsel.
- * Before BloomIQ takes its first paying customer (school or individual) you
+ * Before ZCORIQ takes its first paying customer (school or individual) you
  * should run this past a lawyer in your home jurisdiction (India, given
  * Razorpay + INR pricing) to localise it properly. In particular:
  *   - Indian Contract Act, IT Act 2000, IT Rules 2011 / 2021 (intermediary)
@@ -19,8 +19,8 @@ export const metadata = {
  *   - DPDP Act 2023 (data protection — see /privacy)
  *   - GST registration thresholds and invoicing rules
  *
- * The "BloomIQ" entity name below should be replaced with your actual
- * registered legal entity (e.g. "BloomIQ Technologies Pvt. Ltd.") and the
+ * The "ZCORIQ" entity name below should be replaced with your actual
+ * registered legal entity (e.g. "ZCORIQ Technologies Pvt. Ltd.") and the
  * registered address added once incorporated. Update the contact email to
  * your real support address before going live.
  */
@@ -31,7 +31,7 @@ export default function TermsPage() {
         <div className="max-w-6xl mx-auto px-6 py-3 flex items-center justify-between">
           <Link href="/" className="flex items-center gap-2">
             <span className="text-2xl">🌱</span>
-            <span className="font-bold tracking-tight">BloomIQ</span>
+            <span className="font-bold tracking-tight">ZCORIQ</span>
           </Link>
           <PublicNav />
         </div>
@@ -43,7 +43,7 @@ export default function TermsPage() {
 
         <p>
           These Terms of Service (&quot;Terms&quot;) govern your access to and use of the
-          BloomIQ platform (the &quot;Service&quot;), operated by BloomIQ (&quot;we&quot;, &quot;us&quot;, or
+          ZCORIQ platform (the &quot;Service&quot;), operated by ZCORIQ (&quot;we&quot;, &quot;us&quot;, or
           &quot;our&quot;). By creating an account, signing in, or otherwise using the
           Service, you agree to be bound by these Terms and our{" "}
           <Link href="/privacy" className="text-emerald-700 font-semibold">Privacy Policy</Link>.
@@ -52,7 +52,7 @@ export default function TermsPage() {
 
         <h2 className="text-xl font-bold mt-8 mb-3">1. Eligibility and accounts</h2>
         <p>
-          You may use the Service only if you can form a binding contract with BloomIQ.
+          You may use the Service only if you can form a binding contract with ZCORIQ.
           If you are under 18, you may use the Service only with the consent and
           supervision of a parent, legal guardian, or authorised teacher who agrees
           to these Terms on your behalf. School accounts created by an Admin Head
@@ -75,7 +75,7 @@ export default function TermsPage() {
 
         <h2 className="text-xl font-bold mt-8 mb-3">3. User-uploaded content</h2>
         <p>
-          BloomIQ lets you upload content — notes, images of textbooks, past exam
+          ZCORIQ lets you upload content — notes, images of textbooks, past exam
           papers, student responses, and similar material — for the purpose of
           generating quizzes, analysing performance, and other educational
           functions. By uploading any content (&quot;User Content&quot;) you represent and
@@ -85,12 +85,12 @@ export default function TermsPage() {
           any applicable law. You retain ownership of your User Content.
         </p>
         <p>
-          You grant BloomIQ a worldwide, non-exclusive, royalty-free licence to
+          You grant ZCORIQ a worldwide, non-exclusive, royalty-free licence to
           host, store, process, transmit, and display your User Content solely for
           the purpose of operating, improving, and supporting the Service for you.
           You are solely responsible for the legality of any User Content you
           upload, including past examination papers and copyrighted material;
-          BloomIQ is not the publisher of and does not endorse or verify User
+          ZCORIQ is not the publisher of and does not endorse or verify User
           Content.
         </p>
 
@@ -101,7 +101,7 @@ export default function TermsPage() {
           analyses, and study suggestions (&quot;AI Output&quot;). AI Output may contain
           inaccuracies, omissions, or unsuitable material. You should review all
           AI Output before relying on it, especially before using it in classroom
-          assessment or examination contexts. BloomIQ does not warrant the
+          assessment or examination contexts. ZCORIQ does not warrant the
           accuracy, completeness, or fitness for any particular purpose of any
           AI Output. You are responsible for verifying AI Output before acting
           on it.
@@ -139,7 +139,7 @@ export default function TermsPage() {
         <h2 className="text-xl font-bold mt-8 mb-3">8. Intellectual property</h2>
         <p>
           The Service, including all software, designs, logos, and our own
-          content, is owned by BloomIQ or our licensors and is protected by
+          content, is owned by ZCORIQ or our licensors and is protected by
           copyright, trademark, and other laws. We grant you a limited,
           non-exclusive, non-transferable licence to use the Service in
           accordance with these Terms.
@@ -186,7 +186,7 @@ export default function TermsPage() {
 
         <p className="text-xs text-slate-500 italic mt-12 border-t border-slate-200 pt-6">
           Note: These Terms are a working draft assembled from common SaaS
-          boilerplate. Before BloomIQ&apos;s first paying customer, this document
+          boilerplate. Before ZCORIQ&apos;s first paying customer, this document
           should be reviewed by qualified legal counsel familiar with Indian
           contract law, the IT Act 2000, the Consumer Protection Act 2019, and
           the DPDP Act 2023.
@@ -194,7 +194,7 @@ export default function TermsPage() {
       </article>
 
       <footer className="max-w-6xl mx-auto px-6 py-8 text-center text-sm text-slate-500 border-t border-slate-200">
-        © BloomIQ ·{" "}
+        © ZCORIQ ·{" "}
         <Link href="/terms" className="hover:text-emerald-700">Terms</Link> ·{" "}
         <Link href="/privacy" className="hover:text-emerald-700">Privacy</Link>
       </footer>
