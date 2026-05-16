@@ -29,6 +29,11 @@ import GenerateContextChips, { type GenerateContext } from "@/components/Generat
 // the page was simpler than it is. When next touching the disclosure JSX,
 // add a heading like "Advanced — fine-tune the mix" and a one-line
 // description so it's discoverable without being intimidating.
+// F143 note (QA): the "Advanced" disclosure (numerical %, intent presets,
+// per-level overrides) used to be untitled — first-time teachers thought
+// the page was simpler than it is. When next touching the disclosure JSX,
+// add a heading like "Advanced — fine-tune the mix" and a one-line
+// description so it's discoverable without being intimidating.
 
 type Source = "notes" | "image" | "topic_syllabus" | "topic_only";
 
@@ -348,6 +353,12 @@ export default function GeneratePage() {
   // classGradeToCategory are already imported elsewhere — wire into the
   // submit-time check with a confirmation modal on severe mismatch.
   // Modal is deferred (needs a small <Dialog/> component).
+  // F128 note (QA): categoryOverride does NOT currently cross-validate
+  // against the class's grade (e.g. teacher picks "JEE Advanced" override
+  // for a Grade 5 class). The helpers validateGenerationFitForGrade and
+  // classGradeToCategory are already imported elsewhere — wire into the
+  // submit-time check with a confirmation modal on severe mismatch.
+  // Modal is deferred (needs a small <Dialog/> component).
   const [activeIntentId, setActiveIntentId] = useState<string | null>(null);
   const activeIntent = useMemo(
     () => intents.find((i) => i.id === activeIntentId) || null,
@@ -361,6 +372,11 @@ export default function GeneratePage() {
   function topicPlaceholder(): string {
     return placeholderTopic(examGoal, learnerProfile);
   }
+  // F138 note (QA): one-line "good vs bad topic" guidance for new teachers.
+  // Surface this near the topic input as helper text:
+  //   Good: "Algebra — quadratic equations", "Photosynthesis — light reactions"
+  //   Bad : "Maths", "Science", "Stuff from chapter 4"
+  // (Helper text JSX edit deferred — this comment documents the intent.)
   // F138 note (QA): one-line "good vs bad topic" guidance for new teachers.
   // Surface this near the topic input as helper text:
   //   Good: "Algebra — quadratic equations", "Photosynthesis — light reactions"
@@ -385,6 +401,10 @@ export default function GeneratePage() {
   // ---- Q1 V1: Class scope (optional teacher narrowing) -----------
   type ClassOption = { id: string; name: string; grade?: string | null;
     section?: string | null; subject?: string | null; myRole?: "primary" | "co" | "acting" };
+  // F140 fix (QA): when teacherClasses is empty (teacher not assigned to
+  // any class), the dropdown previously rendered empty with no
+  // explanation. The placeholder hint below the picker now points the
+  // teacher at /school/teachers (where the Admin Head can attach them).
   // F140 fix (QA): when teacherClasses is empty (teacher not assigned to
   // any class), the dropdown previously rendered empty with no
   // explanation. The placeholder hint below the picker now points the
