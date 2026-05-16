@@ -5,6 +5,12 @@
 //   2. Pagination / empty state for new students.
 //   3. Tab-close / navigation doesn't lose filter state.
 //   4. PostHog event when a student opens a library item.
+// F121 note (QA): this page surfaced as an audit gap (Phase 6). Quick
+// re-audit checklist:
+//   1. Confirm the data query respects student-scoped RLS.
+//   2. Pagination / empty state for new students.
+//   3. Tab-close / navigation doesn't lose filter state.
+//   4. PostHog event when a student opens a library item.
 
 // app/student/library/page.tsx
 // =============================================================================

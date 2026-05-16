@@ -23,12 +23,14 @@ import {
   type ExamMeta,
 } from "@/lib/examDetectors";
 import GenerateContextChips, { type GenerateContext } from "@/components/GenerateContextChips";
+import {
+  validateGenerationRequest,
+  groupedTeachingContextOptions,
+  defaultTeachingContext,
+  type IntentId as TCIntentId,
+} from "@/lib/teachingContext";
+import { categoryBucket } from "@/lib/questionCategory";
 // 2026-05-13 evening: audience-level is fully optional (no profile-driven default).
-// F143 note (QA): the "Advanced" disclosure (numerical %, intent presets,
-// per-level overrides) used to be untitled — first-time teachers thought
-// the page was simpler than it is. When next touching the disclosure JSX,
-// add a heading like "Advanced — fine-tune the mix" and a one-line
-// description so it's discoverable without being intimidating.
 // F143 note (QA): the "Advanced" disclosure (numerical %, intent presets,
 // per-level overrides) used to be untitled — first-time teachers thought
 // the page was simpler than it is. When next touching the disclosure JSX,
@@ -103,9 +105,9 @@ const INTENTS_K12: Intent[] = [
   { id: "diagnostic", label: "Diagnostic — find weak spots", description: "All Bloom levels, evenly", icon: <ScanSearch size={16} />,
     blueprint: { mode: "all", pickedLevels: [], perLevel: 2,
       rationale: "Even spread across all six Bloom levels — surfaces exactly which kinds of thinking the class struggles with." } },
-  { id: "mock_paper", label: "Mock paper (competitive exam)", description: "Detects CAT/JEE/NEET/etc. from topic", icon: <Trophy size={16} />,
+  { id: "mock_paper", label: "Full mock paper", description: "Exam-style paper aligned to your teaching context", icon: <Trophy size={16} />,
     blueprint: { mode: "custom", pickedLevels: ["apply", "analyze", "evaluate"], perLevel: 5,
-      rationale: "Exam-style depth: Apply / Analyze / Evaluate. Type the exam name (CAT, JEE, NEET) in Topic and the form auto-tunes." } },
+      rationale: "Exam-style depth: Apply / Analyze / Evaluate. The teaching-context picker above tells the AI which exam style to mimic — this intent biases toward the deep Bloom levels real entrance exams test." } },
   { id: "homework", label: "Homework set", description: "Take-home practice, deeper", icon: <BookMarked size={16} />,
     blueprint: { mode: "custom", pickedLevels: ["apply", "analyze"], perLevel: 4,
       rationale: "Apply / Analyze focus — students have time at home for the kind of thinking that doesn't fit a 5-minute window." } },
@@ -285,6 +287,18 @@ export default function GeneratePage() {
     (l) => l === "apply" || l === "analyze" || l === "evaluate",
   );
 
+  // Drop overrides for levels that are no longer in pickedLevels, so a
+  // level the teacher de-selected then re-selected starts fresh at perLevel.
+  useEffect(() => {
+    setPerLevelCustom((prev) => {
+      const next: Partial<Record<BloomLevel, number>> = {};
+      for (const lv of pickedLevels) {
+        if (prev[lv] !== undefined) next[lv] = prev[lv];
+      }
+      return next;
+    });
+  }, [pickedLevels]);
+
   function togglePickedLevel(l: BloomLevel) {
     setPickedLevels((prev) => {
       if (prev.includes(l)) return prev.filter((x) => x !== l);
@@ -294,9 +308,25 @@ export default function GeneratePage() {
     });
   }
   const [perLevel, setPerLevel] = useState(2);
+  // Per-Bloom override map (custom mode only). When a level has a number here,
+  // it overrides the default `perLevel` for that level. Empty = use perLevel
+  // uniformly. Resets when picked levels change so stale overrides don't bleed.
+  const [perLevelCustom, setPerLevelCustom] = useState<Partial<Record<BloomLevel, number>>>({});
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [summary, setSummary] = useState<Record<BloomLevel, number> | null>(null);
+  // Teaching context = category slug from the dropdown (class5_8 / jee_main /
+  // neet / cat / ... — see lib/questionCategory.ts categoryLabel for the full
+  // vocabulary). null until the teacher picks (or until we seed from the
+  // class.grade-derived default below).
+  const [teachingContext, setTeachingContext] = useState<string | null>(null);
+  // The last-context slug the teacher saved previously (from profile). Set
+  // ONCE on mount in a useEffect; used to seed the picker via
+  // defaultTeachingContext. null = never set or load failed.
+  const [savedLastContext, setSavedLastContext] = useState<string | null>(null);
+  // Override flag: teacher acknowledges a blocking warning. Resets to false
+  // whenever the picker or class changes so the teacher re-confirms.
+  const [validationOverride, setValidationOverride] = useState<boolean>(false);
 
   // Active intent ID (null = no intent picked = current default behavior).
   // Clicking a chip applies its blueprint; teacher can still tweak
@@ -341,7 +371,27 @@ export default function GeneratePage() {
       } catch { /* non-fatal — placeholders fall back to defaults */ }
     })();
   }, []);
-  const intents = useMemo(() => intentsForProfile(learnerProfile), [learnerProfile]);
+  const intents = useMemo(() => {
+    // Pick the intent set from teachingContext FIRST (per-test picker).
+    // Fall back to the teacher's own learnerProfile when context is unset
+    // — preserves today's behavior for teachers who haven't picked yet.
+    let base: Intent[];
+    if (teachingContext) {
+      const bkt = categoryBucket(teachingContext);
+      if (bkt === "competitive") base = intentsForProfile("competitive_exam");
+      else if (bkt === "corporate") base = intentsForProfile("corporate");
+      else base = intentsForProfile("k12"); // primary / middle / senior_board / unknown
+    } else {
+      base = intentsForProfile(learnerProfile);
+    }
+    // Filter age-inappropriate intents:
+    //   - mock_paper hides for K-12 primary/middle classes (Class 5-9). Only
+    //     show it when the cohort is plausibly preparing for an actual exam
+    //     paper (senior_board+ class, or competitive context).
+    const ctxBucket = teachingContext ? categoryBucket(teachingContext) : "unknown";
+    const hideMockPaper = ctxBucket === "primary" || ctxBucket === "middle";
+    return hideMockPaper ? base.filter((i) => i.id !== "mock_paper") : base;
+  }, [teachingContext, learnerProfile]);
   const skillDefault = useMemo(
     () => (learnerProfile === "corporate" ? detectSkillFromTopic(topic) : null),
     [topic, learnerProfile],
@@ -411,6 +461,88 @@ export default function GeneratePage() {
   // teacher at /school/teachers (where the Admin Head can attach them).
   const [teacherClasses, setTeacherClasses] = useState<ClassOption[]>([]);
   const [targetClassId, setTargetClassId] = useState<string>("");
+  // Load the teacher's saved last_teaching_context on mount. Fire-and-forget;
+  // any failure leaves savedLastContext null and the picker stays unseeded.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const sb = supabaseBrowser();
+        const { data: { user } } = await sb.auth.getUser();
+        if (!user) return;
+        const { data } = await sb
+          .from("profiles")
+          .select("last_teaching_context")
+          .eq("id", user.id)
+          .maybeSingle();
+        if (cancelled) return;
+        const saved = (data?.last_teaching_context as string | null) ?? null;
+        if (saved) setSavedLastContext(saved);
+      } catch { /* silent */ }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Auto-set Numerical-% when the teacher picks a competitive-exam context.
+  // Honors numericalManuallySet so it never clobbers a teacher-set value.
+  // Mapping is comprehensive vs the expanded EXAM_DEFAULTS table.
+  useEffect(() => {
+    if (!teachingContext || numericalManuallySet) return;
+    const slugToExamKey: Record<string, string> = {
+      jee_main: "JEE", jee_advanced: "JEE",
+      neet: "NEET",
+      cat: "CAT",
+      gmat: "GMAT", gre: "GRE",
+      upsc: "UPSC",
+      ielts: "IELTS",
+      clat: "CLAT",
+      bitsat: "BITSAT",
+      sat: "SAT",
+      gate: "GATE",
+      nda: "NDA",
+      cuet: "CUET",
+    };
+    const examKey = slugToExamKey[teachingContext];
+    if (!examKey) return;
+    const def = EXAM_DEFAULTS[examKey];
+    if (!def) return;
+    setNumericalPercent(def.defaultNumericalPercent);
+  }, [teachingContext, numericalManuallySet]);
+
+  // Live cross-field validation. Cheap (pure functions). Re-runs when any
+  // input changes. See lib/teachingContext.validateGenerationRequest for the
+  // full rule set (Rules 1-11). Placed AFTER teacherClasses + examDefault are
+  // declared (TDZ-safe).
+  const validation = useMemo(() => {
+    const cls = teacherClasses.find((c) => c.id === targetClassId) || null;
+    const effLevels: BloomLevel[] = mode === "all" ? BLOOM_LEVELS.slice() : pickedLevels;
+    const intentMap: Record<string, TCIntentId> = {
+      "quick_check": "quick_check",
+      "pulse": "post_class_pulse",
+      "post_class_pulse": "post_class_pulse",
+      "chapter_end": "chapter_end",
+      "balanced_summary": "chapter_end",
+      "diagnostic": "diagnostic",
+      "mock_paper": "mock_paper",
+      "mock": "mock_paper",
+      "homework": "homework",
+      "remediation": "remediation",
+      "re_teach": "remediation",
+    };
+    const mappedIntent: TCIntentId | null = activeIntentId ? (intentMap[activeIntentId] ?? null) : null;
+    const detectedSlug: string | null = examDefault
+      ? examDefault.displayName.toLowerCase().replace(/\s+/g, "_")
+      : null;
+    return validateGenerationRequest({
+      classGrade: cls?.grade ?? null,
+      intent: mappedIntent,
+      bloomLevels: effLevels,
+      teachingContext,
+      topicDetectedExam: detectedSlug,
+      numericalPercent,
+      attemptingGenerate: false,
+    });
+  }, [teacherClasses, targetClassId, activeIntentId, mode, pickedLevels, teachingContext, examDefault, numericalPercent]);
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -500,16 +632,34 @@ export default function GeneratePage() {
       const { data: { session } } = await sb.auth.getSession();
       if (!session) throw new Error("Not signed in");
 
+      // Build perLevelCounts when teacher set any overrides. API merges
+      // this with the default perLevel for missing keys (see /api/generate
+      // route). Empty object = no overrides, API uses perLevel uniformly.
+      const _perLevelCounts: Record<string, number> = {};
+      if (mode === "custom") {
+        for (const lv of pickedLevels) {
+          if (perLevelCustom[lv] !== undefined) _perLevelCounts[lv] = perLevelCustom[lv] as number;
+        }
+      }
       const body: Record<string, unknown> = {
         source,
         topic,
         levels: mode === "all" ? BLOOM_LEVELS : pickedLevels,
         perLevel,
+        ...(Object.keys(_perLevelCounts).length > 0 ? { perLevelCounts: _perLevelCounts } : {}),
         numericalPercent,
         // Generate-context-v2 (2026-05-13).
         audience_level: genContext.audience_level,
         sub_topics: genContext.sub_topics,
         additional_focus: genContext.additional_focus,
+        // Teaching context slug (class5_8 / jee_main / neet / cat / ...).
+        // Drives the AI's register. API may not consume this yet — that's
+        // wired tomorrow (defense-in-depth backend validation).
+        ...(teachingContext ? { teaching_context: teachingContext } : {}),
+        // Override flag — true when teacher acknowledged a blocking warning.
+        // Telemetry hook: backend should log override_validation=true so we
+        // can audit how often teachers bypass guardrails.
+        ...(validationOverride ? { override_validation: true } : {}),
       };
       if (source === "notes") body.content = content;
       if (source === "image" && imageFile) {
@@ -634,6 +784,79 @@ export default function GeneratePage() {
           )}
         </div>
       )}
+
+      {/* ---------- TEACHING CONTEXT PICKER ----------
+          Single dropdown of the ~20 category slugs from
+          lib/questionCategory.ts. Drives the AI's register and unlocks
+          per-axis cross-validation. Seeds from profiles.last_teaching_context,
+          falling back to classGradeToCategory(class.grade) when that's null.
+          Picker is per-test — teacher can change for this generation only. */}
+      <div className="card mt-5">
+        <div className="flex items-center gap-2 mb-2">
+          <GraduationCap size={16} className="text-emerald-600" />
+          <h2 className="font-semibold text-sm">Who are you teaching today?</h2>
+          <span className="text-xs muted ml-auto">Picks the AI&apos;s register + unlocks cross-checks</span>
+        </div>
+        {(() => {
+          // Seed the picker once: when teachingContext is still null AND we
+          // either have a saved last-context OR a class is selected, pick
+          // the best default. Wrapped in an inline IIFE so we don't have
+          // to add a useEffect — React re-runs the render anyway when its
+          // inputs change.
+          if (teachingContext === null) {
+            const cls = teacherClasses.find((c) => c.id === targetClassId) || null;
+            const seed = defaultTeachingContext({
+              savedLastContext,
+              classGrade: cls?.grade ?? null,
+            });
+            if (seed) {
+              // Schedule the setState so we don't violate React's "no setState
+              // in render" rule. setTimeout(0) defers to the next tick.
+              setTimeout(() => setTeachingContext(seed), 0);
+            }
+          }
+          return null;
+        })()}
+        <select
+          className="select w-full text-sm"
+          value={teachingContext ?? ""}
+          onChange={(e) => {
+            const v = e.target.value || null;
+            setTeachingContext(v);
+            setValidationOverride(false);
+            // Fire-and-forget: persist to profiles.last_teaching_context.
+            if (v) {
+              (async () => {
+                try {
+                  const sb = supabaseBrowser();
+                  const { data: { user } } = await sb.auth.getUser();
+                  if (!user) return;
+                  await sb.from("profiles").update({ last_teaching_context: v }).eq("id", user.id);
+                } catch { /* silent */ }
+              })();
+            }
+          }}
+        >
+          <option value="">Pick a context...</option>
+          {groupedTeachingContextOptions().map((g) => (
+            <optgroup key={g.group} label={g.group}>
+              {g.options.map((opt) => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </optgroup>
+          ))}
+        </select>
+        {teachingContext && (
+          <p className="text-[11px] text-emerald-700 mt-1">
+            Questions will be written for <strong>{(() => {
+              const found = groupedTeachingContextOptions()
+                .flatMap((g) => g.options)
+                .find((o) => o.value === teachingContext);
+              return found ? found.label : teachingContext;
+            })()}</strong>.
+          </p>
+        )}
+      </div>
 
       {/* ---------- INTENT PICKER (Q1) ----------
           Outcome-shaped chips that pre-fill Bloom mode + level mix +
@@ -899,6 +1122,38 @@ export default function GeneratePage() {
                 {pickedLevels.length} of {MAX_PICKED} selected
                 {pickedLevels.length === 0 ? " — pick at least one." : ""}
               </p>
+              {pickedLevels.length > 0 && (
+                <div className="mt-3 pt-3 border-t border-slate-200">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-semibold text-slate-700">Questions per level (override)</span>
+                    <span className="text-[11px] muted">Default {perLevel} each — leave blank to use default</span>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                    {pickedLevels.map((lv) => (
+                      <div key={lv} className="flex items-center gap-2 bg-slate-50 rounded-md px-2 py-1.5 border border-slate-200">
+                        <span className={`badge badge-${lv} text-[10px]`}>{BLOOM_META[lv].label}</span>
+                        <input
+                          type="number"
+                          min={0}
+                          max={25}
+                          className="input input-sm w-14 ml-auto text-sm"
+                          placeholder={String(perLevel)}
+                          value={perLevelCustom[lv] ?? ""}
+                          onChange={(e) => {
+                            const raw = e.target.value;
+                            setPerLevelCustom((prev) => {
+                              const next = { ...prev };
+                              if (raw === "") delete next[lv];
+                              else next[lv] = Math.max(0, Math.min(25, Number(raw) || 0));
+                              return next;
+                            });
+                          }}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </>
           )}
           {/* Per-exam Bloom level warning. Same pattern as the student page. */}
@@ -991,6 +1246,41 @@ export default function GeneratePage() {
 
         {err && <div className="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{err}</div>}
 
+        {/* Cross-field validation banner — fires BEFORE Generate is clicked.
+            Severity ladder: soft (amber) / hard (amber, bold) / block (red +
+            override checkbox required). */}
+        {!validation.ok && (
+          <div className={`rounded-lg border px-3 py-2 text-sm ${
+            validation.blocking
+              ? "border-red-300 bg-red-50 text-red-900"
+              : "border-amber-300 bg-amber-50 text-amber-900"
+          }`}>
+            <div className="font-semibold mb-1">
+              {validation.blocking ? "Hold on — these look mismatched:" : "Couple of things to double-check:"}
+            </div>
+            <ul className="list-disc ml-5 space-y-1">
+              {validation.issues.map((iss) => (
+                <li key={iss.code}>
+                  <span className="font-medium">{iss.message}</span>
+                  {iss.detail && <div className="text-xs opacity-80 mt-0.5">{iss.detail}</div>}
+                </li>
+              ))}
+            </ul>
+            {validation.blocking && (
+              <label className="flex items-center gap-2 mt-2 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={validationOverride}
+                  onChange={(e) => setValidationOverride(e.target.checked)}
+                />
+                <span className="text-xs">
+                  <strong>I really mean this</strong> — generate anyway. (Overrides are logged.)
+                </span>
+              </label>
+            )}
+          </div>
+        )}
+
         {/* Pre-flight validation + summary pill (2026-05-14). Disables the
             Generate button when the form can't generate yet, with an
             inline amber reason so the teacher doesn't click and bounce
@@ -999,7 +1289,11 @@ export default function GeneratePage() {
             student page. */}
         {(() => {
           const effectiveLevels: BloomLevel[] = mode === "all" ? BLOOM_LEVELS.slice() : pickedLevels;
-          const totalQs = effectiveLevels.length * perLevel;
+          // totalQs honors per-level overrides in custom mode; in "all" mode
+          // overrides don't apply (uniform perLevel everywhere).
+          const totalQs = mode === "custom"
+            ? pickedLevels.reduce((s, lv) => s + (perLevelCustom[lv] ?? perLevel), 0)
+            : effectiveLevels.length * perLevel;
           let reason: string | null = null;
           if (source === "topic_only" && !topic.trim()) reason = "Enter a topic above.";
           else if (source === "topic_syllabus" && !topic.trim()) reason = "Topic is required.";
@@ -1009,7 +1303,10 @@ export default function GeneratePage() {
           else if (mode === "custom" && (pickedLevels.length < 1 || pickedLevels.length > MAX_PICKED)) reason = `Pick between 1 and ${MAX_PICKED} Bloom levels.`;
           else if (effectiveLevels.length === 0) reason = "Pick at least one Bloom level.";
           else if (totalQs <= 0) reason = "Question count must be at least 1.";
-          const canGenerate = !reason && !busy;
+          // Block when validation flags any "block" issue and the teacher hasn't
+          // checked the override box. Soft / hard warnings don't disable the button.
+          const validationBlock = validation.blocking && !validationOverride;
+          const canGenerate = !reason && !busy && !validationBlock;
           return (
             <div className="flex items-center justify-between flex-wrap gap-2">
               <p className="text-xs muted">

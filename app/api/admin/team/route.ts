@@ -260,6 +260,9 @@ export async function DELETE(req: Request) {
         // F183 note (QA): verified — refuse to delete the last platform
         // admin. Without this a self-revoke would lock everyone out of
         // /admin/* with no recovery path short of raw SQL.
+        // F183 note (QA): verified — refuse to delete the last platform
+        // admin. Without this a self-revoke would lock everyone out of
+        // /admin/* with no recovery path short of raw SQL.
         { error: "Can't revoke the last admin. Add another admin first." },
         { status: 400 }
       );

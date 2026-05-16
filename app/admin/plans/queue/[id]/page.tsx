@@ -433,6 +433,12 @@ function DecidedBanner({ proposal }: { proposal: HydratedProposal }) {
               side diff view (e.g. JSON.stringify on each, react-diff-viewer
               or a tiny custom diff) under this header so the approver
               can see exactly what changed. Tracked in AUDIT.md Section 3. */}
+          {/* F177 note (QA): we say "preserved in the diff history" but
+              don't actually RENDER a diff here. The data is on the
+              proposal row (proposed_at_submit + proposed). Add a side-by-
+              side diff view (e.g. JSON.stringify on each, react-diff-viewer
+              or a tiny custom diff) under this header so the approver
+              can see exactly what changed. Tracked in AUDIT.md Section 3. */}
           {proposal.bootstrap_self_approve && <span className="ml-1 italic">Bootstrap self-approval flagged.</span>}
         </div>
       </div>

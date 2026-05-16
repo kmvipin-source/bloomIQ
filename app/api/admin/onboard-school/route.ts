@@ -228,6 +228,9 @@ export async function POST(req: Request) {
         // warning. Surface in the response: { warning: "no plan bound;
         // school is on Free until /admin/schools attaches one" }. Pure
         // UX cleanup — the behavior is already safe.
+        // F61 note (QA): activation_pending defaults to TRUE when body omits
+        // the field. Operator UI should make this default visible (e.g.
+        // checkbox pre-checked with "Defer activation until first sign-in").
         const activationPending = body.activation_pending !== false;
         const gracePeriodDays = typeof body.grace_period_days === "number" && body.grace_period_days >= 0
           ? Math.round(body.grace_period_days)

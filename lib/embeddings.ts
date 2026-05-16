@@ -29,6 +29,10 @@ const EMBED_MODEL = "text-embedding-004";
 // If Google ships a model with different dimensions, embedTexts will
 // silently return null and dedup falls back to Jaccard. Bump both
 // constants together; never split.
+// F93 note (QA): EMBED_DIM is hardcoded to match Gemini text-embedding-004.
+// If Google ships a model with different dimensions, embedTexts will
+// silently return null and dedup falls back to Jaccard. Bump both
+// constants together; never split.
 const EMBED_DIM = 768;
 
 let _client: GoogleGenerativeAI | null = null;

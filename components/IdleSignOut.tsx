@@ -11,6 +11,9 @@ const PROTECTED_PREFIXES = ["/student", "/teacher", "/school", "/admin", "/paren
 // F29 note (QA): localStorage is trivially tamperable. This module is
 // a PRIVACY guarantee (shared-device protection), NOT an access-control
 // boundary. Server-side session expiry remains the real security control.
+// F29 note (QA): localStorage is trivially tamperable. This module is
+// a PRIVACY guarantee (shared-device protection), NOT an access-control
+// boundary. Server-side session expiry remains the real security control.
 const LAST_ACTIVITY_KEY = "bloomiq:last_activity";
 
 /**

@@ -884,6 +884,13 @@ export async function POST(req: Request) {
     // "Competitive", "Professional") so the picker is scannable. Server
     // side stays the same — this is purely a UI grouping.
     //
+    // F141 note (QA): the picker that drives category_override on the
+    // client renders one flat list. For learner_profile=competitive_exam
+    // teachers, the list is long (~20 items) and scanning is hard.
+    // Group the catalog by learner_profile in the UI (sections: "K-12",
+    // "Competitive", "Professional") so the picker is scannable. Server
+    // side stays the same — this is purely a UI grouping.
+    //
     // Preference order: client-supplied category_override → bodyExamGoal → null.
     // F148 fix: whitelist category_override against the same vocabulary the
     // /teacher/generate form exposes. A direct API hit with an arbitrary

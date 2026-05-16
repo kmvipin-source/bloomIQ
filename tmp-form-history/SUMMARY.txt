@@ -1,0 +1,41 @@
+﻿=== Form-history recovery scan v3 ===
+Run at:  2026-05-17 00:39:32
+
+[VS Code (Roaming)]  total folders: 30
+  Projects found:
+      11 x  OTHER:AppBuild
+       8 x  Documents
+       7 x  OTHER:App%20Build
+       2 x  LifeMomentTagger
+       1 x  OneDrive
+       1 x  life-moment-tagger
+  bloomiq references: 11 folder(s)
+  ANY /teacher/ file:  0 folder(s)
+  /teacher/generate/page.tsx exact hit: 0 folder(s)
+
+[VS Code Insiders] does not exist
+[Cursor (Roaming)]  total folders: 28
+  Projects found:
+      28 x  bloomiq
+  bloomiq references: 28 folder(s)
+  ANY /teacher/ file:  7 folder(s)
+  /teacher/generate/page.tsx exact hit: 0 folder(s)
+
+[Windsurf (Roaming)]  total folders: 54
+  Projects found:
+      52 x  ProdBuild
+       1 x  bloomiq
+  bloomiq references: 1 folder(s)
+  ANY /teacher/ file:  0 folder(s)
+  /teacher/generate/page.tsx exact hit: 0 folder(s)
+
+[Windsurf-Next (Roaming)] does not exist
+[Windsurf (Local)] does not exist
+[Codeium (Roaming)] does not exist
+
+=== 0 total snapshot(s) found across all IDEs ===
+
+No exact /teacher/generate/page.tsx matches anywhere.
+Look at the inventory above - does it list bloomiq references and /teacher/ files?
+If yes, the simplification work was edited in an IDE we DID scan, but never touched the teacher/generate file specifically.
+If 'bloomiq references: 0' across all IDEs, your edits werent in an IDE - they came from a different tool (terminal Claude Code, agent script, etc.).

@@ -218,6 +218,10 @@ export default function SchoolLoginPage() {
     // there's a brief window where no session is "claimed" if claim fails.
     // The full fix swaps the order — deferred (touches both login pages
     // + needs careful retry handling). Today: best-effort sequential.
+    // F35 note (QA): signing out other devices BEFORE claim-session means
+    // there's a brief window where no session is "claimed" if claim fails.
+    // The full fix swaps the order — deferred (touches both login pages
+    // + needs careful retry handling). Today: best-effort sequential.
     try { await sb.auth.signOut({ scope: "others" }); } catch { /* ignore */ }
     // F23 fix (QA): single-session promise depends on claim-session
     // succeeding. Retry once on transport failure; if both attempts fail,

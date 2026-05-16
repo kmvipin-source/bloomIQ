@@ -377,6 +377,10 @@ export async function POST(req: Request) {
     // defense expands, mirror that log here at verify time so the audit
     // trail covers both order-create and payment-confirm.
     //
+    // F165 note (QA): /api/checkout already logs IP+UA. If chargeback
+    // defense expands, mirror that log here at verify time so the audit
+    // trail covers both order-create and payment-confirm.
+    //
     // F162 fix: if two parallel verifies for the same payment slip past
       // the alreadyApplied check, the unique partial index throws 23505.
       // Translate to a friendly "already applied" instead of a 500.

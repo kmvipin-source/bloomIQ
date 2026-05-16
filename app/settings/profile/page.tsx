@@ -5,6 +5,12 @@
 // status with download-invoice link (existing /admin/subscriptions/[id]/
 // invoice route already produces a PDF; mirror it for self-serve).
 // Belongs in the settings sidebar between "profile" and "security".
+// F166 note (QA): users have no surfaced page to view past payments
+// (subscription_payments rows exist in DB but the UI doesn't render
+// them). New page /settings/billing — table of date / plan / amount /
+// status with download-invoice link (existing /admin/subscriptions/[id]/
+// invoice route already produces a PDF; mirror it for self-serve).
+// Belongs in the settings sidebar between "profile" and "security".
 
 import { useEffect, useState } from "react";
 import Link from "next/link";

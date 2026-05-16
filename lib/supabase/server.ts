@@ -10,6 +10,13 @@ import { createClient } from "@supabase/supabase-js";
 // had local requirePlatformAdmin copies) is shipped. Steps 2 (other
 // admin routes with inline platform_admin checks) and 3 (~30 mutating
 // non-admin routes adopting requireAuthenticated) are follow-up PRs.
+// F22 note (QA): single-session enforcement (checking JWT iat against
+// profiles.session_iat) is implemented in /api/auth/me but NOT in the
+// other ~30 mutating API routes. Refactor: add requireAuthenticated(req)
+// here that returns { user, session_iat } and 401s if iat is stale;
+// migrate all mutating routes to use it. Touches ~30 files but the per-
+// route delta is ~3 lines. Track alongside F171 (requirePlatformAdmin
+// extraction) — they're sister refactors.
 export function supabaseServer(accessToken?: string) {
   return createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,

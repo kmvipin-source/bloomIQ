@@ -374,6 +374,19 @@ export default function TakeQuiz() {
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
   }, [attemptId, submitting]);
 
+  // F114 fix (QA): warn on tab-close / nav-away while an attempt is in
+  // flight. Browsers ignore custom strings, but setting returnValue
+  // triggers the native "Leave site?" confirm.
+  useEffect(() => {
+    if (!attemptId || submitting) return;
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [attemptId, submitting]);
+
   if (loadErr) {
     return (
       <div className="min-h-screen grid place-items-center px-6">

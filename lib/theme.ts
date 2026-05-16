@@ -23,6 +23,12 @@
 //   git grep -nE "text-(amber|blue|rose|indigo)-(600|700|800)" app/ components/
 // and confirm the ones that should be brand-coloured switch to
 // "text-[color:var(--brand-700)]" so they re-theme with the picker.
+// F142 note (QA): brand-color drift audit found ~3 places where
+// text-amber-700 / text-blue-700 are used in lieu of --brand-700.
+// Sweep with:
+//   git grep -nE "text-(amber|blue|rose|indigo)-(600|700|800)" app/ components/
+// and confirm the ones that should be brand-coloured switch to
+// "text-[color:var(--brand-700)]" so they re-theme with the picker.
 export type ThemeName = "emerald" | "indigo" | "rose" | "amber" | "slate";
 export type ColorMode = "light" | "dark";
 

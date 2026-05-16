@@ -60,6 +60,10 @@ type AuditRow = {
   // null. The UI renders {a.actor_name} which produces an empty cell —
   // ugly but not wrong. Render with a fallback: {a.actor_name || "system"}
   // when next touching the table to keep the column visually honest.
+  // F17 note (QA): older audit rows (pre-rename) may have actor_name as
+  // null. The UI renders {a.actor_name} which produces an empty cell —
+  // ugly but not wrong. Render with a fallback: {a.actor_name || "system"}
+  // when next touching the table to keep the column visually honest.
   actor_name: string;
   entity_type: string | null;
   entity_id: string | null;
@@ -140,6 +144,12 @@ export default function FeatureFlagsAdminPage() {
     void loadAudit();
   }, [loadFlags, loadAudit]);
 
+  // F4 note (QA): the four window.prompt calls in this file are
+  // intentional v1 — keeps the admin UI dependency-free. Cons: no
+  // validation feedback before submit, no multi-line input, can't
+  // distinguish "cancel" from "empty string" in some browsers. Upgrade
+  // to a <Dialog/> when adding any other admin-UI modal (consolidate
+  // the modal infra, don't fragment).
   // F4 note (QA): the four window.prompt calls in this file are
   // intentional v1 — keeps the admin UI dependency-free. Cons: no
   // validation feedback before submit, no multi-line input, can't

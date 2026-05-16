@@ -356,6 +356,14 @@ export default function StudentLoginPage() {
                       If you signed in elsewhere recently, sign in here first to claim this device.
                     </span>
                   )}
+                  {/* F32 fix (QA): single-session enforcement can reject the
+                      reset session if the student last signed in elsewhere.
+                      Show a one-liner only in forgotMode. */}
+                  {forgotMode && (
+                    <span className="block text-[11px] text-slate-400 mt-1 font-normal">
+                      If you signed in elsewhere recently, sign in here first to claim this device.
+                    </span>
+                  )}
                 </button>
               </label>
               <div className="relative">

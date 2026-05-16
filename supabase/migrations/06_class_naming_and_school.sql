@@ -21,6 +21,11 @@ alter table public.profiles
 -- toggle on /admin/schools/[id]. The users page already has the pattern
 -- (search "is_test_account" in app/admin/users/page.tsx). Without UI
 -- parity, ops will set the flag via raw SQL.
+-- F178b note (QA): when the schools.is_test_account column is added
+-- per F178 (above), also wire the /admin/users-style "Beta tester" UI
+-- toggle on /admin/schools/[id]. The users page already has the pattern
+-- (search "is_test_account" in app/admin/users/page.tsx). Without UI
+-- parity, ops will set the flag via raw SQL.
 -- F178 note (QA): schools table has no is_test_account column. Today
 -- the dashboard treats EVERY row as production for billing+admin counts.
 -- For staging/load-test isolation, add a boolean is_test_account default
@@ -41,6 +46,9 @@ alter table public.schools enable row level security;
 alter table public.schools drop constraint if exists schools_one_per_admin;
 alter table public.schools
   add constraint schools_one_per_admin unique (super_teacher_id);
+-- F57 note (QA): models "one Admin Head per school" AND "one school
+-- per Admin Head". Co-principals at private schools would need a
+-- school_admin_heads junction table — deliberate v1 trade-off.
 -- F57 note (QA): models "one Admin Head per school" AND "one school
 -- per Admin Head". Co-principals at private schools would need a
 -- school_admin_heads junction table — deliberate v1 trade-off.
@@ -97,6 +105,9 @@ as $$
 $$;
 
 -- Am I the super_teacher for this school?
+-- F64 note (QA): SECURITY DEFINER below. Callers can probe whether the
+-- current auth.uid() is super_teacher of any given school_id regardless
+-- of RLS. Low risk (school_id is not secret), but document the access.
 -- F64 note (QA): SECURITY DEFINER below. Callers can probe whether the
 -- current auth.uid() is super_teacher of any given school_id regardless
 -- of RLS. Low risk (school_id is not secret), but document the access.

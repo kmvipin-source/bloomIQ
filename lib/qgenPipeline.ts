@@ -7,6 +7,14 @@
 // → write to question_bank. Each migration is ~1 day, including tests.
 // Until then, fixes to dedup / leak detection / verifyAnswerKeys must
 // be mirrored to all three places — that's the cost of the duplication.
+// F101 + F113 note (QA): two of the seven generator routes still copy
+// the conceptual pipeline instead of calling here:
+//   - /api/teacher/generate/route.ts (F101)
+//   - /api/student/quick-test/route.ts (F113)
+// Migration plan per route: build context → call processGenerationPipeline
+// → write to question_bank. Each migration is ~1 day, including tests.
+// Until then, fixes to dedup / leak detection / verifyAnswerKeys must
+// be mirrored to all three places — that's the cost of the duplication.
 // =============================================================================
 // Shared question-generation pipeline (P0.1).
 // -----------------------------------------------------------------------------

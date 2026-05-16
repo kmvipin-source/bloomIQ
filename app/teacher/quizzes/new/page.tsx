@@ -11,6 +11,14 @@ import MarkingSchemePicker from "@/components/MarkingSchemePicker";
 import type { MarkingScheme } from "@/lib/scoring";
 import { suggestPresetForGoal, type ScoringPresetKey } from "@/lib/scoringPresets";
 import {
+  groupedTeachingContextOptions,
+  defaultTeachingContext,
+} from "@/lib/teachingContext";
+import {
+  validateGenerationFitForGrade,
+  categoryLabel,
+} from "@/lib/questionCategory";
+import {
   categoryLabel as categoryLabelShared,
   NO_CATEGORY_LABEL,
   classGradeToCategory,
@@ -86,6 +94,14 @@ function ComposerInner() {
   // pedagogically harmful — the warning isn't a hard block, just informed
   // consent.
   const [teacherExamGoal, setTeacherExamGoal] = useState<string | null>(null);
+  // Teaching context = which category this test is being composed for.
+  // Same vocabulary as /teacher/generate (slug from lib/questionCategory).
+  // Drives suggested marking-scheme preset + the class-vs-context banner.
+  const [teachingContext, setTeachingContext] = useState<string | null>(null);
+  const [savedLastContext, setSavedLastContext] = useState<string | null>(null);
+  // Override flag: teacher acknowledges a blocking class-vs-context mismatch
+  // and proceeds with the assign anyway. Reset on every meaningful change.
+  const [validationOverride, setValidationOverride] = useState<boolean>(false);
   const [suggestedPreset, setSuggestedPreset] = useState<ScoringPresetKey>("PRACTICE");
   useEffect(() => {
     (async () => {
@@ -128,6 +144,14 @@ function ComposerInner() {
            "negative marking can discourage attempting questions and distort feedback. " +
            "Keep it only if you're explicitly training exam strategy.";
   }
+  // Class-vs-context fit. Re-runs on class or picker change. Reuses the
+  // existing validateGenerationFitForGrade helper from lib/questionCategory.
+  const contextFit = useMemo(() => {
+    const cls = classes.find((c) => c.id === targetClassId) || null;
+    if (!cls?.grade || !teachingContext) return null;
+    return validateGenerationFitForGrade(cls.grade, teachingContext);
+  }, [classes, targetClassId, teachingContext]);
+
   const negMarkingWarn = useMemo(
     () => negativeMarkingWarning(markingScheme, teacherExamGoal),
     [markingScheme, teacherExamGoal],
@@ -246,6 +270,31 @@ function ComposerInner() {
   // the dropdown.
   const [classes, setClasses] = useState<ClassOption[]>([]);
   const [targetClassId, setTargetClassId] = useState<string>("");
+  // Load saved last_teaching_context. Fire-and-forget — failure leaves saved=null.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const sb = supabaseBrowser();
+        const { data: { user } } = await sb.auth.getUser();
+        if (!user) return;
+        const { data } = await sb.from("profiles").select("last_teaching_context").eq("id", user.id).maybeSingle();
+        if (cancelled) return;
+        const saved = (data?.last_teaching_context as string | null) ?? null;
+        if (saved) setSavedLastContext(saved);
+      } catch { /* silent */ }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // When the teacher picks a teaching context, re-derive the suggested
+  // marking-scheme preset. The picker is the most precise signal we have
+  // about the test's intent (more reliable than teacher's own exam_goal
+  // since a teacher can run different contexts in the same week).
+  useEffect(() => {
+    if (!teachingContext) return;
+    setSuggestedPreset(suggestPresetForGoal(teachingContext));
+  }, [teachingContext]);
   const [classFit, setClassFit] = useState<ClassFit | null>(null);
   const [loadingFit, setLoadingFit] = useState(false);
 
@@ -1097,6 +1146,79 @@ function ComposerInner() {
         </section>
 
         <aside className="lg:sticky lg:top-6 self-start space-y-3">
+          {/* ---------- TEACHING CONTEXT (mirrors /teacher/generate) ---------- */}
+          <div className="card">
+            <div className="flex items-center gap-2 mb-2">
+              <h3 className="font-semibold text-sm">Who is this test for?</h3>
+              <span className="text-xs muted ml-auto">Picks the scoring style + unlocks cross-checks</span>
+            </div>
+            {(() => {
+              // Seed picker once: prefer saved last-context, then class.grade-derived.
+              if (teachingContext === null) {
+                const cls = classes.find((c) => c.id === targetClassId) || null;
+                const seed = defaultTeachingContext({ savedLastContext, classGrade: cls?.grade ?? null });
+                if (seed) setTimeout(() => setTeachingContext(seed), 0);
+              }
+              return null;
+            })()}
+            <select
+              className="select w-full text-sm"
+              value={teachingContext ?? ""}
+              onChange={(e) => {
+                const v = e.target.value || null;
+                setTeachingContext(v);
+                setValidationOverride(false);
+                if (v) {
+                  (async () => {
+                    try {
+                      const sb = supabaseBrowser();
+                      const { data: { user } } = await sb.auth.getUser();
+                      if (!user) return;
+                      await sb.from("profiles").update({ last_teaching_context: v }).eq("id", user.id);
+                    } catch { /* silent */ }
+                  })();
+                }
+              }}
+            >
+              <option value="">Pick a context...</option>
+              {groupedTeachingContextOptions().map((g) => (
+                <optgroup key={g.group} label={g.group}>
+                  {g.options.map((opt) => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+            {teachingContext && !contextFit && (
+              <p className="text-[11px] text-emerald-700 mt-1">
+                Test composed for <strong>{categoryLabel(teachingContext)}</strong>.
+              </p>
+            )}
+            {contextFit && contextFit.severity !== "none" && (
+              <div className={`mt-2 rounded-lg border px-3 py-2 text-sm ${
+                contextFit.severity === "hard"
+                  ? "border-red-300 bg-red-50 text-red-900"
+                  : "border-amber-300 bg-amber-50 text-amber-900"
+              }`}>
+                <div className="font-semibold mb-0.5">
+                  {contextFit.severity === "hard" ? "Class / context mismatch:" : "Heads up:"}
+                </div>
+                <div>{contextFit.message}</div>
+                {contextFit.detail && <div className="text-xs opacity-80 mt-1">{contextFit.detail}</div>}
+                {contextFit.severity === "hard" && (
+                  <label className="flex items-center gap-2 mt-2 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={validationOverride}
+                      onChange={(e) => setValidationOverride(e.target.checked)}
+                    />
+                    <span className="text-xs"><strong>I really mean this</strong> — assign anyway.</span>
+                  </label>
+                )}
+              </div>
+            )}
+          </div>
+
           <div className="card">
             <label className="label">Test name</label>
             <input

@@ -122,6 +122,10 @@ export async function DELETE(req: Request) {
     // owner_id pointers. If anyone reports stale memberships, this loop
     // is the place — check classIds is populated.
     //
+    // F58 note (QA): teacher-leave correctly cleans up class_teachers AND
+    // owner_id pointers. If anyone reports stale memberships, this loop
+    // is the place — check classIds is populated.
+    //
     // Detach this teacher from any class in the school they're leaving:
     //   - drop their class_teachers rows for those classes
     //   - clear classes.owner_id where it pointed to them
