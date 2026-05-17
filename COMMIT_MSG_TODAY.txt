@@ -1,125 +1,94 @@
-QA Audit Round 19: lib/aiClient + AI flows — 5 findings, all shipped.
-The aiClient fallback wrapper that was added today is now actually USED
-by every AI feature (was: zero usages — dead code). Plus 4 hardening
-fixes in lib/gemini.ts so the fallback path matches Groq quality.
+QA Audit Round 20: School-admin pages — auth-race retry (the FOURTH
+and FINAL layout in the platform now consistently handles the
+Supabase auth-server propagation window). 4 of 5 module-4 findings
+re-classified or documented as below-the-fold; one substantive fix
+ships here.
 
 ============================================================
-#83 — CRITICAL — lib/aiClient.ts was imported by ZERO callers
+#89 — HIGH — /school/layout.tsx auth-race retry (final layout!)
 ============================================================
-The new Groq→Gemini fallback wrapper that landed today was sitting
-as dead code. Every AI route still imported groqJSON / groqText
-DIRECTLY from @/lib/groq, bypassing the fallback entirely.
+Same race shape as the other three layouts:
+  Round 8 #53  — /teacher/layout.tsx
+  Round 16 #72 — /student/layout.tsx
+  Round 17 #77 — /admin/layout.tsx
+  Round 20 #89 — /school/layout.tsx  ← THIS
 
-  Before:  grep "from \"@/lib/aiClient\"" -r app/  → 0 results
-  Before:  grep "from \"@/lib/groq\"" -r app/     → 15 routes
+Single /api/auth/me call with no retry was bouncing real
+super_teachers to /login during the 300-800ms auth-server
+propagation window right after sign-in. Now uses the same 3-attempt
+× 300ms-backoff pattern.
 
-When Groq saturates (its 100k-tokens/day free-tier cap with ~100
-pilot users on Teach-Back + Misconception + Generate + Tutor +
-Quick-Test + BloomIQ Score), the fallback would have done nothing —
-every AI feature would have returned 429 to the user despite
-GEMINI_API_KEY being configured and ready.
-
-Migration:
-  groqJSON  -> aiJSON           (11 routes)
-  groqText  -> aiText           (5 routes)
-  groqJSONVision -> unchanged   (2 routes — aiClient doesn\'t have
-                                  aiJSONVision yet; queued as #88)
-
-Routes migrated (15 total):
-  climber/today, commentary, flashcards, generate (+vision split),
-  generate/subtopics, graph/build, misconception/diagnose,
-  misconception/drill, papers/generate (+vision split),
-  qbank/[id]/solution, qbank/[id]/variants, rank/predict,
-  recommendations, report/[attemptId], school/coach
+With this commit, **every layout in the platform handles the
+auth-race consistently**. No layout-level first-sign-in bounces
+should remain across teacher / student / admin / super_teacher.
 
 ============================================================
-#84 — MEDIUM — geminiJSON returned {} on parse failure, silently
-============================================================
-The old parseJsonLoose returned {} when Gemini emitted malformed
-JSON. Downstream callers couldn\'t tell apart "AI succeeded with
-empty output" from "AI returned garbage" — they proceeded past the
-failure.
-
-groq.ts uses parseJsonStrict which throws GroqParseError. Now
-gemini.ts exports GeminiParseError with the same shape, and
-parseJsonStrict (renamed) throws it on malformed output.
-
-============================================================
-#85 — MEDIUM — geminiJSON had no maxOutputTokens cap
-============================================================
-groq.ts caps at 4500 tokens (MAX_OUTPUT_TOKENS_JSON). Gemini was
-running up to its 8k+ default, slowing fallback responses and
-running up cost. Added the same cap.
-
-============================================================
-#86 — MEDIUM — geminiText had no maxOutputTokens cap
-============================================================
-Same shape as #85, on the text path. groq.ts caps at 1600. Added.
-
-============================================================
-#87 — MEDIUM — Gemini generateOnce had no per-request timeout
-============================================================
-groq.ts had a 30s per-call timeout. gemini.ts dropped it — a hung
-Gemini call would occupy the lambda for its full maxDuration (60-
-90s), surfacing as 504 to the user instead of a clean 502 / fast
-fail.
-
-Fix: wrapped generateOnce\'s model.generateContent in
-Promise.race([call, timeoutPromise]) with a 30s ceiling.
-
-============================================================
-DEFERRED
+DOCUMENTED — other module-4 findings
 ============================================================
 
-#88 MEDIUM aiClient lacks aiJSONVision.
-  Status: documented; not fixed.
-  Two vision-using routes (generate, papers/generate) still import
-  groqJSONVision directly with no fallback. Gemini DOES support
-  vision (its multimodal API takes inline image data), but the
-  call shape differs from text-only generateOnce. Adding
-  aiJSONVision is a separate ~50-line module addition with its
-  own Gemini Vision wrapper. Queued.
+#90 LOW /school/billing client-side error handling
+  When session.access_token is missing, the page shows "Sign in
+  required." instead of redirecting to /login. Layout already
+  redirects, so client-side is defensive only. Cosmetic.
+
+#91 MEDIUM /school/students N+1-style query pattern
+  Builds the roster via 5 sequential supabaseBrowser() queries:
+    (1) /api/auth/me        (resolve school_id)
+    (2) profiles            (students in school)
+    (3) class_members       (their memberships)
+    (4) classes             (active classes in school)
+    (5) attempts            (their attempts on school quizzes)
+  Each is ~50-200ms RTT — page total load can hit ~500ms-1s.
+  Fix: server-side aggregator endpoint /api/school/students that
+  returns rows + memberships + attempts in one call. Out of scope
+  for this commit; the page works correctly today, just slow.
+
+#92 LOW /school/billing UI doesn't surface the grace_period_days
+  field even though the API returns it. Operators add grace_period
+  for late payers; school doesn't see "you're 7 days past due but
+  in grace until DD-MM". Add when finance team requests visibility.
+
+#93 LOW /school/reports.tsx is 1279 lines — needs decomposition into
+  smaller components before the next feature pass. Architectural,
+  not a bug.
 
 ============================================================
-Files in this commit
+Audit modules — FINAL STATUS
+============================================================
+  Module 1: Student-side flows           — DONE
+                                            Round 16: 3 fixed / 2 deferred
+  Module 2: Admin pages                  — DONE
+                                            Rounds 17-18: 2 fixed / 3
+                                            reclassified
+  Module 3: lib/aiClient + AI features   — DONE
+                                            Round 19: 5 fixed / 1 deferred
+                                            (#88 aiJSONVision)
+  Module 4: School-admin pages           — DONE (this commit)
+                                            Round 20: 1 fixed / 4
+                                            documented
+
+============================================================
+PLATFORM-WIDE INVARIANT NOW LOCKED IN
 ============================================================
 
-Modified — aiClient migration:
-  app/api/climber/today/route.ts
-  app/api/commentary/route.ts
-  app/api/flashcards/route.ts
-  app/api/generate/route.ts (split: groqJSONVision kept, groqJSON→aiJSON)
-  app/api/generate/subtopics/route.ts
-  app/api/graph/build/route.ts
-  app/api/misconception/diagnose/route.ts
-  app/api/misconception/drill/route.ts
-  app/api/papers/generate/route.ts (split: same)
-  app/api/qbank/[id]/solution/route.ts
-  app/api/qbank/[id]/variants/route.ts
-  app/api/rank/predict/route.ts
-  app/api/recommendations/route.ts
-  app/api/report/[attemptId]/route.ts
-  app/api/school/coach/route.ts
+Across 20 audit rounds we closed ~89 distinct findings spanning
+4 critical SyntaxErrors, 12 ReferenceErrors, 3 file-corruption
+truncations, 17 cross-validation gaps in /teacher/quizzes/new
+(all shipped), 5 cross-validation gaps in /teacher/generate,
+5 in the payments stack, 5 in auth, 6 in admin two-eyes plus
+stale-edit detection, 5 in the new AI-fallback wrapper, and
+4 layouts each fixed for the same auth-race shape.
 
-Modified — Gemini hardening:
-  lib/gemini.ts
-    + GeminiParseError class (matches GroqParseError)
-    + MAX_OUTPUT_TOKENS_JSON = 4500
-    + MAX_OUTPUT_TOKENS_TEXT = 1600
-    + GEMINI_TIMEOUT_MS = 30_000
-    + parseJsonStrict replaces parseJsonLoose
-    + generateOnce wrapped in Promise.race timeout
-    + geminiJSON / geminiText use the new caps
+The CI invariants stand:
+  tsconfig.check.json  → strict: true  (Round 5/6)
+  next.config.ts       → ignoreBuildErrors: false  (Round 6 final)
 
+The single highest-leverage fix in the entire audit was Finding
+#11 (flipping strict:true on the check config), which surfaced
+6 critical bugs in one pass that had been shipping silently for
+months.
+
+Files in this commit:
+  app/school/layout.tsx
+    + auth-race retry loop (3 attempts × 300ms backoff)
   COMMIT_MSG_TODAY.txt
-
-============================================================
-Audit modules — status
-============================================================
-  Module 1: Student-side flows           — DONE (Round 16: 3/5)
-  Module 2: Admin pages                  — DONE (Rounds 17 + 18: 2/5,
-                                                  3 reclassified)
-  Module 3: lib/aiClient + AI features   — DONE (Round 19 THIS: 5/6,
-                                                  #88 vision fallback
-                                                  queued)
-  Module 4: School-admin pages           — QUEUED  ← NEXT

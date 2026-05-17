@@ -16,8 +16,16 @@ export default function SchoolLayout({ children }: { children: React.ReactNode }
       const { data: { session } } = await sb.auth.getSession();
       if (!session) { router.replace("/login?next=/school"); return; }
 
+      // Finding #89 fix: 4th and final layout to receive the auth-race
+      // retry treatment. Same shape as Rounds 8/16/17 for the
+      // /teacher /student /admin layouts. Supabase auth-server eventual-
+      // consistency returns 401 for ~300-800ms after sign-in; without
+      // the retry, real super_teachers get bounced to /login on first
+      // sign-in.
       let role = "";
       let platformAdmin = false;
+      let meDataApplied = false;
+      for (let attempt = 0; attempt < 3 && !meDataApplied; attempt++) {
       try {
         const r = await fetch("/api/auth/me", {
           headers: { Authorization: `Bearer ${session.access_token}` },
@@ -30,13 +38,24 @@ export default function SchoolLayout({ children }: { children: React.ReactNode }
             router.replace("/login?reason=elsewhere");
             return;
           }
+          if (attempt < 2) {
+            await new Promise((res) => setTimeout(res, 300));
+            continue;
+          }
         }
         if (r.ok) {
+          meDataApplied = true;
           const j = await r.json();
           role = String(j.role || "");
           platformAdmin = !!j.platform_admin;
         }
-      } catch { /* fall through */ }
+      } catch {
+        if (attempt < 2) {
+          await new Promise((res) => setTimeout(res, 300));
+          continue;
+        }
+      }
+      }
       if (!role) {
         const { data: { user } } = await sb.auth.getUser();
         role = String((user?.user_metadata as { role?: string } | undefined)?.role || "");
