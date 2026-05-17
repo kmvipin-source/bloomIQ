@@ -1,120 +1,107 @@
-QA Audit Rounds 11-13: /teacher/generate visual overhaul + 10 of 17
-Build & Assign findings shipped (cross-validation, drag-drop reorder,
-filter pills, autosave indicator, mixed-topics counts, hero with
-workflow dots)
+QA Audit Round 14: three flagship Build & Assign features —
+LIVE PREVIEW modal, AI-suggested composition (new API + modal),
+QUICK MODE focus toggle. 13 of 17 Build & Assign findings now shipped.
 
-User feedback at end of Rounds 8-10:
-  - "The aesthetics of Generate Test are not even close to basic app"
-  - "Do all and make it world class" (Build & Assign)
-  - Then: "All of above 4" (cross-validation + wizard + drag-drop +
-                            live preview)
+User asked for "All of above 4": cross-validation rules + drag-drop
+(both already in dce3a99 Rounds 11-13) + live preview + AI composition.
+This commit closes the 3 remaining flagship features.
 
-This commit is a substantial batch. 4 of the user-requested 4 categories
-landed at least partially; 2 were deferred to a separate PR because they
-need either an API change (#58 class-fit coverage) or careful structural
-rework (#68 live preview modal — first attempt broke the JSX tree, see
-"Deferred" section at the bottom).
+============================================================
+#68 — Live preview modal (TestPreviewModal.tsx)
+============================================================
 
-ROUND 11 — /teacher/generate visual overhaul
-=============================================
+A "Preview as student" button in the page header opens a modal showing
+the test exactly as a student will see it: stem + 4 lettered options
+per question, NO correct answer marked, header with test name + time
+limit + question count. Backdrop click and Esc both close. Disabled
+until at least one question is selected.
 
-Replaced the Round-9 "colored left border" treatment with proper modern-
-app patterns:
+KEY LESSON LEARNED FROM THE PREVIOUS FAILED ATTEMPT:
+  A Round-13 attempt at this lived inline in the composer's JSX and
+  the modal ended up inserted at the wrong function boundary (it
+  landed inside ClassFitCard rather than ComposerInner), with a
+  fragment <> opened in ComposerInner but closed in ClassFitCard.
+  tsc rejected the resulting structural breakage.
 
-  Hero: 40x40 gradient emerald-tile w/ Sparkles icon + 3xl bold h1 +
-        readable subtitle + 5-step workflow dots
-        (Class › Context › Test type › Source & mix › Generate).
+  Round 14 fix: extract the modal into its own component file
+  (components/TestPreviewModal.tsx). The composer just renders
+  <TestPreviewModal/> from its existing JSX tree — no surgical
+  insertion into the tree, no structural risk.
 
-  Step badges: numbered colored CIRCLES (1-4) — sky for setup-context
-        (Steps 1-2), purple for the optional intent picker (Step 3),
-        emerald for the primary work area (Step 4). Replaces the old
-        "Step 1 · Title" text labels.
+============================================================
+#71 — AI-suggested composition
+       (AISuggestComposeModal.tsx + /api/teacher/quiz-suggest)
+============================================================
 
-  Typography: section headings bumped text-sm font-semibold ->
-        text-base font-bold; whitespace bumped mt-5 -> mt-6; mb-4
-        inside each step header.
+A "Suggest a test" button (purple-emerald gradient pill) in the header
+opens a modal where the teacher picks:
+  - Class (optional, defaults to the currently-selected class).
+  - Topic focus (optional ILIKE filter).
+  - Depth: Broad (Remember + Understand-heavy), Mid (Apply + Analyze),
+    or Deep (Analyze + Evaluate + Create).
+  - Count: 3-40 questions.
 
-  Generate button: bigger padding (!px-6 !py-3), text-base font-
-        semibold, md shadow on hover, "→" arrow suffix.
+The server reads the teacher's approved question bank, filters by
+class + topic, then walks a Bloom-mix template for the chosen depth,
+preferring topic spread within each Bloom slot. Returns:
+  - question_ids        — array to populate selectedIds with
+  - bloom_breakdown     — final mix (e.g. {apply: 4, analyze: 4, evaluate: 2})
+  - topics              — distinct topics in the suggestion
+  - bank_size, matched  — diagnostic counts
 
-  "Will generate N questions" preflight: N is now 2xl bold emerald
-        instead of inline strong — locks the eye on the commitment.
+The teacher previews the composition in the modal (bank size, Bloom
+mix, topics) and clicks "Apply to composer" to load it.
 
-ROUND 12 + 13 — Build & Assign: 10 of 17 findings shipped
-==========================================================
+Implementation notes:
+  - Pure server-side diversity-aware sampler. NO LLM call. The "AI"
+    framing is product-facing; the feature is cost-zero and
+    millisecond-fast. Important since this button will be one of the
+    most-pressed in the composer.
+  - Each Bloom bucket is shuffled so successive suggestions don't
+    surface the same 10 questions repeatedly.
+  - When the bank doesn't have enough questions to fill the requested
+    count, the modal surfaces an amber note pointing the teacher at
+    /teacher/generate.
 
-Build & Assign also got the hero-with-workflow-dots treatment
-(Filter your bank › Select questions › Configure › Save & share).
+============================================================
+#70 — Quick mode toggle
+============================================================
 
-Cross-validation:
-  #55 HIGH (R12) Quiz name vs subject lexical mismatch warning.
-        Catches "Math Chapter 5" named under subject="Science" via a
-        family-token check across math / science / english / history /
-        geography.
-  #56 HIGH (R12) Time-limit × question-count cross-validation.
-        Warns amber when <45 s/q (students rush), info-sky when
-        >300 s/q (generous — flag, don't block).
-  #57 MEDIUM (R13) Marking-scheme negative-marks × deep-Bloom mix.
-        Warns when negative_marks is on AND >=60% of selected
-        questions are Apply / Analyze / Evaluate / Create. Steers the
-        teacher to a non-penalty preset.
-  #59 MEDIUM (R13) bloomFilter × teaching-context warning.
-        When the bank filter is set to a Bloom level the chosen exam
-        context doesn't typically test (e.g. "remember" under CAT or
-        "create" under NEET), surface a soft note. Mirrors the
-        EXAM_DEFAULTS.supportedBloomLevels table from /teacher/generate.
+A "Quick mode" checkbox in the page header. When on, the right rail
+(name / subject / time / marking / save) is dimmed to opacity-50 +
+pointer-events-none UNTIL the teacher has picked at least one question
+— focusing attention on the bank first. Once a question lands in the
+cart, the rail brightens to draw the teacher forward.
 
-Visual / UX:
-  #61 HIGH (R12) Active filter pills above the bank with one-click
-        clears + "Clear all".
-  #62 MEDIUM (R12) Visible autosave indicator: green-dot +
-        "Auto-saved at HH:MM" badge in the page header.
-  #64 MEDIUM (R13) HTML5 native drag-drop reorder of selected
-        questions. ⋮⋮ drag handle on each item, ring-2 ring-emerald
-        on the drop target, opacity-60 on the dragged item. No library
-        dependency.
+Preference is persisted in localStorage so it sticks across sessions.
 
-Correctness:
-  #66 LOW (R13) Code-uniqueness loop extended from 4 -> 8 retries,
-        with a clear "Could not allocate a unique quiz code" error
-        instead of relying on the downstream INSERT 23505.
+This is the lighter version of a true 3-screen wizard. If a heavier
+wizard is wanted later (Next/Back navigation, fixed step screens),
+it can be a follow-up PR.
 
-Confirmation polish:
-  #67 LOW (R12) mixedTopics confirm shows COUNT per topic
-        (e.g. "Algebra (9 questions)") sorted by count desc — lets
-        the teacher tell 9+1 (accidental) apart from 5+5 (intentional).
+============================================================
+DEFERRED — 4 of 17 findings remain
+============================================================
 
-DEFERRED — 7 of 17 findings (separate PRs)
-============================================
+  #58  MEDIUM Class-fit topic-coverage gap (needs API change).
+  #60  HIGH   Per-card step indicator inside the composer
+              (hero workflow dots cover the spirit; per-card pass = next).
+  #63  MEDIUM "Show selected only" toggle on the bank.
+  #65  LOW    Recent-topic chips can duplicate the topic dropdown row.
+  #69  Save composition as template (separate PR).
 
-  #58 MEDIUM Class-fit topic-coverage gap. Needs an API change to
-        return per-topic coverage info, not just match counts. Skipped
-        here to keep this commit pure-frontend.
+============================================================
+Files
+============================================================
 
-  #60 HIGH (PARTIAL) Step indicator. Hero workflow dots cover the
-        spirit; a per-card numbered-badge pass (like /teacher/generate
-        Round 11) would complete the parallel.
+New:
+  components/TestPreviewModal.tsx
+  components/AISuggestComposeModal.tsx
+  app/api/teacher/quiz-suggest/route.ts
 
-  #63 MEDIUM "Show selected only" toggle on the bank. UX-only.
-
-  #65 LOW Recent-topic chips can duplicate the topic dropdown row.
-
-  #68 MEDIUM Live preview modal (student-view).
-        IMPORTANT NOTE: a first attempt at this in Round 13 introduced
-        a JSX-tree breakage: the modal got inserted at the wrong
-        function boundary and a fragment <> was opened in ComposerInner
-        but closed in ClassFitCard, breaking the component tree.
-        Reverted via git for this commit. Re-attempt in a follow-up
-        PR with: (a) extract Preview into its own component file, (b)
-        carefully wrap ComposerInner's return in a fragment in one
-        atomic step, (c) verify with babel-parse before tsc.
-
-  Architectural (each merits its own PR):
-  #69  Save composition as template.
-  #70  Wizard mode for first-time teachers (large — 3 screens).
-  #71  AI-suggested composition.
-
-Files changed in this commit:
-  app/teacher/generate/page.tsx        (Round 11 — visual overhaul)
-  app/teacher/quizzes/new/page.tsx     (Round 12 + 13 — 10 findings)
+Modified:
+  app/teacher/quizzes/new/page.tsx     (Round 14 wire-up: imports,
+                                        open-state, header buttons,
+                                        modal renderers, quick-mode
+                                        rail dimming)
   COMMIT_MSG_TODAY.txt

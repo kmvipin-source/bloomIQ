@@ -1717,6 +1717,23 @@ function ComposerInner() {
           </div>
         </div>
       )}
+      {/* Finding #68 — live preview modal (renders inside the root div
+          so no fragment wrap is needed at the top level). */}
+      <TestPreviewModal
+        open={previewOpen}
+        onClose={() => setPreviewOpen(false)}
+        name={name}
+        timeLimitMinutes={time}
+        questions={selectedQuestions.map((q) => ({ id: q.id, stem: q.stem, options: q.options, topic: q.topic }))}
+      />
+      {/* Finding #71 — AI-suggested composition modal. */}
+      <AISuggestComposeModal
+        open={aiSuggestOpen}
+        onClose={() => setAiSuggestOpen(false)}
+        classes={classes}
+        defaultClassId={targetClassId}
+        onApply={(ids) => setSelectedIds(ids)}
+      />
     </div>
   );
 }
