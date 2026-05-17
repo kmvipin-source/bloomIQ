@@ -1,83 +1,51 @@
-BloomIQ Score (killer first-run feature) + 7-day Free trial + evening polish
+Teaching-context H2/H5 fixes + aiClient (Groq->Gemini fallback) + Razorpay audit
 
-Two big features + several polish fixes, all uncommitted from today.
+== /teacher/generate fixes ==
 
-== BloomIQ Score + Future You ==
+H5 (validation-override reset): clear validationOverride whenever the set of
+validation issue codes changes, so a teacher who acknowledged an old block
+cannot accidentally skip a NEW block that appeared after a field change.
 
-Single 3-digit "BloomIQ Score" (300-900) every independent student sees
-from sign-in, powering a "Future You" reveal page predicting exam-day
-rank + named target colleges, with "Best You" delta showing how much
-they'd lift if they fix their weakest Bloom levels. Persistent score
-chip in the layout's top-right.
+H2 (UPSC slug mismatch): replace the string-mangling that converted
+EXAM_DEFAULTS["UPSC"].displayName ("UPSC Prelims") into "upsc_prelims" with
+an explicit displayName -> slug map. Now resolves to "upsc", which matches
+the teachingContext picker slug and stops validation rule 10 from firing
+false-positives for UPSC teachers. Mapping covers CAT, JEE, NEET, GMAT,
+GRE, UPSC, IELTS, TOEFL, CLAT, BITSAT, SAT, GATE, NDA, CUET.
 
-- Migration 66: calibrations + calibration_responses + bloomiq_scores tables.
-- /student/bloom-score: 12-question Groq-tailored calibration quiz, exam-goal-aware
-  (NEET / JEE / CAT / UPSC / Class 5-8 / Class 9 / Class 10 / Class 12 boards / Bank).
-- /student/future: animated count-up reveal, predicted rank label,
-  3 named target colleges, side-by-side Best You card with delta,
-  Bloom signature insights, per-Bloom mastery row, tier-aware bottom
-  section (personalised Premium pitch for free users, weekly active
-  path tracker for paid users), one-tap deep-linked drills routed to
-  /student/practice with bloom + topic + auto query params.
-- New libs: lib/calibrationGenerator.ts, lib/bloomiqScore.ts, lib/bloomiqInsights.ts.
-- New API: /api/student/calibration/{start,submit}, /api/student/score,
-  /api/student/score/recompute, /api/student/weekly-drill-progress.
-- New component: BloomIQScoreBadge (top-right persistent chip).
-- /student layout mounts the badge + intercepts is_free_expired.
-- /student page shows "Discover your BloomIQ Score" hero on first run.
+Applied via:
+- scripts/apply-block2-h5-validation-reset.mjs
+- scripts/apply-teaching-context-r11-block2-h2-upsc-slug.mjs
+- scripts/apply-teaching-context-r12-block2-h3-picker-seed.mjs
+  (H3 one-shot picker-seed useEffect gated by pickerInitialized flag.)
 
-== 7-day Free-plan validity ==
+== lib/aiClient.ts (unified AI client) ==
 
-Hard-gated trial window, admin-editable from /admin/plans.
+Groq-primary + Gemini-fallback wrapper around groq.ts. Every caller
+automatically falls over to Gemini when Groq returns 429 (daily 100k-token
+cap exhausted) or 5xx. No call-site changes -- swap
+`import { groqJSON } from "@/lib/groq"` for
+`import { aiJSON } from "@/lib/aiClient"`.
 
-- Migration 67: subscription_limits.free_trial_days (int, default 7,
-  capped 0-90); subscriptions.is_trial (bool).
-- Auto-grant on first sign-in: /api/auth/me inserts a tier=free,
-  is_trial=true subscription with expires_at=now+N when an independent
-  student signs in for the first time.
-- Hard upgrade gate at expiry: /api/auth/me computes is_free_expired;
-  the /student layout intercepts and redirects every /student/* route
-  to /student/expired (no silent degradation back to permanent Free).
-- /admin/plans gets a FreeTrialSettings card; PATCH /api/admin/free-trial-settings.
-- scripts/create-3-free-students.js seeds 3 test free students for E2E.
+Behavior:
+- Try Groq first (fast, free).
+- On 429 (rate-limited) -> fall through to Gemini.
+- On 5xx -> fall through to Gemini.
+- Other 4xx + parse errors -> rethrow (don't mask logic bugs).
 
-== Evening polish ==
+Motivates: 100+ pilot users on AI-heavy features (Teach-Back,
+Misconception, Generate, Tutor) can saturate Groq's free tier mid-session.
 
-Test harness for B2B billing pipeline:
-- scripts/test-billing-logic.js: 41 unit tests, no DB. Covers four-case
-  set-plan decision tree, mark-paid extend strategies, useFeatureAccess
-  grace boundaries, GST math + rounding, BLM/YYYY/NNNN padding,
-  first-sign-in activation flip. 41/41 PASS.
-- scripts/test-billing-e2e.js: single-command integration test that
-  walks 7 scenarios end-to-end against live Supabase, asserts DB state,
-  cleans up after itself.
+== docs/RAZORPAY_AUDIT_2026_05_17.md ==
 
-/admin/schools/[id] D1 + D2 fixes (surfaced via Chrome E2E):
-- D1: activation date hydration uses toLocaleDateString en-CA Asia/Kolkata
-      so operators see IST-local YYYY-MM-DD, not UTC.
-- D2: load() fetch passes cache:no-store so post-save reloads pick up
-      the freshly-written subscription row immediately.
+Webhook + checkout security audit of app/api/razorpay/webhook/route.ts.
 
-/admin/plans edit affordance fixed:
-- The stretched-link card pattern was broken (link z-0 vs content z-10
-  meant clicks landed on higher-z content; the link was unreachable).
-- Replaced muted Pencil decoration with explicit primary Edit button
-  next to the existing Clone button. Both flow through the proposal queue.
+Verdict: well-implemented for the common case. No CRITICAL findings.
+The critical primitives are in place: HMAC-SHA256 with timing-safe
+comparison, idempotency via unique partial index on razorpay_payment_id,
+amount-mismatch detection, event filtering (payment.captured / order.paid
+only), race-safe insert swallowing 23505, school_id nulled on B2C path.
 
-/student/expired now shows BOTH Premium and Premium Plus:
-- Two-column upgrade panel. Premium (indigo) with core toolkit bullets;
-  Premium Plus (violet, "BEST FOR EXAM PREP" ribbon) with competitive-
-  exam differentiators (past-paper X-ray, mock-rank predictor, voice
-  teacher). Each tier has its own CTA passing ?tier= hint to /pricing.
-
-Type-narrowing cleanup: as-unknown-as casts in three admin API routes
-where Supabase JS narrowed selects to GenericStringError because the
-new columns from migrations 62-65 aren't in the type cache yet.
-
-Docs:
-- docs/TEST_REPORT_2026-05-10.md (logic + integration test summary).
-- docs/CHROME_E2E_2026-05-10_expiry_edit.md (Chrome run report + defects).
-
-Verified: 0 TypeScript errors in files shipped today, 0 ESLint errors
-on the 14 files in scope, 41/41 logic tests pass, Chrome E2E passes
-for the four flows touched.
+Medium/low items noted (R1: started_at bumped on every renewal UPDATE
+distorts (expires_at - started_at) cohort math; R2: notes.user_id
+trusted without cross-verification, mitigated by amount-match; etc.).

@@ -1,17 +1,10 @@
 @echo off
-REM One-shot commit + push for today's B2B billing + expiry work.
-REM A Windows-side process (likely VS Code's git integration or
-REM GitHub Desktop) was holding .git/index.lock open from inside the
-REM sandbox, so commit had to be deferred to this script.
-REM
+setlocal
+REM Holistic GitHub sync: pull -> stage EVERYTHING -> commit -> push.
+REM Stages every uncommitted change in the repo, respecting .gitignore.
 REM Run from a normal cmd / Powershell window:
 REM     cd C:\Users\kmvip\bloomiq
-REM     push-today.bat
-REM
-REM If "another git process is running" still fires:
-REM 1. Close VS Code's source-control panel and GitHub Desktop.
-REM 2. Run: del .git\index.lock
-REM 3. Re-run this script.
+REM     .\push-today.bat
 
 cd /d C:\Users\kmvip\bloomiq
 
@@ -21,24 +14,74 @@ if exist .git\index.lock (
 )
 
 echo.
-echo === Committing ===
-git commit -F COMMIT_MSG_TODAY.txt
-if errorlevel 1 (
-  echo.
-  echo Commit failed. See output above.
-  exit /b 1
+echo === Pre-flight: what's local-only ===
+git status --short
+echo.
+echo --- Branches with commits ahead of origin/main ---
+for /f "tokens=*" %%b in ('git for-each-ref --format="%%(refname:short)" refs/heads') do (
+  for /f %%c in ('git rev-list --count origin/main..%%b 2^>nul') do (
+    if not "%%c"=="0" echo   %%b: %%c ahead
+  )
 )
+echo.
+
+echo === Pulling latest from origin/main ===
+git pull --no-rebase origin main
+if errorlevel 1 goto fail_pull
 
 echo.
-echo === Pushing to origin/main ===
+echo === Staging EVERYTHING ===
+git add -A
+if errorlevel 1 goto fail_add
+
+echo.
+echo === Files staged ===
+git status --short
+echo.
+
+echo === Committing ===
+git commit -F COMMIT_MSG_TODAY.txt
+if errorlevel 1 goto warn_commit
+
+echo.
+echo === Pushing main to origin ===
 git push origin main
-if errorlevel 1 (
-  echo.
-  echo Push failed. Check your network or auth and re-run: git push origin main
-  exit /b 1
-)
+if errorlevel 1 goto fail_push
 
 echo.
 echo === Done ===
-echo Today's changes are now on GitHub.
-echo You can delete COMMIT_MSG_TODAY.txt and push-today.bat afterwards.
+echo Local main is fully in sync with origin/main on GitHub.
+echo You can delete COMMIT_MSG_TODAY.txt and push-today.bat afterwards if you like.
+endlocal
+exit /b 0
+
+:fail_pull
+echo.
+echo Pull failed. Resolve conflicts or check network/auth, then re-run.
+endlocal
+exit /b 1
+
+:fail_add
+echo.
+echo git add failed. See output above.
+endlocal
+exit /b 1
+
+:warn_commit
+echo.
+echo Commit step exited non-zero. Most common cause: "nothing to commit".
+echo If so, you're already in sync -- attempting push anyway in case there
+echo are local commits not yet on origin.
+git push origin main
+if errorlevel 1 goto fail_push
+echo.
+echo === Done ===
+echo Local main is fully in sync with origin/main on GitHub.
+endlocal
+exit /b 0
+
+:fail_push
+echo.
+echo Push failed. Check your network or auth and re-run: git push origin main
+endlocal
+exit /b 1

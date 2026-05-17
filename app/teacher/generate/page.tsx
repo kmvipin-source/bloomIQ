@@ -483,6 +483,13 @@ export default function GeneratePage() {
     return () => { cancelled = true; };
   }, []);
 
+  // H5 fix: clear override whenever the set of validation issues changes,
+  // so a teacher who acknowledged an old block cannot accidentally skip a NEW
+  // block that appeared after a field change.
+  useEffect(() => {
+    setValidationOverride(false);
+  }, [validation.issues.map((i) => i.code).join(",")]);
+
   // Auto-set Numerical-% when the teacher picks a competitive-exam context.
   // Honors numericalManuallySet so it never clobbers a teacher-set value.
   // Mapping is comprehensive vs the expanded EXAM_DEFAULTS table.
@@ -530,8 +537,19 @@ export default function GeneratePage() {
       "re_teach": "remediation",
     };
     const mappedIntent: TCIntentId | null = activeIntentId ? (intentMap[activeIntentId] ?? null) : null;
+    // Explicit displayName -> slug map. "UPSC Prelims" -> "upsc" etc.
+    // Avoids the string-mangling bug where "UPSC Prelims" became "upsc_prelims"
+    // and never matched the picker slug "upsc".
+    const examDisplayToSlug: Record<string, string> = {
+      CAT: "cat", JEE: "jee_main", NEET: "neet",
+      GMAT: "gmat", GRE: "gre",
+      "UPSC Prelims": "upsc",
+      IELTS: "ielts", TOEFL: "ielts",
+      CLAT: "clat", BITSAT: "bitsat", SAT: "sat",
+      GATE: "gate", NDA: "nda", CUET: "cuet",
+    };
     const detectedSlug: string | null = examDefault
-      ? examDefault.displayName.toLowerCase().replace(/\s+/g, "_")
+      ? (examDisplayToSlug[examDefault.displayName] ?? null)
       : null;
     return validateGenerationRequest({
       classGrade: cls?.grade ?? null,
