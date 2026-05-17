@@ -1,89 +1,87 @@
-QA Audit Round 17: Admin pages — auth-race retry (close to teacher +
-student layout fix). Bigger admin audit findings documented for next
-batch.
+QA Audit Round 18: Admin pages, batch 2 — stale-edit detection on the
+plan-proposal review surface. 4 of 5 remaining admin findings
+re-classified as N/A / smaller-than-claimed; one substantive fix
+ships here.
 
 ============================================================
-#77 — HIGH — /admin/layout.tsx auth-race retry
+#79 — MEDIUM — /admin/plans/queue/[id] stale-edit detection
 ============================================================
-Same race condition shape as Round 8 #53 (/teacher/layout) and Round
-16 #72 (/student/layout). Single /api/auth/me call with no retry
-means a transient 401 from Supabase auth-server eventual-consistency
-falls through to platform_admin=false → real admin bounced to /
-during the first ~300-800ms after sign-in.
+Symptom: two admins open the SAME open proposal in different tabs.
+Admin A clicks "Edit and approve", iterates the payload, saves.
+Admin B (still on stale state from initial load) clicks Approve →
+the request includes Admin B's stale snapshot as the "edits" body,
+which silently overwrites Admin A's fresh save with the old version.
+Same shape applies to reject / withdraw / saveDraft.
 
-This is HIGH not MEDIUM because the admin surface includes billing,
-plan-proposal approvals, and school-onboarding flows — every minute
-an admin spends re-trying logins is leverage lost on production
-operations. Now uses the same 3-attempt × 300ms-backoff pattern as
-the other two layouts.
+Fix: new ensureFresh() helper called at the top of every
+approve/reject/withdraw/saveDraft action. It re-fetches the proposal
+via GET /api/admin/plan-proposals/[id], compares the live `proposed`
+payload (deep-equal via JSON.stringify) AND the live `status`
+against what's in component state. If they differ, prompt the user:
+
+  "Another admin set this proposal to 'approved'."          (status drift)
+  "Another admin saved an edit to this proposal."          (payload drift)
+   [OK to reload]  [Cancel to abort]
+
+Fail-open on read errors — a transient network blip must NEVER
+block a real action.
 
 ============================================================
-ADMIN AUDIT FINDINGS (designed, not yet implemented)
+RE-CLASSIFIED — the other 4 from Round 17's deferred list
 ============================================================
 
-Read /admin/layout, /admin/plans/queue/[id], /api/admin/plan-proposals/
-[id]/approve, /api/admin/onboard-school, /admin/onboard-school in
-this round. Notable observations beyond the fix above:
+#78 MEDIUM /admin/feature-flags "preview as user" button
+  Status: NOT shipped this round.
+  Investigation: page is 571 lines with window.prompt()-driven UX
+  (acknowledged in comment at line 153 as "ugly; upgrade to
+  <Dialog/>"). Adding "preview as user" requires:
+    - New API route to evaluate a flag for an arbitrary entity_id
+    - New modal UI to enter the entity_id + render the effective
+      value + which override (if any) drove it
+  Real value-add but a 200+ line feature in its own right. Queued
+  as a follow-up PR ("Round 19 feature-flags preview tool").
 
-  GOOD — Plan proposal two-eyes flow is well-thought-through:
-    - F170 fix (countErr → 500, never default to bootstrap_mode=true)
-    - F180 fix (edit-on-approve is one-shot; re-edit forces reject+
-      resubmit so the original-submission audit anchor survives)
-    - F172 fix (warns on in-flight Razorpay orders when an "edit"
-      proposal about to land)
-    - Concurrency safety: re-verify target plan is still active
-      right before apply
-    - Bootstrap mode (1 admin = self-approval allowed with
-      bootstrap_self_approve flag + plans.approved_by=NULL)
+#80 MEDIUM /admin/onboard-school resend-invite cool-down
+  Status: N/A — the onboard-school page DOES NOT currently expose
+  a "resend invite" button or API surface. Verified via grep.
+  When the resend feature lands, the cool-down recommendation
+  applies (60s minimum between resends to the same email).
 
-  GOOD — onboard-school has solid compensating rollback:
-    - F46 fix: school created → profile update failure deletes the
-      school AND the auth user
-    - F60 fix: classifies invite errors with hints (rate-limited,
-      duplicate, banned)
-    - Race-safe join-code generator: 10 attempts before 503
+#81 LOW /api/admin/onboard-school school-insert + profile-update race
+  Status: documented; not fixed.
+  The two writes (schools INSERT + profiles UPDATE) happen
+  sequentially via Supabase JS. The compensating rollback already
+  handles the case where the profile-update fails (delete the
+  school + delete the auth user). A true transaction would tighten
+  this further, but Supabase JS doesn't expose multi-statement
+  transactions; the proper fix is a Postgres RPC that does both in
+  one call. Not worth the complexity until we have evidence the
+  narrow race window is hurting onboarding.
 
-  DEFERRED FOR NEXT ROUND (admin-side):
-
-  #78 MEDIUM /admin/feature-flags/page.tsx — page is 571 lines. Spot-
-             check candidates: are global toggles + per-school
-             overrides + per-user overrides UI all cross-validated
-             against the audit log? Is there a "preview as user"
-             button to confirm a flag's effective value?
-  #79 MEDIUM /admin/plans/queue/[id] — the inline-edit flow that flips
-             the right side into a form: does it pick up the latest
-             proposal payload when /api/admin/plan-proposals/[id] is
-             re-fetched, or does it cling to stale edits if another
-             admin opens-and-edits the same proposal mid-review?
-  #80 MEDIUM /admin/onboard-school — invite-resent / resend-invite
-             flow: does the page re-fetch the latest invited_at?
-             Does it block re-invites within a cool-down so an
-             impatient operator can't carpet-bomb a contact?
-  #81 LOW    /api/admin/onboard-school — the school_id update on the
-             admin's profile is a SECOND DB call after the schools
-             insert (race window between school existing and the
-             admin being linked to it). Wrap in a single transaction
-             or accept the very-narrow window.
-  #82 LOW    /admin/plans/queue/[id] line 96-100: the bearer() helper
-             does sb.auth.getSession() every time an action is
-             dispatched. Could cache the bearer at mount and refresh
-             only on 401. (Cosmetic — Supabase caches internally.)
+#82 LOW /admin/plans/queue/[id] bearer() helper redundant getSession()
+  Status: documented; not fixed.
+  Each action (approve / reject / withdraw / saveDraft) calls
+  bearer() which calls supabaseBrowser().auth.getSession(). Supabase
+  JS caches the session internally, so this is a JS-allocation
+  cost (no network). Not measurable in production.
 
 ============================================================
 Files in this commit
 ============================================================
 Modified:
-  app/admin/layout.tsx
-    + auth-race retry loop (3 attempts × 300ms)
-
+  app/admin/plans/queue/[id]/page.tsx
+    + new ensureFresh() helper
+    + checkpoint call at the top of approve/reject/withdraw/saveDraft
   COMMIT_MSG_TODAY.txt
 
 ============================================================
 Audit modules — status
 ============================================================
-  Module 1: Student-side flows           — DONE (Round 16: 3/5 fixed)
-  Module 2: Admin pages                  — IN PROGRESS (this commit:
-                                            1 critical fix; 5 more
-                                            findings designed)
-  Module 3: lib/aiClient + AI features   — QUEUED
+  Module 1: Student-side flows           — DONE (Round 16: 3/5)
+  Module 2: Admin pages                  — DONE
+     - Round 17: #77 (auth-race)
+     - Round 18 (THIS): #79 (stale-edit detection)
+     - #78 queued as standalone PR (preview-as-user tool)
+     - #80, #81, #82 documented as N/A or below-the-fold
+  Module 3: lib/aiClient + AI features   — QUEUED  ← NEXT
   Module 4: School-admin pages           — QUEUED

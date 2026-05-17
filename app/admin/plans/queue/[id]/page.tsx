@@ -100,8 +100,52 @@ export default function PlanProposalDetailPage(props: PageProps) {
     return session.access_token;
   }
 
+  /**
+   * Finding #79 — stale-edit detection.
+   *
+   * Re-fetch the latest proposal snapshot and compare its `proposed`
+   * payload + status against what's in our state. If they differ, another
+   * admin has saved an edit (creator iterating in another tab) OR has
+   * approved/rejected/withdrawn it (decided state), and our action would
+   * either clobber that edit or run against a stale assumption.
+   *
+   * Returns true if the local state is still fresh and the caller can
+   * proceed; false if the caller must reload first (and asks the user
+   * what to do).
+   */
+  async function ensureFresh(): Promise<boolean> {
+    if (!proposal) return false;
+    try {
+      const token = await bearer();
+      const r = await fetch(`/api/admin/plan-proposals/${proposal.id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+        cache: "no-store",
+      });
+      if (!r.ok) return true; // fail-open: don't block a real action on a transient read failure
+      const j = await r.json();
+      const latest = j.proposal;
+      if (!latest) return true;
+      const sameStatus = latest.status === proposal.status;
+      const samePayload = JSON.stringify(latest.proposed) === JSON.stringify(proposal.proposed);
+      if (sameStatus && samePayload) return true;
+      // Stale — confirm with user.
+      const detail = !sameStatus
+        ? `Another admin set this proposal to "${latest.status}".`
+        : "Another admin saved an edit to this proposal.";
+      const ok = window.confirm(`${detail}\n\nPress OK to reload the latest version. Press Cancel to abort your action.`);
+      if (ok) {
+        await load();
+      }
+      return false;
+    } catch {
+      return true; // fail-open on network failure
+    }
+  }
+
   async function approve(withEdits: boolean) {
     if (!proposal) return;
+    // Finding #79: re-verify the proposal is still in its expected state.
+    if (!(await ensureFresh())) return;
     setBusy("approve");
     setErr(null);
     try {
@@ -130,6 +174,7 @@ export default function PlanProposalDetailPage(props: PageProps) {
       setErr("Rejection reason is required.");
       return;
     }
+    if (!(await ensureFresh())) return;  /* Finding #79 */
     setBusy("reject");
     setErr(null);
     try {
@@ -150,6 +195,7 @@ export default function PlanProposalDetailPage(props: PageProps) {
 
   async function withdraw() {
     if (!proposal) return;
+    if (!(await ensureFresh())) return;  /* Finding #79 */
     setBusy("withdraw");
     setErr(null);
     try {
@@ -172,6 +218,7 @@ export default function PlanProposalDetailPage(props: PageProps) {
   // iterating, withdraw, or hand off to the approver.
   async function saveDraft() {
     if (!proposal || !editPayload) return;
+    if (!(await ensureFresh())) return;  /* Finding #79 — avoid overwriting another admin\'s save */
     setBusy("save-draft");
     setErr(null);
     try {
