@@ -1,93 +1,89 @@
-QA Audit Round 6 (FINAL): close every remaining strict-TS error and flip
-next.config.ts ignoreBuildErrors to false PERMANENTLY. Both halves of the
-type-safety invariant are now in place. The audit is complete.
+QA Audit Round 7: /teacher/generate cross-validation + visual cleanup (2 fixes)
 
-ROUND 6 — 9 cleanup fixes + Finding #25 closure
-================================================
+Two issues caught from a fresh look at the live form (teacher-reported screenshot):
 
-CATEGORY A — recharts Formatter signature drift (10 sites, 4 files)
-  Library upgraded its Tooltip Formatter / LabelFormatter type to require
-  a 5-arg signature. Existing 1-3-arg handlers run fine at runtime (JS
-  ignores extra args) but no longer match the type. Cast each prop body
-  to `as unknown as never` at the JSX call site so the runtime behaviour
-  stays identical while TS stops complaining.
+FINDING #45 — HIGH — Question count display mismatch
+====================================================
+The form had TWO running totals that used different formulas:
 
-  Fixed sites:
-    components/BloomChart.tsx (lines 24, 44)        — Finding #41
-    components/EngagementTrends.tsx (lines 118, 119) — Finding #42
-    app/student/progress/page.tsx (lines 305, 384, 389, 417, 422) — Finding #43
-    app/school/reports/page.tsx (line 931)          — Finding #44
+  Upper "Total: 6 questions"     (near the per-level inputs)
+    -> perLevel * pickedLevels.length          (IGNORED overrides)
+  Lower "Will generate 3 questions"  (pre-flight, near the Generate button)
+    -> pickedLevels.reduce((s, lv) => s + (perLevelCustom[lv] ?? perLevel), 0)
+                                                (HONORED overrides)
 
-CATEGORY B — H3-codemod damage in /teacher/quizzes/new (4 fixes)
-  Same root cause as the Round-1 /teacher/generate damage. The H3
-  picker-seed apply script ran against quizzes/new but its anchors
-  didn't match cleanly, leaving:
+Repro: pick 3 Bloom levels, default perLevel=2, set per-level overrides to
+1 each. Upper says "6", lower says "3". Teacher loses trust in both.
 
-  B.1 (Finding #36) Duplicate categoryLabel: imported at line 19, and
-      re-aliased at line 70 from categoryLabelShared. TS2440 import
-      conflict. Fix: drop the direct import at line 19; the line-70
-      alias already provides categoryLabel in scope.
+Fix: single source of truth. Both numbers now use the same override-aware
+sum. The upper Total also shows a small "· per-level overrides applied"
+badge when overrides are in effect, so the teacher knows why the number
+differs from default × levels.
 
-  B.2 (Finding #37) `teacherClasses` undefined: lines 430-431 referenced
-      `teacherClasses` but the actual state variable is `classes` (state
-      at line 271 in the original file). Fix: rename references.
+FINDING #46 — HIGH (UX) — Form was visually cluttered
+======================================================
+On the same screenshot the teacher had to scroll past:
+  - Bloom levels picker
+  - Customize-per-level inputs (3 number boxes)
+  - Reading-level chips (Beginner / Practitioner / Expert)
+  - Sub-topic chips (Prime Factorization / GCD / LCM / ...)
+  - More-instructions textarea
+  - Default questions per level input
+  - Numerical % slider
+  - Validation banner
+  - Generate button
 
-  B.3 (Finding #38) `classes` + `targetClassId` used before declaration:
-      `contextFit` useMemo at line ~149 reads both, but their `useState`
-      declarations sat at lines 271-272. TS2448/TS2454 under strict.
-      Fix: relocate the two state declarations above the contextFit
-      useMemo (right before the "// Class-vs-context fit." comment).
+Eight controls in one column, no visual hierarchy. First-time teachers
+got lost; the secondary form drowned the primary controls.
 
-  B+ (Finding #39) lib/featureFlags.client.tsx had `children: ReactNode;`
-      declared twice in a destructuring type (TS2300 duplicate identifier).
-      Pure typo. Fix: removed one.
+Two changes:
 
-CATEGORY C — components/PlanDiff.tsx blockedByImmutable narrowing
-  Finding #40. The `d` in groupDiffs.map carries
-  `blockedByImmutable: boolean | undefined`, but ScalarRow's prop type
-  requires `boolean`. Fix: coerce at the call site with
-  `blockedByImmutable: d.blockedByImmutable ?? false`.
+  (a) Label dedup. The phrase "Questions per level" appeared twice (one
+      header for the per-level override inputs, one header for the
+      default-perLevel input). Both with the same wording. Renamed:
+        per-level overrides  -> "Customize per level (optional)"
+                                 + sub-text "Override the default of N
+                                    for specific levels — leave blank
+                                    to keep the default"
+        default per level    -> "Default questions per level"
+                                 (already renamed in Finding #45 fix)
 
-FINDING #25 CLOSURE — next.config.ts ignoreBuildErrors = false PERMANENT
-========================================================================
-  The meta-cause of every critical bug in the audit. With all known TS
-  errors closed in rounds 1-6, the build-time type-checker is now an
-  invariant. Both gates are live:
+  (b) Collapsible Advanced section. Wrapped GenerateContextChips
+      (audience-level + sub-topic + more-instructions) and the
+      Numerical % slider inside a <details> element with summary
+      "Advanced — fine-tune the mix (audience, sub-topics, numerical %)".
+      Closed by default so the primary form (source → topic → class →
+      Bloom → Generate) reads top-to-bottom with no distractions.
+      Teachers who need the dials click to expand. Down-chevron rotates
+      via group-open:rotate-90 for an obvious affordance.
 
-    1. CI-time:    `tsc --noEmit -p tsconfig.check.json`  (strict:true)
-    2. Build-time: `next build`  (ignoreBuildErrors:false)
+Designed-but-deferred findings (Round 8 candidates)
+====================================================
+Six more cross-validation gaps were identified but not implemented in
+this commit. Brief descriptions kept here so they aren't forgotten:
 
-  Any future PR introducing a TS error of the families this audit found —
-  TS2304 (Cannot find name), TS2451 (block-scoped redeclaration), TS2339
-  (missing property), TS2448/TS2454 (used-before-declared), TS2440
-  (import conflicts with local), TS2322 (type assignment) — will fail
-  both gates and cannot ship. Localized exceptions belong on a
-  `// @ts-expect-error <reason>` line, never on a global flag.
+  #47 MEDIUM Numerical % vs class-grade cross-validation missing.
+             70% numerical for a Class 5-8 cohort should soft-warn.
 
-CUMULATIVE AUDIT TOTAL (rounds 1-6)
-====================================
+  #48 MEDIUM Active intent stays highlighted after manual edits diverge
+             from its blueprint. Teacher can't tell that "Mock paper" is
+             no longer what's actually in the form.
 
-  Roughly 40 distinct findings; 40+ closed.
-  Modules touched: /teacher/generate, /teacher/quizzes/new, /admin/users,
-  /admin/plans (all sub-routes), /admin/schools, /admin/subscriptions
-  (all sub-routes), /api/auth/* (me, claim-session, set-password),
-  /api/checkout (+ /verify), /api/signup-and-pay, /api/razorpay/webhook,
-  /api/generate, /api/papers/generate, /api/student/* (adaptive-practice,
-  quick-test), /api/rank/predict, /school/reports, /student/progress,
-  components/PlanDiff, components/BloomChart, components/EngagementTrends,
-  lib/groq, lib/bloomVerifier, lib/apiAuth, lib/featureFlags.client,
-  plus the two CI configs.
+  #49 MEDIUM Sub-topic chips don't refresh when teaching-context changes.
+             Stale chips from a different exam stay visible.
 
-  The codebase ships strict-clean from this point forward.
+  #50 MEDIUM Validation banner doesn't tell the teacher which field to
+             change. "JEE-difficulty beyond Class 5-8" — fix the class
+             or the context picker? Banner item should carry a fields[]
+             list and ring the affected input.
+
+  #51 LOW    Reading-level vs teaching-context inconsistency not warned.
+             Beginner + JEE Main is silently contradictory.
+
+  #52 LOW    Class.subject vs typed topic not cross-validated. Math
+             class + "Photosynthesis" topic produces biology questions
+             tagged to a math class.
 
 Files changed in this commit:
+  app/teacher/generate/page.tsx
   COMMIT_MSG_TODAY.txt
-  app/school/reports/page.tsx
-  app/student/progress/page.tsx
-  app/teacher/quizzes/new/page.tsx
-  components/BloomChart.tsx
-  components/EngagementTrends.tsx
-  components/PlanDiff.tsx
-  lib/featureFlags.client.tsx
-  next.config.ts                  (ignoreBuildErrors: true -> false)
-  scripts/apply-round6-qa-fixes.mjs  (NEW)

@@ -1192,8 +1192,8 @@ export default function GeneratePage() {
               {pickedLevels.length > 0 && (
                 <div className="mt-3 pt-3 border-t border-slate-200">
                   <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs font-semibold text-slate-700">Questions per level (override)</span>
-                    <span className="text-[11px] muted">Default {perLevel} each — leave blank to use default</span>
+                    <span className="text-xs font-semibold text-slate-700">Customize per level <span className="muted font-normal">(optional)</span></span>
+                    <span className="text-[11px] muted">Override the default of {perLevel} for specific levels — leave blank to keep the default</span>
                   </div>
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                     {pickedLevels.map((lv) => (
@@ -1243,25 +1243,52 @@ export default function GeneratePage() {
           )}
         </div>
 
-        {/* Generate-context-v2 (2026-05-13): audience-level chip +
-            auto-detected sub-topic chips + optional "Anything specific?"
-            textbox. Shared component with /student/generate. */}
+        {/* Finding #46 visual restructure: keep "Default questions per
+            level" inline (primary control), but tuck audience/sub-topic
+            chips + numerical % into a collapsible "Advanced" section so
+            first-time teachers see a clean primary form. */}
+        <div>
+          <label className="label">Default questions per level</label>
+          <input type="number" min={1} max={10} className="input w-32"
+                 value={perLevel} onChange={(e) => setPerLevel(Math.max(1, Math.min(10, +e.target.value || 1)))} />
+          <p className="text-xs muted mt-1">
+            {(() => {
+              // Finding #45 fix: this Total previously ignored per-level
+              // overrides while the pre-flight "Will generate" line below
+              // honored them. Single source of truth now: both use the
+              // same override-aware sum.
+              const total = mode === "all"
+                ? 6 * perLevel
+                : pickedLevels.reduce((s, lv) => s + (perLevelCustom[lv] ?? perLevel), 0);
+              const hasOverrides = mode === "custom" &&
+                pickedLevels.some((lv) => perLevelCustom[lv] !== undefined);
+              return (
+                <>
+                  Total: {total} question{total === 1 ? "" : "s"}
+                  {hasOverrides ? (
+                    <span className="text-emerald-700"> &nbsp;· per-level overrides applied</span>
+                  ) : null}
+                </>
+              );
+            })()}
+          </p>
+        </div>
+
+        {/* Advanced — fine-tune the mix. Closed by default to keep the
+            primary form clean. Teachers who want to bias audience, sub-topic
+            coverage, or numerical % open this. */}
+        <details className="mt-1 group">
+          <summary className="cursor-pointer text-sm font-semibold text-slate-700 hover:text-emerald-700 select-none flex items-center gap-2">
+            <span className="inline-block transition-transform group-open:rotate-90">▸</span>
+            Advanced — fine-tune the mix
+            <span className="muted text-xs font-normal">(audience, sub-topics, numerical %)</span>
+          </summary>
+          <div className="mt-3 space-y-5 pl-4 border-l-2 border-slate-100">
         <GenerateContextChips
           topic={topic}
           onChange={setGenContext}
           disabled={busy}
         />
-
-        <div>
-          <label className="label">Questions per level</label>
-          <input type="number" min={1} max={10} className="input w-32"
-                 value={perLevel} onChange={(e) => setPerLevel(Math.max(1, Math.min(10, +e.target.value || 1)))} />
-          <p className="text-xs muted mt-1">
-            {mode === "all"
-              ? `Total: ${perLevel * 6} questions`
-              : `Total: ${perLevel * pickedLevels.length} question${perLevel * pickedLevels.length === 1 ? "" : "s"}`}
-          </p>
-        </div>
 
         <div>
           <label className="label flex items-center justify-between">
@@ -1310,6 +1337,8 @@ export default function GeneratePage() {
             </p>
           )}
         </div>
+          </div>
+        </details>
 
         {err && <div className="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 rounded-lg">{err}</div>}
 
