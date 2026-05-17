@@ -195,6 +195,68 @@ function ComposerInner() {
   };
   const [draftRestored, setDraftRestored] = useState<DraftSnapshot | null>(null);
   const [lastSavedAt, setLastSavedAt] = useState<number | null>(null);
+  // Round 14 — modal open states (#68, #71) + quick mode (#70).
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [aiSuggestOpen, setAiSuggestOpen] = useState(false);
+  const [quickMode, setQuickMode] = useState(false);
+  // Finding #63 — bank-view filter to show only the currently-selected
+  // questions. Useful for reviewing the composition.
+  const [showSelectedOnly, setShowSelectedOnly] = useState(false);
+  // Finding #69 — save composition filters as a named template.
+  type ComposerTemplate = {
+    id: string;
+    name: string;
+    filters: { topicFilter: string; bloomFilter: string; categoryFilter: string; search: string };
+    savedAt: number;
+  };
+  const TEMPLATES_KEY = "zcoriq.composer.templates.v1";
+  const [templates, setTemplates] = useState<ComposerTemplate[]>([]);
+  const [templatesOpen, setTemplatesOpen] = useState(false);
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(TEMPLATES_KEY);
+      if (raw) {
+        const arr = JSON.parse(raw);
+        if (Array.isArray(arr)) setTemplates(arr.filter((t) => t && typeof t === "object" && t.name));
+      }
+    } catch {}
+  }, []);
+  function persistTemplates(next: ComposerTemplate[]) {
+    setTemplates(next);
+    try { window.localStorage.setItem(TEMPLATES_KEY, JSON.stringify(next)); } catch {}
+  }
+  function saveCurrentAsTemplate() {
+    const n = window.prompt("Name this filter template:", "");
+    if (!n || !n.trim()) return;
+    const t: ComposerTemplate = {
+      id: `tpl_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      name: n.trim().slice(0, 50),
+      filters: { topicFilter, bloomFilter, categoryFilter, search },
+      savedAt: Date.now(),
+    };
+    persistTemplates([t, ...templates].slice(0, 20));
+  }
+  function applyTemplate(t: ComposerTemplate) {
+    setTopicFilter(t.filters.topicFilter || "all");
+    setBloomFilter((t.filters.bloomFilter as BloomLevel | "all") || "all");
+    setCategoryFilter(t.filters.categoryFilter || "all");
+    setSearch(t.filters.search || "");
+    setTemplatesOpen(false);
+  }
+  function deleteTemplate(id: string) {
+    persistTemplates(templates.filter((t) => t.id !== id));
+  }
+  useEffect(() => {
+    try {
+      const v = window.localStorage.getItem("zcoriq.composer.quickMode.v1");
+      if (v === "1") setQuickMode(true);
+    } catch {}
+  }, []);
+  useEffect(() => {
+    try {
+      window.localStorage.setItem("zcoriq.composer.quickMode.v1", quickMode ? "1" : "0");
+    } catch {}
+  }, [quickMode]);
   // Restore offer on mount.
   useEffect(() => {
     try {
@@ -498,6 +560,11 @@ function ComposerInner() {
       return true;
     });
   }, [bank, bloomFilter, topicFilter, categoryFilter, search]);
+
+  // Finding #63: derived bank view honoring the "Show selected only" toggle.
+  const displayedBank: Question[] = showSelectedOnly
+    ? filtered.filter((q) => selectedSet.has(q.id))
+    : filtered;
 
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
   const selectedQuestions = useMemo(
@@ -889,6 +956,94 @@ function ComposerInner() {
           )}
         </div>
         <div className="flex items-center gap-3 flex-wrap">
+          {/* Finding #70 — quick mode toggle */}
+          <label className="inline-flex items-center gap-2 text-xs text-slate-600 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={quickMode}
+              onChange={(e) => setQuickMode(e.target.checked)}
+              className="rounded border-slate-300"
+            />
+            Quick mode
+          </label>
+          {/* Finding #69 — composition templates */}
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setTemplatesOpen((o) => !o)}
+              className="text-xs px-3 py-1.5 rounded-md border border-slate-200 hover:bg-slate-50 inline-flex items-center gap-1.5"
+              title="Saved filter templates"
+            >
+              <Lightbulb size={12} /> Templates
+              {templates.length > 0 && (
+                <span className="px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-700 font-semibold text-[10px]">{templates.length}</span>
+              )}
+            </button>
+            {templatesOpen && (
+              <div className="absolute right-0 mt-1 z-40 w-72 bg-white rounded-lg shadow-lg border border-slate-200 max-h-80 overflow-y-auto">
+                <div className="px-3 py-2 border-b border-slate-100 flex items-center justify-between gap-2">
+                  <span className="text-xs font-semibold text-slate-700">Composition templates</span>
+                  <button
+                    type="button"
+                    onClick={saveCurrentAsTemplate}
+                    className="text-xs px-2 py-0.5 rounded border border-emerald-200 text-emerald-700 hover:bg-emerald-50"
+                  >
+                    Save current
+                  </button>
+                </div>
+                {templates.length === 0 ? (
+                  <div className="px-3 py-4 text-xs text-slate-500 text-center">
+                    No templates yet. Set your filters above, then click <strong>Save current</strong>.
+                  </div>
+                ) : (
+                  <ul>
+                    {templates.map((t) => (
+                      <li key={t.id} className="px-3 py-2 hover:bg-slate-50 flex items-center gap-2 border-b border-slate-100 last:border-b-0">
+                        <button
+                          type="button"
+                          onClick={() => applyTemplate(t)}
+                          className="flex-1 min-w-0 text-left"
+                        >
+                          <div className="text-sm font-medium text-slate-800 truncate">{t.name}</div>
+                          <div className="text-[11px] text-slate-500">
+                            Bloom: {t.filters.bloomFilter} · Topic: {t.filters.topicFilter}
+                          </div>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => deleteTemplate(t.id)}
+                          className="p-1 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded"
+                          title="Delete template"
+                          aria-label={`Delete template ${t.name}`}
+                        >
+                          <X size={12} />
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+          </div>
+          {/* Finding #71 — AI suggest entry point */}
+          <button
+            type="button"
+            onClick={() => setAiSuggestOpen(true)}
+            className="text-xs px-3 py-1.5 rounded-md border border-purple-200 bg-gradient-to-r from-purple-50 to-emerald-50 hover:from-purple-100 hover:to-emerald-100 text-slate-800 inline-flex items-center gap-1.5 font-semibold"
+            title="Auto-suggest a test from your existing question bank"
+          >
+            <Sparkles size={12} /> Suggest a test
+          </button>
+          {/* Finding #68 — preview-as-student entry point */}
+          <button
+            type="button"
+            onClick={() => setPreviewOpen(true)}
+            disabled={selectedIds.length === 0}
+            className="text-xs px-3 py-1.5 rounded-md border border-slate-200 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-1.5"
+            title={selectedIds.length === 0 ? "Pick at least one question first" : "Preview the test as a student will see it"}
+          >
+            <Search size={12} /> Preview as student
+          </button>
           {lastSavedAt && (
             <div className="text-xs text-slate-500 inline-flex items-center gap-1.5">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
@@ -901,7 +1056,9 @@ function ComposerInner() {
         </div>
       </div>
 
-      <div className="grid lg:grid-cols-[minmax(0,1fr)_400px] gap-6 mt-6 items-start">
+      <div className={`grid lg:grid-cols-[minmax(0,1fr)_400px] gap-6 mt-6 items-start ${
+        quickMode && selectedIds.length === 0 ? "[&_>_section:last-child]:opacity-50 [&_>_section:last-child]:pointer-events-none" : ""
+      }`}>
         <section className="space-y-3">
           {/* Finding #61: active-filter pills. */}
           {(bloomFilter !== "all" || topicFilter !== "all" || categoryFilter !== "all" || search.trim() !== "") && (
@@ -963,22 +1120,31 @@ function ComposerInner() {
             );
           })()}
           {/* 2026-05-16 — recent-topic quick chips. */}
-          {recentTopics.length > 0 && bank.length > 0 && (
-            <div className="flex items-center gap-2 flex-wrap text-xs">
-              <span className="muted">Recent:</span>
-              {recentTopics.map((t) => (
-                <button
-                  key={t}
-                  type="button"
-                  className="px-2 py-1 rounded-full border border-slate-200 bg-slate-50 hover:bg-emerald-50 hover:border-emerald-300 text-slate-700"
-                  onClick={() => setTopicFilter(t)}
-                >{t}</button>
-              ))}
-            </div>
-          )}
+          {(() => {
+            /* Finding #65: dedup recent-topic chips against the topicCounts
+               dropdown row directly below — surfacing them twice is noise. */
+            const topicKeys = new Set(topicCounts.map((tc) => tc.key));
+            const recentDedup = recentTopics.filter((t) => !topicKeys.has(t));
+            if (recentDedup.length === 0 || bank.length === 0) return null;
+            return (
+              <div className="flex items-center gap-2 flex-wrap text-xs">
+                <span className="muted">Recent:</span>
+                {recentDedup.map((t) => (
+                  <button
+                    key={t}
+                    type="button"
+                    className="px-2 py-1 rounded-full border border-slate-200 bg-slate-50 hover:bg-emerald-50 hover:border-emerald-300 text-slate-700"
+                    onClick={() => setTopicFilter(t)}
+                  >{t}</button>
+                ))}
+              </div>
+            );
+          })()}
           {bank.length > 0 && (
             <div className="card">
               <div className="flex items-center gap-2 mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                {/* Finding #60: step indicator badge — matches hero dot 1 (sky). */}
+                <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-sky-500 text-white text-[10px] font-bold normal-case">1</span>
                 <Layers size={14} /> Topics
                 <span className="muted font-normal normal-case ml-auto">most questions first</span>
               </div>
@@ -1003,6 +1169,20 @@ function ComposerInner() {
           )}
 
           <div className="card flex flex-wrap gap-3 items-center">
+            {/* Finding #63: show-selected-only toggle. */}
+            <label className="inline-flex items-center gap-2 text-xs text-slate-600 cursor-pointer select-none whitespace-nowrap">
+              <input
+                type="checkbox"
+                checked={showSelectedOnly}
+                onChange={(e) => setShowSelectedOnly(e.target.checked)}
+                disabled={selectedIds.length === 0}
+                className="rounded border-slate-300"
+              />
+              Show selected only
+              {selectedIds.length > 0 && (
+                <span className="px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-semibold text-[10px]">{selectedIds.length}</span>
+              )}
+            </label>
             <div className="relative flex-1 min-w-[200px]">
               <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
               <input
@@ -1175,7 +1355,8 @@ function ComposerInner() {
             </div>
           ) : (
             <div className="space-y-2">
-              {filtered.map((q) => {
+              {/* Finding #63: render displayedBank (filtered + show-selected filter). */}
+              {displayedBank.map((q) => {
                 const on = selectedSet.has(q.id);
                 return (
                   <div
@@ -1342,6 +1523,11 @@ function ComposerInner() {
           </div>
 
           <div className="card">
+            {/* Finding #60: step indicator badge — matches hero dot 3 (purple). */}
+            <div className="flex items-center gap-2 mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
+              <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-purple-500 text-white text-[10px] font-bold normal-case">3</span>
+              Configure your test
+            </div>
             <label className="label">Test name</label>
             <input
               className="input"
@@ -1584,6 +1770,44 @@ function ComposerInner() {
             )}
           </div>
 
+          {/* Finding #58: class-fit topic-coverage gap (CLIENT-SIDE). */}
+          {targetClassId && selectedQuestions.length > 0 && (() => {
+            const bankForClassTopics = new Set<string>();
+            for (const q of bank) {
+              if ((q as { class_id?: string | null }).class_id === targetClassId) {
+                const t = (q.topic || "").trim();
+                if (t) bankForClassTopics.add(t);
+              }
+            }
+            if (bankForClassTopics.size === 0) return null;
+            const selectedTopicsSet = new Set<string>();
+            for (const q of selectedQuestions) {
+              const t = (q.topic || "").trim();
+              if (t) selectedTopicsSet.add(t);
+            }
+            const uncovered = Array.from(bankForClassTopics).filter((t) => !selectedTopicsSet.has(t));
+            if (uncovered.length === 0) return null;
+            return (
+              <div className="card border-amber-200 bg-amber-50/40">
+                <div className="flex items-center gap-2 mb-1 text-xs font-semibold uppercase tracking-wide text-amber-800">
+                  <Lightbulb size={14} /> Uncovered class topics
+                  <span className="muted font-normal normal-case ml-auto">{uncovered.length} in your bank · not in this test</span>
+                </div>
+                <div className="flex flex-wrap gap-1.5 mt-1">
+                  {uncovered.slice(0, 12).map((t) => (
+                    <button
+                      key={t}
+                      type="button"
+                      onClick={() => setTopicFilter(t)}
+                      className="px-2 py-0.5 rounded-full border border-amber-200 bg-white hover:border-amber-400 text-xs text-slate-700"
+                      title={`Filter the bank to "${t}"`}
+                    >{t}</button>
+                  ))}
+                  {uncovered.length > 12 && <span className="text-xs text-amber-800 self-center">+{uncovered.length - 12} more</span>}
+                </div>
+              </div>
+            );
+          })()}
           {/* ---------- Feature B: Class-fit suggestion ---------- */}
           {classes.length > 0 && (
             <ClassFitCard

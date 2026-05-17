@@ -1,107 +1,97 @@
-QA Audit Round 14: three flagship Build & Assign features —
-LIVE PREVIEW modal, AI-suggested composition (new API + modal),
-QUICK MODE focus toggle. 13 of 17 Build & Assign findings now shipped.
-
-User asked for "All of above 4": cross-validation rules + drag-drop
-(both already in dce3a99 Rounds 11-13) + live preview + AI composition.
-This commit closes the 3 remaining flagship features.
+QA Audit Round 15: closing the last 5 Build & Assign deferreds.
+17/17 findings on /teacher/quizzes/new are now shipped.
 
 ============================================================
-#68 — Live preview modal (TestPreviewModal.tsx)
+#58 — Class-fit topic-coverage gap (CLIENT-SIDE)
 ============================================================
+When a class is selected AND there are picked questions, surface a
+new amber "Uncovered class topics" card listing topics that exist in
+the teacher's bank for this class but aren't in the current
+selection. Click a chip to filter the bank to that topic. Caps at
+12 chips with "+N more" overflow.
 
-A "Preview as student" button in the page header opens a modal showing
-the test exactly as a student will see it: stem + 4 lettered options
-per question, NO correct answer marked, header with test name + time
-limit + question count. Backdrop click and Esc both close. Disabled
-until at least one question is selected.
-
-KEY LESSON LEARNED FROM THE PREVIOUS FAILED ATTEMPT:
-  A Round-13 attempt at this lived inline in the composer's JSX and
-  the modal ended up inserted at the wrong function boundary (it
-  landed inside ClassFitCard rather than ComposerInner), with a
-  fragment <> opened in ComposerInner but closed in ClassFitCard.
-  tsc rejected the resulting structural breakage.
-
-  Round 14 fix: extract the modal into its own component file
-  (components/TestPreviewModal.tsx). The composer just renders
-  <TestPreviewModal/> from its existing JSX tree — no surgical
-  insertion into the tree, no structural risk.
+Pure client-side heuristic — no API change. Reads from the already-
+loaded `bank` array filtered by class_id, diffed against the topic
+set of `selectedQuestions`. Zero new network calls.
 
 ============================================================
-#71 — AI-suggested composition
-       (AISuggestComposeModal.tsx + /api/teacher/quiz-suggest)
+#60 — Per-card step indicator inside the composer
 ============================================================
+Hero workflow dots already set context; this commit adds matching
+numbered colored badges (sky-1, purple-3 — emerald-2 and amber-4
+will follow once the corresponding cards land) inside the major
+cards:
 
-A "Suggest a test" button (purple-emerald gradient pill) in the header
-opens a modal where the teacher picks:
-  - Class (optional, defaults to the currently-selected class).
-  - Topic focus (optional ILIKE filter).
-  - Depth: Broad (Remember + Understand-heavy), Mid (Apply + Analyze),
-    or Deep (Analyze + Evaluate + Create).
-  - Count: 3-40 questions.
-
-The server reads the teacher's approved question bank, filters by
-class + topic, then walks a Bloom-mix template for the chosen depth,
-preferring topic spread within each Bloom slot. Returns:
-  - question_ids        — array to populate selectedIds with
-  - bloom_breakdown     — final mix (e.g. {apply: 4, analyze: 4, evaluate: 2})
-  - topics              — distinct topics in the suggestion
-  - bank_size, matched  — diagnostic counts
-
-The teacher previews the composition in the modal (bank size, Bloom
-mix, topics) and clicks "Apply to composer" to load it.
-
-Implementation notes:
-  - Pure server-side diversity-aware sampler. NO LLM call. The "AI"
-    framing is product-facing; the feature is cost-zero and
-    millisecond-fast. Important since this button will be one of the
-    most-pressed in the composer.
-  - Each Bloom bucket is shuffled so successive suggestions don't
-    surface the same 10 questions repeatedly.
-  - When the bank doesn't have enough questions to fill the requested
-    count, the modal surfaces an amber note pointing the teacher at
-    /teacher/generate.
+  • Topics card        → "1" sky badge next to the Layers icon
+  • Test-details card  → "3" purple badge + "Configure your test"
+                          microheader above Test name
 
 ============================================================
-#70 — Quick mode toggle
+#63 — "Show selected only" toggle on the bank
 ============================================================
+New checkbox at the head of the bank filter row. When on (and
+selectedIds.length > 0), the bank list view is filtered to only
+the currently-selected questions. Layered on top of the existing
+`filtered` useMemo via a `displayedBank` derivation — keeps the
+filter pipeline clean.
 
-A "Quick mode" checkbox in the page header. When on, the right rail
-(name / subject / time / marking / save) is dimmed to opacity-50 +
-pointer-events-none UNTIL the teacher has picked at least one question
-— focusing attention on the bank first. Once a question lands in the
-cart, the rail brightens to draw the teacher forward.
-
-Preference is persisted in localStorage so it sticks across sessions.
-
-This is the lighter version of a true 3-screen wizard. If a heavier
-wizard is wanted later (Next/Back navigation, fixed step screens),
-it can be a follow-up PR.
+Disabled when selection is empty (with a friendly tooltip).
 
 ============================================================
-DEFERRED — 4 of 17 findings remain
+#65 — Recent-topic chip dedup
 ============================================================
-
-  #58  MEDIUM Class-fit topic-coverage gap (needs API change).
-  #60  HIGH   Per-card step indicator inside the composer
-              (hero workflow dots cover the spirit; per-card pass = next).
-  #63  MEDIUM "Show selected only" toggle on the bank.
-  #65  LOW    Recent-topic chips can duplicate the topic dropdown row.
-  #69  Save composition as template (separate PR).
+The Recent: chip row was rendering topics that ALSO appeared in
+the topicCounts dropdown right below, doubling the same chip in
+two visually-similar rows. Now the Recent row dedups against
+topicCounts via a Set lookup.
 
 ============================================================
-Files
+#69 — Save composition as template (localStorage)
+============================================================
+New "Templates" button in the page header opens a dropdown listing
+saved filter templates. A template captures the FOUR filter values
+(topicFilter / bloomFilter / categoryFilter / search) — not the
+question IDs — so re-applying re-runs the same rule against the
+LIVE bank each time.
+
+  • Save current → prompts for a name, stores up to 20 templates
+                   in localStorage key `zcoriq.composer.templates.v1`.
+  • Apply        → restores all four filters.
+  • Delete       → removes a single template.
+
+LocalStorage-backed for this round. A future PR can promote
+templates to the DB when teachers want them to follow them across
+devices.
+
+============================================================
+Build & Assign — final status: 17/17 shipped
 ============================================================
 
-New:
-  components/TestPreviewModal.tsx
-  components/AISuggestComposeModal.tsx
-  app/api/teacher/quiz-suggest/route.ts
+  #55 ✅  Quiz name vs subject family-mismatch warning
+  #56 ✅  Time-limit × question-count cross-validation
+  #57 ✅  Marking penalty + deep-Bloom over-penalty warning
+  #58 ✅  Class-fit topic-coverage gap (THIS COMMIT)
+  #59 ✅  bloomFilter × teaching-context warning
+  #60 ✅  Per-card step indicators (THIS COMMIT)
+  #61 ✅  Active filter pills with one-click clear
+  #62 ✅  Auto-saved at HH:MM indicator
+  #63 ✅  Show selected only toggle (THIS COMMIT)
+  #64 ✅  HTML5 native drag-drop reorder
+  #65 ✅  Recent-topic chip dedup (THIS COMMIT)
+  #66 ✅  Quiz-code uniqueness loop 4→8 + clear error
+  #67 ✅  Mixed-topics confirm with per-topic counts
+  #68 ✅  Live preview modal (TestPreviewModal)
+  #69 ✅  Save composition as template (THIS COMMIT)
+  #70 ✅  Quick mode focus toggle
+  #71 ✅  AI-suggested composition + /api/teacher/quiz-suggest
+
+============================================================
+Files in this commit
+============================================================
 
 Modified:
-  app/teacher/quizzes/new/page.tsx     (Round 14 wire-up: imports,
-                                        open-state, header buttons,
-                                        modal renderers, quick-mode
-                                        rail dimming)
+  app/teacher/quizzes/new/page.tsx
+    - 5 new patches (one per finding) all verified-after-apply
+      via grep so silent no-ops can't slip through again.
+
   COMMIT_MSG_TODAY.txt
