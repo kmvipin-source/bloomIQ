@@ -66,3 +66,8 @@ APIKey.txt
 BloomIQ-Investor-Pitch.docx
 
 *.__rewrite
+
+# Temp tsconfigs used during the QA audit (Round 4)
+tsconfig-r4-*.json
+tsconfig-mp-*.json
+tsconfig-check-strict-tmp.json

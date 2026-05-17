@@ -71,16 +71,25 @@ export async function POST(req: Request) {
     // which silently mis-resolved emails past the first 200 auth users
     // and allowed duplicate accounts to slip through. The O(N) cost is
     // bounded by the per-IP rate limit at the top of this handler.
+    // Finding #12 fix: O(N) paged scan replaced with a single email-indexed
+    // probe. profiles table mirrors email via the on_auth_user_created
+    // trigger; if profiles is empty in some older env, fall back to a
+    // bounded one-page auth.users probe (still O(1) calls, not O(N)).
     let exists: { id: string; email?: string | null } | undefined;
     {
-      const perPage = 200;
-      for (let page = 1; page <= 50; page++) {
-        const { data, error: listErr } = await admin.auth.admin.listUsers({ page, perPage });
-        if (listErr) break;
-        const users = (data.users as Array<{ id: string; email?: string | null }>) || [];
+      const { data: profHit } = await admin
+        .from("profiles")
+        .select("id, email")
+        .eq("email", email)
+        .limit(1)
+        .maybeSingle();
+      if (profHit && (profHit as { id: string }).id) {
+        exists = profHit as { id: string; email?: string | null };
+      } else {
+        const { data } = await admin.auth.admin.listUsers({ page: 1, perPage: 200 });
+        const users = (data?.users as Array<{ id: string; email?: string | null }>) || [];
         const hit = users.find((u) => (u.email || "").toLowerCase() === email);
-        if (hit) { exists = hit; break; }
-        if (users.length < perPage) break;
+        if (hit) exists = hit;
       }
     }
     if (exists) {
@@ -145,7 +154,9 @@ export async function POST(req: Request) {
       body: JSON.stringify({
         amount: plan.price_paise,
         currency: plan.currency || "INR",
-        receipt: `bloomiq_${userId.slice(0, 8)}_${Date.now()}`,
+        // Finding #13 fix: bloomiq_ -> zcoriq_ to match the rebrand and
+        // the prefix used by /api/checkout (F161).
+        receipt: `zcoriq_${userId.slice(0, 8)}_${Date.now()}`,
         notes: {
           user_id: userId,
           plan_id: plan.id,

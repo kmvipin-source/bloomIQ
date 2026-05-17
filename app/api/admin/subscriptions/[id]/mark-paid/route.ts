@@ -63,6 +63,10 @@ export async function POST(req: Request, ctx: RouteContext) {
     // F22 single-session iat enforcement comes along for free.
     const auth = await requirePlatformAdmin(req);
     if ("error" in auth) return auth.error;
+    // Finding #19 fix: the F171 codemod renamed the destructure to `auth`
+    // but left bare `user.id` references at the audit-stamp sites. That's
+    // ReferenceError at runtime — admin "Mark payment received" was 500ing.
+    const { user } = auth;
 
     const { id: subscriptionId } = await ctx.params;
     if (!subscriptionId) {

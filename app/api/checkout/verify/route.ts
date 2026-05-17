@@ -75,9 +75,11 @@ export async function POST(req: Request) {
     }
 
     // 2) Pull the order back from Razorpay so we can read the notes.
-    const auth = Buffer.from(`${keyId}:${keySecret}`).toString("base64");
+    // Finding #10 fix: renamed from `auth` so it doesn't redeclare the
+    // `auth` result of requireAuthenticated() at the top of this handler.
+    const rzpBasicAuth = Buffer.from(`${keyId}:${keySecret}`).toString("base64");
     const ord = await fetch(`https://api.razorpay.com/v1/orders/${orderId}`, {
-      headers: { Authorization: `Basic ${auth}` },
+      headers: { Authorization: `Basic ${rzpBasicAuth}` },
     });
     if (!ord.ok) {
       const t = await ord.text();

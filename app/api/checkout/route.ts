@@ -109,49 +109,19 @@ export async function POST(req: Request) {
       console.warn("[checkout] in-flight check threw — falling through to create", e);
     }
 
-    // F152 fix (QA): if a user double-clicks the buy button or the network
-    // hiccups and the page re-submits, we'd previously create two Razorpay
-    // orders for the same plan_id. Verify path is idempotent (F162), but a
-    // second pending order in Razorpay is noise. Best-effort guard: refuse
-    // if an unverified order for this user+plan exists in the last 5 min.
-    // The check is intentionally soft — if the row lookup fails for any
-    // reason, fall through and create. We never block a real purchase.
-    try {
-      const adminSb = supabaseAdmin();
-      const fiveMinAgo = new Date(Date.now() - 5 * 60_000).toISOString();
-      const { data: recent } = await adminSb
-        .from("razorpay_orders")
-        .select("razorpay_order_id, created_at, verified_at")
-        .eq("user_id", user.id)
-        .eq("plan_id", plan.id)
-        .is("verified_at", null)
-        .gte("created_at", fiveMinAgo)
-        .limit(1);
-      if (recent && recent.length > 0 && recent[0].razorpay_order_id) {
-        console.warn("[checkout] in-flight order reused", { user_id: user.id, plan_id: plan.id, razorpay_order_id: recent[0].razorpay_order_id });
-        return NextResponse.json({
-          ok: true,
-          order_id: recent[0].razorpay_order_id,
-          reused: true,
-          plan_id: plan.id,
-          amount: plan.price_paise,
-          currency: plan.currency || "INR",
-        });
-      }
-    } catch (e) {
-      console.warn("[checkout] in-flight check threw — falling through to create", e);
-    }
-
     // Create Razorpay order. We stash plan_id + slug + tier in `notes` so
     // the verify endpoint can bind the subscription to the right plan
     // version even if the active plan changes between order creation and
     // verification (which is exactly the grandfathering case).
-    const auth = Buffer.from(`${keyId}:${keySecret}`).toString("base64");
+    // Finding #9 fix: renamed from `auth` so it doesn't redeclare the
+    // `auth` result of requireAuthenticated() at the top of this handler
+    // (same try-block scope -> JS SyntaxError).
+    const rzpBasicAuth = Buffer.from(`${keyId}:${keySecret}`).toString("base64");
     const r = await fetch("https://api.razorpay.com/v1/orders", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Basic ${auth}`,
+        Authorization: `Basic ${rzpBasicAuth}`,
       },
       body: JSON.stringify({
         amount: plan.price_paise,

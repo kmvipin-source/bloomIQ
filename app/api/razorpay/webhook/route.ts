@@ -168,7 +168,7 @@ export async function POST(req: Request) {
 
     const { data: existing } = await admin
       .from("subscriptions")
-      .select("id, expires_at")
+      .select("id, expires_at, plan_id, started_at")
       .eq("user_id", userId)
       .maybeSingle();
     const oldExpiresMs = (existing as { expires_at?: string | null } | null)?.expires_at
@@ -181,18 +181,28 @@ export async function POST(req: Request) {
       : planRow.price_paise;
 
     if (existing?.id) {
+      // Finding #23 fix (R1 from today's Razorpay audit doc): on
+      // SAME-plan renewals, preserve started_at so the cohort math
+      // (expires_at - started_at = one paid cycle) stays accurate.
+      // Bump it ONLY when the plan actually changed (upgrade/downgrade
+      // is a logically new term).
+      const existingRow = existing as { id: string; plan_id?: string | null; started_at?: string | null };
+      const planChanged = (existingRow.plan_id ?? null) !== planRow.id;
+      const updatePayload: Record<string, unknown> = {
+        tier: legacyTier,
+        plan_id: planRow.id,
+        price_paid_paise: pricePaidPaise,
+        status: "active",
+        expires_at: expiresAt,
+        razorpay_payment_id: paymentId,
+        school_id: null,
+      };
+      if (planChanged || !existingRow.started_at) {
+        updatePayload.started_at = new Date().toISOString();
+      }
       const { error: updErr } = await admin
         .from("subscriptions")
-        .update({
-          tier: legacyTier,
-          plan_id: planRow.id,
-          price_paid_paise: pricePaidPaise,
-          status: "active",
-          started_at: new Date().toISOString(),
-          expires_at: expiresAt,
-          razorpay_payment_id: paymentId,
-          school_id: null,
-        })
+        .update(updatePayload)
         .eq("id", existing.id);
       if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 });
     } else {

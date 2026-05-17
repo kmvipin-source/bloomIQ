@@ -67,8 +67,11 @@ export type PlatformAdminResult = AuthFailure | PlatformAdminSuccess;
  * Decode the `iat` claim from a JWT (no signature verification — that
  * happened upstream when supabase-js accepted the token). Returns null
  * on any parse failure.
+ *
+ * Exported so /api/auth/me and /api/auth/claim-session can use the same
+ * implementation (Finding #17 — three copies before this).
  */
-function decodeIat(token: string): number | null {
+export function decodeIat(token: string): number | null {
   try {
     const [, payload] = token.split(".");
     if (!payload) return null;

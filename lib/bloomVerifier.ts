@@ -201,11 +201,3 @@ export async function verifyBloomBatch(
 
   return { verdicts, skipped: false, model: VERIFIER_MODEL_TAG };
 }
- LEVEL_ORDER[requested]);
-      disputed = gap >= BLOOM_DISPUTE_THRESHOLD;
-    }
-    verdicts.push({ index: idx, actualLevel: actual, rationale, disputed });
-  }
-
-  return { verdicts, skipped: false, model: VERIFIER_MODEL_TAG };
-}

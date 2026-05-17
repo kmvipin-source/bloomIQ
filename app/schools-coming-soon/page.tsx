@@ -189,31 +189,3 @@ export default function SchoolsComingSoonPage() {
     </div>
   );
 }
-                  Email us directly instead
-                </a>
-              </div>
-            )}
-
-            <button
-              type="submit"
-              disabled={submitting}
-              className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-slate-900 px-4 py-2.5 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-60"
-            >
-              <Mail size={16} />
-              {submitting ? "Submitting1" : "Join the school waitlist"}
-            </button>
-
-            <p className="text-xs text-slate-500">
-              Already onboarded? Sign in at{" "}
-              <Link href="/login/school" className="underline">
-                /login/school
-              </Link>
-              . Existing schools and their teachers / students keep working
-              normally.
-            </p>
-          </form>
-        )}
-      </div>
-    </div>
-  );
-}

@@ -80,7 +80,20 @@ export async function POST(req: Request) {
     if (!policy.ok) {
       return NextResponse.json({ error: policy.reason }, { status: 400 });
     }
-    const tosVersion = String(body.tos_version || "2026-04-30");
+    // Finding #18 fix: refuse arbitrary tos_version strings. Without this
+    // guard, a malicious client could record "tos_accepted_at: 2099-12-31"
+    // or any made-up version string in user_metadata, polluting the legal
+    // audit trail. Keep the allowlist in sync with the TOS_VERSION constant
+    // on the login pages.
+    const ALLOWED_TOS_VERSIONS = new Set(["2026-04-30"]);
+    const requested = String(body.tos_version || "2026-04-30");
+    if (!ALLOWED_TOS_VERSIONS.has(requested)) {
+      return NextResponse.json(
+        { error: "Unknown ToS version. Refresh the page and accept the latest Terms." },
+        { status: 400 },
+      );
+    }
+    const tosVersion = requested;
 
     const admin = supabaseAdmin();
 

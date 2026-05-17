@@ -324,6 +324,12 @@ export default function GeneratePage() {
   // ONCE on mount in a useEffect; used to seed the picker via
   // defaultTeachingContext. null = never set or load failed.
   const [savedLastContext, setSavedLastContext] = useState<string | null>(null);
+  // One-shot picker-seed flag (H3 fix, Finding #3). Once we've seeded the
+  // teaching-context picker from saved last-context or class.grade, this
+  // flips true and the seed useEffect no longer re-fires. This is what
+  // lets the teacher deliberately clear the picker via "Pick a context..."
+  // without it bouncing back to the seeded value on the very next render.
+  const [pickerInitialized, setPickerInitialized] = useState<boolean>(false);
   // Override flag: teacher acknowledges a blocking warning. Resets to false
   // whenever the picker or class changes so the teacher re-confirms.
   const [validationOverride, setValidationOverride] = useState<boolean>(false);
@@ -483,12 +489,9 @@ export default function GeneratePage() {
     return () => { cancelled = true; };
   }, []);
 
-  // H5 fix: clear override whenever the set of validation issues changes,
-  // so a teacher who acknowledged an old block cannot accidentally skip a NEW
-  // block that appeared after a field change.
-  useEffect(() => {
-    setValidationOverride(false);
-  }, [validation.issues.map((i) => i.code).join(",")]);
+  // (H5 useEffect was here — moved BELOW the `validation` useMemo to fix
+  // a TDZ ReferenceError. See the combined H3/H4/H5 effects block right
+  // after the validation useMemo. Findings #1 and #5.)
 
   // Auto-set Numerical-% when the teacher picks a competitive-exam context.
   // Honors numericalManuallySet so it never clobbers a teacher-set value.
@@ -561,6 +564,54 @@ export default function GeneratePage() {
       attemptingGenerate: false,
     });
   }, [teacherClasses, targetClassId, activeIntentId, mode, pickedLevels, teachingContext, examDefault, numericalPercent]);
+
+  // ── H5 relocated + broadened (Findings #1 + #5) ───────────────────────
+  // Clear validationOverride when (a) the set of validation issue codes
+  // changes, OR (b) the target class changes, OR (c) the teaching context
+  // changes. This honors the documented behavior at validationOverride's
+  // declaration: "Resets to false whenever the picker or class changes."
+  // The earlier H5 effect (i) lived ABOVE this useMemo so it crashed at
+  // runtime with TDZ, and (ii) only watched issue codes — so changing
+  // Class 5 → Class 6 with the same Bloom×exam mismatch silently kept the
+  // override live.
+  useEffect(() => {
+    setValidationOverride(false);
+  }, [validation.issues.map((i) => i.code).join(","), targetClassId, teachingContext]);
+
+  // ── H3 one-shot picker seed (Finding #3) ──────────────────────────────
+  // Replaces the IIFE-in-render that auto-re-seeded teachingContext on every
+  // render where it was null — which made the picker impossible to clear.
+  // Once seeded (or once we know there's no seed material), pickerInitialized
+  // flips true and this effect no longer fires.
+  useEffect(() => {
+    if (pickerInitialized) return;
+    const cls = teacherClasses.find((c) => c.id === targetClassId) || null;
+    const seed = defaultTeachingContext({
+      savedLastContext,
+      classGrade: cls?.grade ?? null,
+    });
+    if (seed) {
+      setTeachingContext(seed);
+      setPickerInitialized(true);
+    } else if (savedLastContext !== null || teacherClasses.length > 0) {
+      // Both seed inputs have finished loading and there's nothing to seed
+      // from. Lock initialization so we don't keep retrying every render.
+      setPickerInitialized(true);
+    }
+  }, [pickerInitialized, savedLastContext, teacherClasses, targetClassId]);
+
+  // ── H4 orphaned-intent cleanup (Finding #4) ───────────────────────────
+  // When teaching context changes such that the previously-chosen intent
+  // is no longer in the current `intents` list, clear activeIntentId so
+  // the chip indicator + "Why this setup" rationale match the active set.
+  // Blueprint values the teacher already accepted (mode/levels/perLevel)
+  // stay applied — the teacher can re-pick an intent if they want.
+  useEffect(() => {
+    if (activeIntentId && !intents.some((i) => i.id === activeIntentId)) {
+      setActiveIntentId(null);
+    }
+  }, [intents, activeIntentId]);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -711,10 +762,16 @@ export default function GeneratePage() {
       // when zero; warn loudly when delivered < requested so the teacher
       // sees per-level counts instead of a generic success toast.
       const deliveredTotal = Number(data.total ?? 0);
-      // F122 fix: when the teacher uses the "Customize per-level counts"
-      // path, the per-level overrides in perLevelCustom mean the actual
-      // request total is the SUM of countFor(l), not perLevel × levelCount.
-      // The old math produced nonsense "Generated 12 of 6" toasts.
+      // F122 fix (completed; Finding #2): when the teacher uses the
+      // "Customize per-level counts" path, the per-level overrides in
+      // perLevelCustom mean the actual request total is the SUM of
+      // per-level counts, not perLevel × levelCount. Earlier scaffolding
+      // referenced a helper named `countFor` that was never defined, which
+      // made the entire post-API block throw `ReferenceError: countFor is
+      // not defined` on every successful generation. Define it here,
+      // mirroring the totalQs formula in the pre-flight section below.
+      const countFor = (l: BloomLevel): number =>
+        mode === "custom" ? (perLevelCustom[l] ?? perLevel) : perLevel;
       const targetLevels = mode === "all" ? BLOOM_LEVELS : pickedLevels;
       const requestedTotal = targetLevels.reduce((sum, l) => sum + countFor(l), 0);
       if (deliveredTotal === 0) {
@@ -815,26 +872,10 @@ export default function GeneratePage() {
           <h2 className="font-semibold text-sm">Who are you teaching today?</h2>
           <span className="text-xs muted ml-auto">Picks the AI&apos;s register + unlocks cross-checks</span>
         </div>
-        {(() => {
-          // Seed the picker once: when teachingContext is still null AND we
-          // either have a saved last-context OR a class is selected, pick
-          // the best default. Wrapped in an inline IIFE so we don't have
-          // to add a useEffect — React re-runs the render anyway when its
-          // inputs change.
-          if (teachingContext === null) {
-            const cls = teacherClasses.find((c) => c.id === targetClassId) || null;
-            const seed = defaultTeachingContext({
-              savedLastContext,
-              classGrade: cls?.grade ?? null,
-            });
-            if (seed) {
-              // Schedule the setState so we don't violate React's "no setState
-              // in render" rule. setTimeout(0) defers to the next tick.
-              setTimeout(() => setTeachingContext(seed), 0);
-            }
-          }
-          return null;
-        })()}
+        {/* H3 fix (Finding #3): auto-seed handled by the one-shot useEffect
+            above the return statement. The previous IIFE re-seeded on every
+            render where teachingContext was null, which made the picker
+            impossible to clear deliberately. */}
         <select
           className="select w-full text-sm"
           value={teachingContext ?? ""}
@@ -842,6 +883,10 @@ export default function GeneratePage() {
             const v = e.target.value || null;
             setTeachingContext(v);
             setValidationOverride(false);
+            // H3 fix (Finding #3): mark picker initialized so the auto-seed
+            // useEffect does not re-fire on the next render. This is what
+            // makes a deliberate "Pick a context..." selection actually stick.
+            setPickerInitialized(true);
             // Fire-and-forget: persist to profiles.last_teaching_context.
             if (v) {
               (async () => {

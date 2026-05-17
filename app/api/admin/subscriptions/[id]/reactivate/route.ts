@@ -33,6 +33,8 @@ export async function POST(req: Request, ctx: Ctx) {
     // F22 single-session iat enforcement comes along for free.
     const auth = await requirePlatformAdmin(req);
     if ("error" in auth) return auth.error;
+    // Finding #21 fix: same shape as #19 — destructure user.
+    const { user } = auth;
 
     const { id: subscriptionId } = await ctx.params;
     if (!subscriptionId) {

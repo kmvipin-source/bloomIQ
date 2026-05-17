@@ -32,6 +32,8 @@ export async function POST(req: Request, ctx: RouteContext) {
     // F22 single-session iat enforcement comes along for free.
     const auth = await requirePlatformAdmin(req);
     if ("error" in auth) return auth.error;
+    // Finding #20 fix: same shape as #19 — destructure user.
+    const { user } = auth;
 
     const { id: schoolId } = await ctx.params;
     if (!schoolId) {

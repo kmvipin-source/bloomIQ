@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { getBearer, supabaseServer, supabaseAdmin } from "@/lib/supabase/server";
+// Finding #17 fix: shared decodeIat (was duplicated locally).
+import { decodeIat } from "@/lib/apiAuth";
 
 export const runtime = "nodejs";
 
@@ -13,18 +15,6 @@ export const runtime = "nodejs";
  * still floating around on a different device will be rejected by
  * /api/auth/me's iat comparison.
  */
-function decodeIat(token: string): number | null {
-  try {
-    const [, payload] = token.split(".");
-    if (!payload) return null;
-    const json = Buffer.from(payload.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8");
-    const obj = JSON.parse(json) as { iat?: number };
-    return typeof obj.iat === "number" ? obj.iat : null;
-  } catch {
-    return null;
-  }
-}
-
 export async function POST(req: Request) {
   try {
     const token = getBearer(req);

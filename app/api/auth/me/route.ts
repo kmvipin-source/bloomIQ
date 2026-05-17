@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { getBearer, supabaseServer, supabaseAdmin } from "@/lib/supabase/server";
+// Finding #17 fix: shared decodeIat (was duplicated locally).
+import { decodeIat } from "@/lib/apiAuth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,18 +20,6 @@ export const dynamic = "force-dynamic";
  * Caller must pass the bearer access token in the Authorization
  * header. Returns 401 if the token doesn't resolve to a user.
  */
-function decodeIat(token: string): number | null {
-  try {
-    const [, payload] = token.split(".");
-    if (!payload) return null;
-    const json = Buffer.from(payload.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8");
-    const obj = JSON.parse(json) as { iat?: number };
-    return typeof obj.iat === "number" ? obj.iat : null;
-  } catch {
-    return null;
-  }
-}
-
 export async function GET(req: Request) {
   try {
     const token = getBearer(req);
@@ -69,24 +59,37 @@ export async function GET(req: Request) {
     if (prof?.role === "super_teacher" && prof.school_id) {
       const { data: sub } = await admin
         .from("subscriptions")
-        .select("id, plan_id, activation_pending, started_at")
+        .select("id, plan_id, activation_pending, started_at, status")
         .eq("school_id", prof.school_id)
         .maybeSingle();
-      if (sub?.activation_pending && sub.id) {
-        let periodDays = 365;
+      // Finding #16 fix: refuse to activate a cancelled/suspended sub.
+      // An admin who pre-cancelled or pre-suspended a school's subscription
+      // before its super_teacher first signed in should not have that
+      // intent silently overwritten by an automatic activation flip.
+      const subStatus = (sub as { status?: string | null } | null)?.status ?? null;
+      const statusAllowsActivation = subStatus === null || subStatus === "active" || subStatus === "" ;
+      if (sub?.activation_pending && sub.id && statusAllowsActivation) {
+        // Finding #14 fix (F30 closure): resolve period_days strictly from the
+        // plan row. If we cannot (plan_id missing, plan deleted, or period_days
+        // null/zero), log a warning and SKIP the flip instead of silently
+        // defaulting to 365 — which lies for quarterly/term plans.
+        let periodDays: number | null = null;
         if (sub.plan_id) {
           const { data: planRow } = await admin
             .from("plans")
             .select("period_days")
             .eq("id", sub.plan_id)
             .maybeSingle();
-          // F30 note (QA): if plans.period_days is NULL the activation flip
-          // falls back to the 365-day default. That's safe for the standard
-          // annual plans but lies for term/quarterly plans. The fix here is
-          // a refusal: if periodDays cannot be resolved from the plan row,
-          // log + skip the flip instead of defaulting silently. Tracked.
-          if (planRow?.period_days) periodDays = planRow.period_days;
+          const pd = (planRow as { period_days?: number | null } | null)?.period_days ?? null;
+          if (typeof pd === "number" && pd > 0) periodDays = pd;
         }
+        if (periodDays === null) {
+          // eslint-disable-next-line no-console
+          console.warn(
+            "[auth/me] activation flip skipped: cannot resolve period_days for subscription " +
+              sub.id + " (plan_id=" + String(sub.plan_id) + "). Operator must edit the plan or set started_at/expires_at manually.",
+          );
+        } else {
         // If the operator deliberately set started_at to a future date
         // (academic-year deal: onboard early, term starts 1 Aug), don't
         // overwrite that anchor — clear only the pending flag and let
@@ -107,6 +110,7 @@ export async function GET(req: Request) {
           .from("subscriptions")
           .update(patch)
           .eq("id", sub.id);
+        }
       }
     }
 
@@ -199,11 +203,18 @@ export async function GET(req: Request) {
                 "Should never gate this user as free-expired.",
             );
           }
+          // Finding #15 fix: treat suspended/cancelled Free trials as expired
+          // for the layout gate. Without this, an admin-suspended student keeps
+          // accessing Free features until natural expiry.
+          const subStatus = (sub as { status?: string | null }).status || "";
+          const adminBlocked = subStatus === "suspended" || subStatus === "cancelled";
           if (
             sub.tier === "free" &&
             sub.is_trial === true &&
-            sub.expires_at &&
-            new Date(sub.expires_at).getTime() < Date.now()
+            (
+              adminBlocked ||
+              (sub.expires_at && new Date(sub.expires_at).getTime() < Date.now())
+            )
           ) {
             isFreeExpired = true;
           }
