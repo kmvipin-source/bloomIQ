@@ -1,89 +1,101 @@
-QA Audit Round 7: /teacher/generate cross-validation + visual cleanup (2 fixes)
+QA Audit Rounds 8-10: login race fix, AI topic disambiguation, /teacher/
+generate visual redesign, plus full audit of /teacher/quizzes/new (17 more
+findings).
 
-Two issues caught from a fresh look at the live form (teacher-reported screenshot):
+ROUND 8 — login race + AI topic disambiguation (2 fixes)
+=========================================================
 
-FINDING #45 — HIGH — Question count display mismatch
-====================================================
-The form had TWO running totals that used different formulas:
+#53 HIGH /teacher/layout.tsx — first-time-login race bounces teachers
+        back to /login. F23 follow-up.
 
-  Upper "Total: 6 questions"     (near the per-level inputs)
-    -> perLevel * pickedLevels.length          (IGNORED overrides)
-  Lower "Will generate 3 questions"  (pre-flight, near the Generate button)
-    -> pickedLevels.reduce((s, lv) => s + (perLevelCustom[lv] ?? perLevel), 0)
-                                                (HONORED overrides)
+  Symptom: User signs in correctly at /login/school (teacher tab). Lands
+  on /teacher. Layout calls /api/auth/me. Supabase auth-server eventual-
+  consistency returns 401 for ~300-800ms after sign-in. Layout falls
+  through to user_metadata.role — which is empty for school-onboarded
+  teachers — so role stays "" and the role-router redirects back to
+  /login. Teacher logs in again, auth has propagated, all is fine.
 
-Repro: pick 3 Bloom levels, default perLevel=2, set per-level overrides to
-1 each. Upper says "6", lower says "3". Teacher loses trust in both.
+  Fix: retry /api/auth/me up to 3 times with 300ms backoff before falling
+  back to user_metadata. Eliminates the race in the first attempt. The
+  session_superseded branch (real "another device signed in" case) still
+  bypasses the retry and signs out immediately, as before.
 
-Fix: single source of truth. Both numbers now use the same override-aware
-sum. The upper Total also shows a small "· per-level overrides applied"
-badge when overrides are in effect, so the teacher knows why the number
-differs from default × levels.
+#54 HIGH /api/generate SYSTEM prompt — short acronym topics under multi-
+        subject exam contexts produced wrong-subject questions.
 
-FINDING #46 — HIGH (UX) — Form was visually cluttered
-======================================================
-On the same screenshot the teacher had to scroll past:
-  - Bloom levels picker
-  - Customize-per-level inputs (3 number boxes)
-  - Reading-level chips (Beginner / Practitioner / Expert)
-  - Sub-topic chips (Prime Factorization / GCD / LCM / ...)
-  - More-instructions textarea
-  - Default questions per level input
-  - Numerical % slider
-  - Validation banner
-  - Generate button
+  Symptom (reported): teacher entered topic "LCM" with teaching context
+  "JEE" and got Linear/Circular Motion questions. The teacher meant
+  Least Common Multiple. AI defaulted to the JEE-physics interpretation
+  because the system prompt + exam framing skew toward physics.
 
-Eight controls in one column, no visual hierarchy. First-time teachers
-got lost; the secondary form drowned the primary controls.
+  Root cause: the SYSTEM prompt has no acronym-disambiguation rule. The
+  teaching context selects JEE-style framing, the topic is short and
+  ambiguous, and the AI picks whichever interpretation is most exam-
+  associated. The acronym "LCM" maps to a real JEE physics topic
+  (Linear/Circular Motion) so the model has no reason to default to math.
 
-Two changes:
+  Fix: add explicit rule #7 to the SYSTEM prompt — short acronyms (≤6
+  chars) that have multiple plausible meanings in the chosen exam's
+  subjects MUST default to the most common primary/secondary education
+  meaning, not a specialized exam-jargon interpretation. Examples
+  enumerated in the prompt: LCM, HCF, ROI, PI, AC, DC. Model must also
+  write a one-line internal INTERPRETATION before generating (helps
+  debug + verifier).
 
-  (a) Label dedup. The phrase "Questions per level" appeared twice (one
-      header for the per-level override inputs, one header for the
-      default-perLevel input). Both with the same wording. Renamed:
-        per-level overrides  -> "Customize per level (optional)"
-                                 + sub-text "Override the default of N
-                                    for specific levels — leave blank
-                                    to keep the default"
-        default per level    -> "Default questions per level"
-                                 (already renamed in Finding #45 fix)
+ROUND 9 — /teacher/generate visual redesign (color-coded sections)
+==================================================================
 
-  (b) Collapsible Advanced section. Wrapped GenerateContextChips
-      (audience-level + sub-topic + more-instructions) and the
-      Numerical % slider inside a <details> element with summary
-      "Advanced — fine-tune the mix (audience, sub-topics, numerical %)".
-      Closed by default so the primary form (source → topic → class →
-      Bloom → Generate) reads top-to-bottom with no distractions.
-      Teachers who need the dials click to expand. Down-chevron rotates
-      via group-open:rotate-90 for an obvious affordance.
+User feedback after Round 7: the collapsible Advanced wasn't enough —
+"some logical grouping/colouring can be done as per modern day app
+design". Applied a step-numbered, color-coded section system:
 
-Designed-but-deferred findings (Round 8 candidates)
-====================================================
-Six more cross-validation gaps were identified but not implemented in
-this commit. Brief descriptions kept here so they aren't forgotten:
+  Step 1 · Which class is this for?         → sky-blue left border
+  Step 2 · Who are you teaching today?      → sky-blue left border
+  Step 3 · What kind of test are you making? → purple left border (optional)
+  Step 4 · Source & question mix             → emerald-green vertical
+                                                accent rail (primary area)
 
-  #47 MEDIUM Numerical % vs class-grade cross-validation missing.
-             70% numerical for a Class 5-8 cohort should soft-warn.
+The validation banner was also upgraded: bigger padding, rounded-xl,
+icon (⚠ / ℹ) on the left, shadow. Catches the eye when blocking
+issues fire (e.g. JEE-difficulty + Class-5-8 mismatch).
 
-  #48 MEDIUM Active intent stays highlighted after manual edits diverge
-             from its blueprint. Teacher can't tell that "Mock paper" is
-             no longer what's actually in the form.
+ROUND 10 — /teacher/quizzes/new audit (17 findings, documented)
+================================================================
 
-  #49 MEDIUM Sub-topic chips don't refresh when teaching-context changes.
-             Stale chips from a different exam stay visible.
+Read the entire 1673-line Build & Assign page. Findings ordered by
+impact; none implemented in this commit — sent to the user as a
+recommendation list to pick which to prioritise.
 
-  #50 MEDIUM Validation banner doesn't tell the teacher which field to
-             change. "JEE-difficulty beyond Class 5-8" — fix the class
-             or the context picker? Banner item should carry a fields[]
-             list and ring the affected input.
+Cross-validation gaps:
+  #55 HIGH  Quiz name vs subject inconsistency not validated.
+  #56 HIGH  Quiz time-limit vs question count not validated (30
+            questions in 15 min = 30 sec each, no warning).
+  #57 HIGH  Marking-scheme penalty vs Bloom mix not cross-validated.
+  #58 MED   Class-fit warning by class but not by topic-coverage gap.
+  #59 MED   bloomFilter doesn't cross-validate with teaching context
+            (same rule shape as Round-1 H1, but here on browse).
 
-  #51 LOW    Reading-level vs teaching-context inconsistency not warned.
-             Beginner + JEE Main is silently contradictory.
+Visual / UX clutter:
+  #60 HIGH  No step indicator (4-step header would help).
+  #61 HIGH  Bank filter row is dense; no active-filter pills.
+  #62 MED   Autosave is silent; no "saved at HH:MM" indicator.
+  #63 MED   No way to view selected questions as a focused list.
+  #64 MED   No reordering of selected questions.
+  #65 LOW   Recent-topic chips can duplicate the topic dropdown.
 
-  #52 LOW    Class.subject vs typed topic not cross-validated. Math
-             class + "Photosynthesis" topic produces biology questions
-             tagged to a math class.
+Smaller correctness issues:
+  #66 LOW   Code-uniqueness loop gives up after 4 tries.
+  #67 LOW   mixedTopics confirm shows topics but not counts per topic.
+
+Architectural / workflow improvements:
+  #68  Live preview pane (show test as student will see it).
+  #69  Save as template (capture filters, not question IDs).
+  #70  Wizard mode for first-time teachers (3 screens).
+  #71  AI-suggested composition ("make a 10-question Class 8 math test").
 
 Files changed in this commit:
-  app/teacher/generate/page.tsx
+  app/api/generate/route.ts       (SYSTEM prompt + rule #7)
+  app/teacher/generate/page.tsx   (color-coded section accents)
+  app/teacher/layout.tsx          (auth retry loop)
+  scripts/apply-round8-qa-fixes.mjs (NEW)
   COMMIT_MSG_TODAY.txt

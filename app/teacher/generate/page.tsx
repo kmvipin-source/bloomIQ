@@ -836,10 +836,10 @@ export default function GeneratePage() {
 
       {/* ---------- Q1 V1: Class scope (optional) ---------- */}
       {teacherClasses.length > 0 && (
-        <div className="card mt-5">
+        <div className="card mt-5 border-l-4 border-l-sky-400">
           <div className="flex items-center gap-2 mb-2">
-            <Users size={16} className="text-emerald-600" />
-            <h2 className="font-semibold text-sm">Which class is this for?</h2>
+            <Users size={16} className="text-sky-600" />
+            <h2 className="font-semibold text-sm text-sky-900">Step 1 · Which class is this for?</h2>
             <span className="text-xs muted ml-auto">Optional — focuses what we generate</span>
           </div>
           <select
@@ -870,10 +870,10 @@ export default function GeneratePage() {
           per-axis cross-validation. Seeds from profiles.last_teaching_context,
           falling back to classGradeToCategory(class.grade) when that's null.
           Picker is per-test — teacher can change for this generation only. */}
-      <div className="card mt-5">
+      <div className="card mt-5 border-l-4 border-l-sky-400">
         <div className="flex items-center gap-2 mb-2">
-          <GraduationCap size={16} className="text-emerald-600" />
-          <h2 className="font-semibold text-sm">Who are you teaching today?</h2>
+          <GraduationCap size={16} className="text-sky-600" />
+          <h2 className="font-semibold text-sm text-sky-900">Step 2 · Who are you teaching today?</h2>
           <span className="text-xs muted ml-auto">Picks the AI&apos;s register + unlocks cross-checks</span>
         </div>
         {/* H3 fix (Finding #3): auto-seed handled by the one-shot useEffect
@@ -931,10 +931,10 @@ export default function GeneratePage() {
           anything below. Hidden in the most subtle way: collapsed to a
           one-line "Skip — set everything yourself" link if they don't
           want guidance. Default is to show. */}
-      <div className="card mt-5">
+      <div className="card mt-5 border-l-4 border-l-purple-400">
         <div className="flex items-center gap-2 mb-3">
-          <Wand2 size={16} className="text-emerald-600" />
-          <h2 className="font-semibold text-sm">What kind of test are you making?</h2>
+          <Wand2 size={16} className="text-purple-600" />
+          <h2 className="font-semibold text-sm text-purple-900">Step 3 · What kind of test are you making?</h2>
           <span className="text-xs muted ml-auto">Optional — pre-fills the form below</span>
         </div>
 
@@ -979,8 +979,15 @@ export default function GeneratePage() {
         )}
       </div>
 
-      {/* Source picker */}
-      <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 mt-6">
+      {/* Source picker — primary input area, emerald accent runs
+          through the source picker AND the main form below. */}
+      <div className="mt-6 pl-2 border-l-4 border-l-emerald-500">
+        <div className="flex items-center gap-2 mb-2 -ml-2 pl-2">
+          <FileText size={16} className="text-emerald-600" />
+          <h2 className="font-semibold text-sm text-emerald-900">Step 4 · Source &amp; question mix</h2>
+          <span className="text-xs muted ml-auto">Where the questions come from + which Bloom levels</span>
+        </div>
+      <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
         {tabs.map((t) => {
           const on = source === t.id;
           return (
@@ -1346,11 +1353,17 @@ export default function GeneratePage() {
             Severity ladder: soft (amber) / hard (amber, bold) / block (red +
             override checkbox required). */}
         {!validation.ok && (
-          <div className={`rounded-lg border px-3 py-2 text-sm ${
+          <div className={`rounded-xl border-2 px-4 py-3 text-sm shadow-sm flex items-start gap-3 ${
             validation.blocking
               ? "border-red-300 bg-red-50 text-red-900"
               : "border-amber-300 bg-amber-50 text-amber-900"
           }`}>
+            <div className={`flex-shrink-0 mt-0.5 text-lg ${
+              validation.blocking ? "text-red-600" : "text-amber-600"
+            }`} aria-hidden="true">
+              {validation.blocking ? "⚠" : "ℹ"}
+            </div>
+            <div className="flex-1">
             <div className="font-semibold mb-1">
               {validation.blocking ? "Hold on — these look mismatched:" : "Couple of things to double-check:"}
             </div>
@@ -1374,6 +1387,7 @@ export default function GeneratePage() {
                 </span>
               </label>
             )}
+            </div>{/* close validation banner inner flex-1 */}
           </div>
         )}
 
@@ -1433,6 +1447,8 @@ export default function GeneratePage() {
           );
         })()}
       </div>
+
+      </div>{/* close the emerald-accent wrapper opened at Step 4 */}
 
       {summary && (
         <div className="card mt-6 fade-in">

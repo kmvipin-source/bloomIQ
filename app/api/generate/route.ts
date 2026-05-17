@@ -72,6 +72,26 @@ HARD CONSTRAINTS — questions violating any of these will be rejected:
    level of abstraction — but hit the requested count. Returning fewer
    than requested wastes the student\'s quota and time.
 
+7. TOPIC DISAMBIGUATION (Finding #54 fix — added 2026-05-17).
+   If the topic is a SHORT acronym or abbreviation (≤ 6 characters) that
+   could plausibly stand for multiple things in the chosen exam / subject
+   context — for example "LCM" (Least Common Multiple in math, OR Linear/
+   Circular Motion in physics), "HCF" (Highest Common Factor vs Hot Coil
+   Factor), "ROI" (Return on Investment vs Region of Interest),
+   "PI" (the constant π vs Principal Investigator), "AC" (Alternating
+   Current vs Air Conditioning vs Anno Christi), "DC" (Direct Current
+   vs Designated Catcher) — DEFAULT TO THE MOST COMMON MEANING TAUGHT IN
+   PRIMARY / SECONDARY / GENERAL EDUCATION, NOT a specialized exam-
+   specific or domain-jargon interpretation. Even if the teaching
+   context is a multi-subject exam (JEE / NEET / GMAT / SAT), interpret
+   the bare topic literally as the standard educational concept. If the
+   teacher meant the specialized meaning, they will spell it out
+   (e.g. "Linear and Circular Motion" instead of "LCM").
+
+   Before generating, write a single internal interpretation sentence
+   (you do NOT need to include it in the JSON output) of the form:
+     INTERPRETATION: The topic "<X>" most likely refers to <Y>.
+
 Return STRICT JSON only.`;
 
 function jsonShape() {

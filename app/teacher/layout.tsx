@@ -38,29 +38,53 @@ export default function TeacherLayout({ children }: { children: React.ReactNode 
 
       // Service-role lookup — sidesteps the user-token RLS race that
       // wrongly redirected real teachers to /student or /admin.
+      //
+      // Finding #53 fix: a transient 401 from /api/auth/me (Supabase's
+      // auth-server eventual-consistency delay right after sign-in) was
+      // falling straight through to the user_metadata fallback, which is
+      // empty for school-onboarded teachers — so role stayed "" and the
+      // role-router bounced them back to /login. Retry the call 2 more
+      // times with a short backoff before giving up. Empirically clears
+      // the first-time-login race almost entirely.
       let role = "";
       let platformAdmin = false;
       let schoolId: string | null = null;
-      try {
-        const r = await fetch("/api/auth/me", {
-          headers: { Authorization: `Bearer ${session.access_token}` },
-          cache: "no-store",
-        });
-        if (r.status === 401) {
-          const j = await r.json().catch(() => ({}));
-          if (j?.error === "session_superseded") {
-            try { await sb.auth.signOut(); } catch { /* ignore */ }
-            router.replace("/login?reason=elsewhere");
-            return;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          const r = await fetch("/api/auth/me", {
+            headers: { Authorization: `Bearer ${session.access_token}` },
+            cache: "no-store",
+          });
+          if (r.status === 401) {
+            const j = await r.json().catch(() => ({}));
+            if (j?.error === "session_superseded") {
+              try { await sb.auth.signOut(); } catch { /* ignore */ }
+              router.replace("/login?reason=elsewhere");
+              return;
+            }
+            // Transient 401 from auth-server race — retry once after a short
+            // backoff before giving up.
+            if (attempt < 2) {
+              await new Promise((res) => setTimeout(res, 300));
+              continue;
+            }
+          }
+          if (r.ok) {
+            const j = await r.json();
+            role = String(j.role || "");
+            platformAdmin = !!j.platform_admin;
+            schoolId = j.school_id || null;
+            break;
+          }
+        } catch {
+          // Network blip — same retry handling as 401.
+          if (attempt < 2) {
+            await new Promise((res) => setTimeout(res, 300));
+            continue;
           }
         }
-        if (r.ok) {
-          const j = await r.json();
-          role = String(j.role || "");
-          platformAdmin = !!j.platform_admin;
-          schoolId = j.school_id || null;
-        }
-      } catch { /* fall through to metadata */ }
+        break;
+      }
       if (!role) {
         const { data: { user } } = await sb.auth.getUser();
         role = String((user?.user_metadata as { role?: string } | undefined)?.role || "");
