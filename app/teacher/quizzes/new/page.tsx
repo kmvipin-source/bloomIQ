@@ -192,6 +192,7 @@ function ComposerInner() {
     savedAt: number;
   };
   const [draftRestored, setDraftRestored] = useState<DraftSnapshot | null>(null);
+  const [lastSavedAt, setLastSavedAt] = useState<number | null>(null);
   // Restore offer on mount.
   useEffect(() => {
     try {
@@ -256,6 +257,7 @@ function ComposerInner() {
           savedAt: Date.now(),
         };
         window.localStorage.setItem(DRAFT_KEY, JSON.stringify(snap));
+        setLastSavedAt(Date.now());
       } catch { /* quota / blocked — ignore */ }
     }, 600);
     return () => clearTimeout(t);
@@ -519,6 +521,19 @@ function ComposerInner() {
       return next;
     });
   }
+  // Finding #64: moveTo + drag state for HTML5-native drag-drop reorder.
+  function moveTo(from: number, to: number) {
+    if (from === to || from < 0 || to < 0) return;
+    setSelectedIds((prev) => {
+      if (from >= prev.length || to >= prev.length) return prev;
+      const next = prev.slice();
+      const [item] = next.splice(from, 1);
+      next.splice(to, 0, item);
+      return next;
+    });
+  }
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [dropTargetIndex, setDropTargetIndex] = useState<number | null>(null);
   function addAllVisible() {
     setSelectedIds((prev) => {
       const have = new Set(prev);
@@ -723,10 +738,16 @@ function ComposerInner() {
     if (selectedIds.length === 0) return setErr("Add at least one question.");
 
     if (mixedTopics) {
+      const topicCount: Record<string, number> = {};
+      for (const q of selectedQuestions) {
+        const t = q.topic || "(no topic)";
+        topicCount[t] = (topicCount[t] || 0) + 1;
+      }
+      const sortedTopics = Object.entries(topicCount).sort((a, b) => b[1] - a[1]);
       const ok = confirm(
         `This quiz spans ${selectedTopics.length} different topics:\n\n` +
-        `  • ${selectedTopics.join("\n  • ")}\n\n` +
-        `Did you intend to mix topics? Click OK to continue, or Cancel to revise.`
+        sortedTopics.map(([t, c]) => `  • ${t} (${c} question${c === 1 ? "" : "s"})`).join("\n") +
+        `\n\nDid you intend to mix topics? Click OK to continue, or Cancel to revise.`
       );
       if (!ok) return;
     }
@@ -737,11 +758,16 @@ function ComposerInner() {
       const { data: { user } } = await sb.auth.getUser();
       if (!user) throw new Error("Not signed in");
 
+      // Finding #66: extended from 4 to 8 retries + clearer error.
       let code = generateQuizCode();
-      for (let i = 0; i < 4; i++) {
+      let codeUnique = false;
+      for (let i = 0; i < 8; i++) {
         const { data: existing } = await sb.from("quizzes").select("id").eq("code", code).maybeSingle();
-        if (!existing) break;
+        if (!existing) { codeUnique = true; break; }
         code = generateQuizCode();
+      }
+      if (!codeUnique) {
+        throw new Error("Could not allocate a unique quiz code after 8 tries. Refresh and try again.");
       }
 
       const blooms = Array.from(new Set(selectedQuestions.map((q) => q.bloom_level)));
@@ -821,9 +847,29 @@ function ComposerInner() {
 
   return (
     <div className="max-w-7xl mx-auto fade-in">
+      <header className="mb-6">
+        <div className="flex items-center gap-3 mb-2">
+          <span className="inline-flex items-center justify-center w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500 to-emerald-700 text-white shadow-sm">
+            <Layers size={20} />
+          </span>
+          <h1 className="text-3xl font-bold tracking-tight text-slate-900">Build &amp; Assign a test</h1>
+        </div>
+        <p className="text-base text-slate-600 leading-relaxed max-w-2xl">
+          Browse your approved question library on the left. Pick the ones you want, then name and configure the test on the right.
+        </p>
+        <ol className="mt-5 flex items-center gap-2 text-xs font-medium text-slate-500 flex-wrap">
+          <li className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-sky-400"></span>Filter your bank</li>
+          <span className="text-slate-300">›</span>
+          <li className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-emerald-500"></span>Select questions</li>
+          <span className="text-slate-300">›</span>
+          <li className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-purple-400"></span>Configure</li>
+          <span className="text-slate-300">›</span>
+          <li className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-amber-400"></span>Save &amp; share</li>
+        </ol>
+      </header>
+
       <div className="flex items-end justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="h1">Compose a test</h1>
           {/* 2026-05-16 — auto-save restore prompt. Surfaces a draft from
               the last 24h when the teacher reopens the page. */}
           {draftRestored && (
@@ -839,9 +885,14 @@ function ComposerInner() {
               </div>
             </div>
           )}
-          <p className="muted mt-1">Browse your library on the left, build the test on the right.</p>
         </div>
         <div className="flex items-center gap-3 flex-wrap">
+          {lastSavedAt && (
+            <div className="text-xs text-slate-500 inline-flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+              Auto-saved at {new Date(lastSavedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+            </div>
+          )}
           <div className="text-sm muted">
             {bank.length} approved question{bank.length === 1 ? "" : "s"} in your library
           </div>
@@ -850,8 +901,66 @@ function ComposerInner() {
 
       <div className="grid lg:grid-cols-[minmax(0,1fr)_400px] gap-6 mt-6 items-start">
         <section className="space-y-3">
-          {/* 2026-05-16 — recent-topic quick chips. Last 3 topics this
-              teacher filtered on (localStorage). One click reapplies. */}
+          {/* Finding #61: active-filter pills. */}
+          {(bloomFilter !== "all" || topicFilter !== "all" || categoryFilter !== "all" || search.trim() !== "") && (
+            <div className="flex items-center gap-2 flex-wrap text-xs bg-emerald-50/40 border border-emerald-100 rounded-lg px-3 py-2">
+              <span className="font-semibold text-emerald-900">Active filters:</span>
+              {bloomFilter !== "all" && (
+                <button type="button" onClick={() => setBloomFilter("all")} className="px-2 py-0.5 rounded-full bg-white border border-emerald-200 hover:bg-red-50 hover:border-red-300 text-slate-700 flex items-center gap-1">
+                  Bloom: {bloomFilter} <X size={11} />
+                </button>
+              )}
+              {topicFilter !== "all" && (
+                <button type="button" onClick={() => setTopicFilter("all")} className="px-2 py-0.5 rounded-full bg-white border border-emerald-200 hover:bg-red-50 hover:border-red-300 text-slate-700 flex items-center gap-1">
+                  Topic: {topicFilter} <X size={11} />
+                </button>
+              )}
+              {categoryFilter !== "all" && (
+                <button type="button" onClick={() => setCategoryFilter("all")} className="px-2 py-0.5 rounded-full bg-white border border-emerald-200 hover:bg-red-50 hover:border-red-300 text-slate-700 flex items-center gap-1">
+                  Category: {categoryFilter} <X size={11} />
+                </button>
+              )}
+              {search.trim() !== "" && (
+                <button type="button" onClick={() => setSearch("")} className="px-2 py-0.5 rounded-full bg-white border border-emerald-200 hover:bg-red-50 hover:border-red-300 text-slate-700 flex items-center gap-1">
+                  Search: &quot;{search.trim().slice(0, 18)}{search.trim().length > 18 ? "…" : ""}&quot; <X size={11} />
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => { setBloomFilter("all"); setTopicFilter("all"); setCategoryFilter("all"); setSearch(""); }}
+                className="ml-auto text-emerald-700 hover:underline font-semibold"
+              >Clear all</button>
+            </div>
+          )}
+          {/* Finding #59 (Round 13): bloomFilter × teaching-context warning. */}
+          {bloomFilter !== "all" && teachingContext && (() => {
+            const supported: Record<string, string[]> = {
+              cat: ["apply","analyze","evaluate"],
+              jee_main: ["understand","apply","analyze","evaluate"],
+              jee_advanced: ["understand","apply","analyze","evaluate"],
+              neet: ["remember","understand","apply","analyze"],
+              gmat: ["apply","analyze","evaluate"],
+              gre: ["understand","apply","analyze","evaluate"],
+              upsc: ["remember","understand","apply","analyze"],
+              ielts: ["understand","apply","analyze"],
+              clat: ["remember","understand","apply","analyze"],
+              bitsat: ["understand","apply","analyze"],
+              sat: ["apply","analyze"],
+              gate: ["apply","analyze","evaluate"],
+              nda: ["remember","understand","apply"],
+              cuet: ["remember","understand","apply"],
+            };
+            const list = supported[teachingContext];
+            if (!list) return null;
+            if (list.includes(bloomFilter)) return null;
+            return (
+              <div className="flex items-start gap-2 rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-900">
+                <span aria-hidden="true">⚠</span>
+                <span>The teaching context ({teachingContext}) doesn&apos;t typically test &quot;{bloomFilter}&quot;-level questions. The bank below will likely be empty. Switch to <strong>{list.join(" / ")}</strong> or pick a different teaching context.</span>
+              </div>
+            );
+          })()}
+          {/* 2026-05-16 — recent-topic quick chips. */}
           {recentTopics.length > 0 && bank.length > 0 && (
             <div className="flex items-center gap-2 flex-wrap text-xs">
               <span className="muted">Recent:</span>
@@ -1298,7 +1407,64 @@ function ComposerInner() {
                 teacher trying to use negative marking sees an inline
                 warning. */}
             <div className="mt-4">
-              <MarkingSchemePicker
+              {/* Findings #55 + #56 + #57: cross-field warnings. */}
+            {(() => {
+              const warnings: { msg: string; tone: "warn" | "info" }[] = [];
+              if (selectedIds.length > 0) {
+                const secPerQ = Math.round((time * 60) / selectedIds.length);
+                if (secPerQ < 45) {
+                  warnings.push({ tone: "warn", msg: `Only ~${secPerQ} sec per question (${time} min ÷ ${selectedIds.length}). Students will struggle to finish.` });
+                } else if (secPerQ > 300) {
+                  warnings.push({ tone: "info", msg: `~${Math.round(secPerQ / 60)} min per question — generous. If intentional, ignore.` });
+                }
+              }
+              if (name.trim() && subject.trim()) {
+                const nameTokens = new Set(name.toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length >= 3));
+                const subjTokens = subject.toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length >= 3);
+                const fam: Record<string, string[]> = {
+                  math: ["math","maths","mathematics","algebra","geometry","trigonometry","calculus","arithmetic","lcm","hcf","gcd"],
+                  science: ["science","physics","chemistry","biology","botany","zoology","force","cell"],
+                  english: ["english","literature","grammar","vocabulary","reading","writing"],
+                  history: ["history","historical","civilization","empire","war"],
+                  geography: ["geography","climate","continent","river"],
+                };
+                let conflict: string | null = null;
+                for (const [f, ws] of Object.entries(fam)) {
+                  const sIs = subjTokens.some((t) => ws.includes(t));
+                  if (!sIs) continue;
+                  const nOther = Object.entries(fam).some(([of, ow]) => of !== f && Array.from(nameTokens).some((t) => ow.includes(t)));
+                  if (nOther) { conflict = f; break; }
+                }
+                if (conflict) {
+                  warnings.push({ tone: "warn", msg: `Test name mentions a topic that doesn't match the "${subject.trim()}" subject.` });
+                }
+              }
+              // Finding #57: marking-scheme × deep-Bloom mix
+              if (markingScheme && (markingScheme as { negative_marks_enabled?: boolean }).negative_marks_enabled && selectedQuestions.length > 0) {
+                const deep = selectedQuestions.filter((q) => q.bloom_level === "apply" || q.bloom_level === "analyze" || q.bloom_level === "evaluate" || q.bloom_level === "create").length;
+                const deepFrac = deep / selectedQuestions.length;
+                if (deepFrac >= 0.6) {
+                  warnings.push({ tone: "warn", msg: `Negative marking + ${Math.round(deepFrac * 100)}% deep-Bloom questions = over-penalty risk. Consider a non-penalty preset.` });
+                }
+              }
+              if (warnings.length === 0) return null;
+              return (
+                <div className="mt-3 space-y-2">
+                  {warnings.map((w, i) => (
+                    <div key={i} className={`rounded-md px-3 py-2 text-xs flex items-start gap-2 ${
+                      w.tone === "warn"
+                        ? "bg-amber-50 border border-amber-200 text-amber-900"
+                        : "bg-sky-50 border border-sky-200 text-sky-900"
+                    }`}>
+                      <span aria-hidden="true">{w.tone === "warn" ? "⚠" : "ℹ"}</span>
+                      <span>{w.msg}</span>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
+
+            <MarkingSchemePicker
                 value={markingScheme}
                 onChange={setMarkingScheme}
                 suggested={suggestedPreset}
@@ -1345,8 +1511,37 @@ function ComposerInner() {
             ) : (
               <ol className="space-y-2 mt-3 max-h-[60vh] overflow-y-auto pr-1">
                 {selectedQuestions.map((q, i) => (
-                  <li key={q.id} className="p-3 rounded-lg border border-slate-200 bg-white">
+                  <li
+                    key={q.id}
+                    draggable
+                    onDragStart={(e) => {
+                      setDragIndex(i);
+                      e.dataTransfer.effectAllowed = "move";
+                      e.dataTransfer.setData("text/plain", String(i));
+                    }}
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      e.dataTransfer.dropEffect = "move";
+                      if (dragIndex !== null && dragIndex !== i) setDropTargetIndex(i);
+                    }}
+                    onDragLeave={() => { if (dropTargetIndex === i) setDropTargetIndex(null); }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      if (dragIndex !== null && dragIndex !== i) moveTo(dragIndex, i);
+                      setDragIndex(null);
+                      setDropTargetIndex(null);
+                    }}
+                    onDragEnd={() => { setDragIndex(null); setDropTargetIndex(null); }}
+                    className={`p-3 rounded-lg border bg-white transition-colors ${
+                      dragIndex === i
+                        ? "border-emerald-300 bg-emerald-50/50 opacity-60"
+                        : dropTargetIndex === i
+                          ? "border-emerald-500 ring-2 ring-emerald-200"
+                          : "border-slate-200 hover:border-slate-300"
+                    }`}
+                  >
                     <div className="flex items-start gap-2">
+                      <span className="text-slate-300 hover:text-slate-500 cursor-grab active:cursor-grabbing shrink-0 mt-0.5 select-none" title="Drag to reorder" aria-hidden="true">⋮⋮</span>
                       <span className="text-xs font-bold text-slate-400 w-5 mt-0.5">{i + 1}.</span>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 mb-1 flex-wrap">

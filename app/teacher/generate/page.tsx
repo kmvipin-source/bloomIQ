@@ -824,10 +824,28 @@ export default function GeneratePage() {
 
   return (
     <div className="max-w-4xl mx-auto fade-in">
-      <h1 className="h1">Generate questions</h1>
-      <p className="muted mt-1 text-sm">
-        AI writes new multiple-choice questions for you. They land in <strong>Review Pending</strong> first; once you approve them they&apos;re available to <strong>Build &amp; Assign Tests</strong>.
-      </p>
+      <header className="mb-8">
+        <div className="flex items-center gap-3 mb-2">
+          <span className="inline-flex items-center justify-center w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500 to-emerald-700 text-white shadow-sm">
+            <Sparkles size={20} />
+          </span>
+          <h1 className="text-3xl font-bold tracking-tight text-slate-900">Generate questions</h1>
+        </div>
+        <p className="text-base text-slate-600 leading-relaxed max-w-2xl">
+          AI writes new multiple-choice questions for you. They land in <strong className="text-slate-800">Review Pending</strong> first; once you approve them they&apos;re available to <strong className="text-slate-800">Build &amp; Assign Tests</strong>.
+        </p>
+        <ol className="mt-5 flex items-center gap-2 text-xs font-medium text-slate-500">
+          <li className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-sky-400"></span>Class</li>
+          <span className="text-slate-300">›</span>
+          <li className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-sky-400"></span>Context</li>
+          <span className="text-slate-300">›</span>
+          <li className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-purple-400"></span>Test type</li>
+          <span className="text-slate-300">›</span>
+          <li className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-emerald-500"></span>Source &amp; mix</li>
+          <span className="text-slate-300">›</span>
+          <li className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-slate-300"></span>Generate</li>
+        </ol>
+      </header>
 
       {/* LearnerProfilePrompt removed (2026-05-12) — see top of file.
           learner_profile is now sourced via useEffect above from
@@ -836,11 +854,16 @@ export default function GeneratePage() {
 
       {/* ---------- Q1 V1: Class scope (optional) ---------- */}
       {teacherClasses.length > 0 && (
-        <div className="card mt-5 border-l-4 border-l-sky-400">
-          <div className="flex items-center gap-2 mb-2">
-            <Users size={16} className="text-sky-600" />
-            <h2 className="font-semibold text-sm text-sky-900">Step 1 · Which class is this for?</h2>
-            <span className="text-xs muted ml-auto">Optional — focuses what we generate</span>
+        <div className="card mt-6">
+          <div className="flex items-start gap-3 mb-4">
+            <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-sky-500 text-white text-xs font-bold flex-shrink-0 mt-0.5">1</span>
+            <div className="flex-1 min-w-0">
+              <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                <Users size={16} className="text-sky-600" />
+                Which class is this for?
+              </h2>
+              <p className="text-xs text-slate-500 mt-0.5">Optional — focuses what we generate to that class&apos;s subject and grade.</p>
+            </div>
           </div>
           <select
             className="select w-full text-sm"
@@ -870,11 +893,16 @@ export default function GeneratePage() {
           per-axis cross-validation. Seeds from profiles.last_teaching_context,
           falling back to classGradeToCategory(class.grade) when that's null.
           Picker is per-test — teacher can change for this generation only. */}
-      <div className="card mt-5 border-l-4 border-l-sky-400">
-        <div className="flex items-center gap-2 mb-2">
-          <GraduationCap size={16} className="text-sky-600" />
-          <h2 className="font-semibold text-sm text-sky-900">Step 2 · Who are you teaching today?</h2>
-          <span className="text-xs muted ml-auto">Picks the AI&apos;s register + unlocks cross-checks</span>
+      <div className="card mt-6">
+        <div className="flex items-start gap-3 mb-4">
+          <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-sky-500 text-white text-xs font-bold flex-shrink-0 mt-0.5">2</span>
+          <div className="flex-1 min-w-0">
+            <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
+              <GraduationCap size={16} className="text-sky-600" />
+              Who are you teaching today?
+            </h2>
+            <p className="text-xs text-slate-500 mt-0.5">Picks the AI&apos;s register and unlocks the cross-checks below.</p>
+          </div>
         </div>
         {/* H3 fix (Finding #3): auto-seed handled by the one-shot useEffect
             above the return statement. The previous IIFE re-seeded on every
@@ -931,11 +959,16 @@ export default function GeneratePage() {
           anything below. Hidden in the most subtle way: collapsed to a
           one-line "Skip — set everything yourself" link if they don't
           want guidance. Default is to show. */}
-      <div className="card mt-5 border-l-4 border-l-purple-400">
-        <div className="flex items-center gap-2 mb-3">
-          <Wand2 size={16} className="text-purple-600" />
-          <h2 className="font-semibold text-sm text-purple-900">Step 3 · What kind of test are you making?</h2>
-          <span className="text-xs muted ml-auto">Optional — pre-fills the form below</span>
+      <div className="card mt-6">
+        <div className="flex items-start gap-3 mb-4">
+          <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-purple-500 text-white text-xs font-bold flex-shrink-0 mt-0.5">3</span>
+          <div className="flex-1 min-w-0">
+            <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
+              <Wand2 size={16} className="text-purple-600" />
+              What kind of test are you making?
+            </h2>
+            <p className="text-xs text-slate-500 mt-0.5">Optional — pre-fills the Bloom mix and per-level counts.</p>
+          </div>
         </div>
 
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
@@ -979,13 +1012,19 @@ export default function GeneratePage() {
         )}
       </div>
 
-      {/* Source picker — primary input area, emerald accent runs
-          through the source picker AND the main form below. */}
-      <div className="mt-6 pl-2 border-l-4 border-l-emerald-500">
-        <div className="flex items-center gap-2 mb-2 -ml-2 pl-2">
-          <FileText size={16} className="text-emerald-600" />
-          <h2 className="font-semibold text-sm text-emerald-900">Step 4 · Source &amp; question mix</h2>
-          <span className="text-xs muted ml-auto">Where the questions come from + which Bloom levels</span>
+      {/* Step 4 — primary input area. Emerald accent on the heading + a
+          full card wrapper that contains the source picker AND the main
+          form body so the visual continuity reads as one section. */}
+      <div className="mt-6">
+        <div className="flex items-start gap-3 mb-4">
+          <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-emerald-500 text-white text-xs font-bold flex-shrink-0 mt-0.5">4</span>
+          <div className="flex-1 min-w-0">
+            <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
+              <FileText size={16} className="text-emerald-600" />
+              Source &amp; question mix
+            </h2>
+            <p className="text-xs text-slate-500 mt-0.5">Where the questions come from, which Bloom levels to target, and how many.</p>
+          </div>
         </div>
       <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
         {tabs.map((t) => {
@@ -1419,12 +1458,14 @@ export default function GeneratePage() {
           const canGenerate = !reason && !busy && !validationBlock;
           return (
             <div className="flex items-center justify-between flex-wrap gap-2">
-              <p className="text-xs muted">
+              <p className="text-sm">
                 {reason ? (
                   <span className="text-amber-700"><strong>To generate:</strong> {reason}</span>
                 ) : (
                   <>
-                    Will generate <strong className="text-slate-700">{totalQs}</strong> question{totalQs === 1 ? "" : "s"}
+                    <span className="text-slate-500">Will generate</span>{" "}
+                    <strong className="text-2xl font-bold text-emerald-700 align-middle mx-0.5">{totalQs}</strong>{" "}
+                    <span className="text-slate-500">question{totalQs === 1 ? "" : "s"}</span>
                     {/* F124 fix (QA): warn when batch is large — past 25 the
                         per-stage dedup/leak/cosine pipelines start dropping
                         ~10-30% so the delivered count under-shoots. */}
@@ -1440,8 +1481,15 @@ export default function GeneratePage() {
                   </>
                 )}
               </p>
-              <button type="button" className="btn btn-primary" onClick={generate} disabled={!canGenerate}>
-                {busy ? <><span className="spinner" /> Generating…</> : <><Sparkles size={16} /> Generate</>}
+              <button
+                type="button"
+                className="btn btn-primary !px-6 !py-3 !text-base font-semibold shadow-md hover:shadow-lg transition-shadow"
+                onClick={generate}
+                disabled={!canGenerate}
+              >
+                {busy
+                  ? <><span className="spinner" /> Generating…</>
+                  : <><Sparkles size={18} /> Generate questions <span className="hidden sm:inline">→</span></>}
               </button>
             </div>
           );
