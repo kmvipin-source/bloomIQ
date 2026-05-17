@@ -155,6 +155,14 @@ function ComposerInner() {
   // strict TS once the CI gap closed in Round 5.
   const [classes, setClasses] = useState<ClassOption[]>([]);
   const [targetClassId, setTargetClassId] = useState<string>("");
+  // L-3 fix (UAT live-finding): the composer never used to write to
+  // quiz_assignments, so even after picking a class for class-fit, the
+  // teacher still had to navigate to a second screen to actually assign.
+  // assignDueAt is optional — null means "no deadline" which is legal in
+  // the schema (migration 01: due_at timestamptz, nullable). When the
+  // teacher leaves the class picker empty no auto-assign happens at all
+  // (preserves the existing "just build, assign later" workflow).
+  const [assignDueAt, setAssignDueAt] = useState<string>("");
 
   // Class-vs-context fit. Re-runs on class or picker change. Reuses the
   // existing validateGenerationFitForGrade helper from lib/questionCategory.
@@ -884,6 +892,40 @@ function ComposerInner() {
       }));
       const { error: rerr } = await sb.from("quiz_questions").insert(rows);
       if (rerr) throw rerr;
+
+      // L-3 fix (UAT live-finding): when the teacher has picked a class in
+      // the class-fit picker, also write a quiz_assignments row so the test
+      // is actually visible to those students. Previously the composer would
+      // end without ever inserting into quiz_assignments — the teacher had
+      // to follow up with a separate Assign action. Best-effort: if the
+      // assign fails (RLS / FK / etc.) we still keep the quiz and surface
+      // the failure as a non-blocking error toast so the teacher knows.
+      // due_at is optional; null means "no deadline" which is legal per
+      // migration 01 (due_at is nullable). Whole-class scope only — the
+      // composer has no per-student selector.
+      if (targetClassId) {
+        let due_at: string | null = null;
+        if (assignDueAt) {
+          const ms = Date.parse(assignDueAt);
+          if (!Number.isNaN(ms) && ms > Date.now()) {
+            due_at = new Date(ms).toISOString();
+          }
+        }
+        const { error: assignErr } = await sb.from("quiz_assignments").insert({
+          quiz_id: quiz!.id,
+          class_id: targetClassId,
+          student_id: null,
+          assigned_by: user.id,
+          due_at,
+        });
+        if (assignErr) {
+          // Don't throw — the quiz itself is good, surface to user and let
+          // them retry assigning from the detail page.
+          // eslint-disable-next-line no-console
+          console.warn("[composer] auto-assign failed (non-fatal):", assignErr.message);
+          setErr(`Test created, but auto-assign to class failed: ${assignErr.message}. You can assign manually from the test page.`);
+        }
+      }
 
       // Sticky marking-scheme persistence (migration 77). Quiz + questions
       // inserted successfully — write the teacher's pick back to
@@ -1814,6 +1856,8 @@ function ComposerInner() {
               classes={classes}
               targetClassId={targetClassId}
               setTargetClassId={setTargetClassId}
+              assignDueAt={assignDueAt}
+              setAssignDueAt={setAssignDueAt}
               fit={classFit}
               loading={loadingFit}
               hasSelection={selectedQuestions.length > 0}
@@ -2021,6 +2065,8 @@ function ClassFitCard({
   classes,
   targetClassId,
   setTargetClassId,
+  assignDueAt,
+  setAssignDueAt,
   fit,
   loading,
   hasSelection,
@@ -2028,6 +2074,8 @@ function ClassFitCard({
   classes: ClassOption[];
   targetClassId: string;
   setTargetClassId: (v: string) => void;
+  assignDueAt: string;
+  setAssignDueAt: (v: string) => void;
   fit: ClassFit | null;
   loading: boolean;
   hasSelection: boolean;
@@ -2059,6 +2107,121 @@ function ClassFitCard({
           </option>
         ))}
       </select>
+
+      {/* L-3 fix: optional due-date for the auto-assign-on-create.
+          When a class is picked above, the composer also writes a
+          quiz_assignments row so the test is actually visible to the
+          students. Leaving the date blank still assigns it — just with
+          no deadline. */}
+      {targetClassId && (
+        <div className="mt-3 space-y-1.5">
+          <label className="label text-xs">
+            Due date <span className="muted">(optional)</span>
+          </label>
+          <input
+            type="datetime-local"
+            className="input text-sm"
+            value={assignDueAt}
+            onChange={(e) => setAssignDueAt(e.target.value)}
+          />
+          <div className="text-[11px] muted leading-snug">
+            On save, the test will be assigned to this class
+            {assignDueAt ? " with the due date above." : " with no deadline. You can set one later from the test page."}
+          </div>
+        </div>
+      )}
+
+      {!targetClassId ? (
+        <div className="text-xs muted mt-2">
+          Pick a class to see how many of these questions they&apos;ve seen and how they did.
+        </div>
+      ) : !hasSelection ? (
+        <div className="text-xs muted mt-2">
+          Add at least one question to see fit.
+        </div>
+      ) : loading ? (
+        <div className="text-xs muted mt-2 flex items-center gap-1.5">
+          <span className="spinner" /> Checking…
+        </div>
+      ) : !fit ? (
+        <div className="text-xs muted mt-2">No fit data right now.</div>
+      ) : (
+        <div className="mt-2 text-xs text-slate-700 space-y-1">
+          {fit.matched === 0 ? (
+            <div>
+              This class hasn&apos;t seen any of the {fit.total} selected
+              question{fit.total === 1 ? "" : "s"} yet — fresh territory.
+            </div>
+          ) : (
+            <>
+              <div>
+                <strong className="text-slate-800">{fit.matched}</strong> of{" "}
+                <strong className="text-slate-800">{fit.total}</strong> selected
+                question{fit.total === 1 ? "" : "s"} have prior attempts in this class.
+              </div>
+              {fit.avg_score_pct !== null && (
+                <div className="muted">
+                  Average there: <strong className="text-slate-700">{fit.avg_score_pct}%</strong>{" "}
+                  across {fit.attempts} attempt{fit.attempts === 1 ? "" : "s"}.
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default function NewQuizPage() {
+  return (
+    <Suspense fallback={<div className="grid place-items-center py-20"><div className="spinner" /></div>}>
+      <ComposerInner />
+    </Suspense>
+  );
+}
+lassName="card">
+      <div className="flex items-center gap-2 mb-2">
+        <Users size={14} className="text-slate-400" />
+        <h3 className="font-semibold text-sm">Will this fit a class?</h3>
+        <span className="muted text-xs font-normal ml-auto">optional</span>
+      </div>
+
+      <select
+        className="select w-full text-sm"
+        value={targetClassId}
+        onChange={(e) => setTargetClassId(e.target.value)}
+      >
+        <option value="">Compare with a class…</option>
+        {classes.map((c) => (
+          <option key={c.id} value={c.id}>
+            {labelFor(c)}
+          </option>
+        ))}
+      </select>
+
+      {/* L-3 fix: optional due-date for the auto-assign-on-create.
+          When a class is picked above, the composer also writes a
+          quiz_assignments row so the test is actually visible to the
+          students. Leaving the date blank still assigns it — just with
+          no deadline. */}
+      {targetClassId && (
+        <div className="mt-3 space-y-1.5">
+          <label className="label text-xs">
+            Due date <span className="muted">(optional)</span>
+          </label>
+          <input
+            type="datetime-local"
+            className="input text-sm"
+            value={assignDueAt}
+            onChange={(e) => setAssignDueAt(e.target.value)}
+          />
+          <div className="text-[11px] muted leading-snug">
+            On save, the test will be assigned to this class
+            {assignDueAt ? " with the due date above." : " with no deadline. You can set one later from the test page."}
+          </div>
+        </div>
+      )}
 
       {!targetClassId ? (
         <div className="text-xs muted mt-2">

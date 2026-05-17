@@ -1,0 +1,104 @@
+{
+  "//": "ZCORIQ AI Quality Benchmark — 50 production-shaped prompts.",
+  "//1": "Each prompt is what a real teacher would send to /api/generate.",
+  "//2": "Topics span K-12 board, competitive exam, language, and niche domains.",
+  "//3": "Pass bar (per the UAT pre-pilot conditions): 85%+ acceptance from a subject-matter educator.",
+  "version": "v1-2026-05-17",
+  "prompts": [
+    { "id": "k12-math-1",  "category": "k12-math",      "exam_goal": "class_8_boards", "teaching_context": "class_5_8",     "topic": "Algebra — quadratic equations",        "bloom_levels": ["understand", "apply"],          "per_level": 3, "source": "topic_only", "numerical_percent": 60, "audience_level": null },
+    { "id": "k12-math-2",  "category": "k12-math",      "exam_goal": "class_10_boards","teaching_context": "class_9_10",    "topic": "Trigonometry — heights and distances", "bloom_levels": ["understand", "apply", "analyze"], "per_level": 3, "source": "topic_only", "numerical_percent": 70, "audience_level": null },
+    { "id": "k12-math-3",  "category": "k12-math",      "exam_goal": "class_5_boards", "teaching_context": "class_5_8",     "topic": "LCM — Least Common Multiple",          "bloom_levels": ["remember", "understand", "apply"],"per_level": 3, "source": "topic_only", "numerical_percent": 50, "audience_level": null,
+      "verify": "MUST be math/arithmetic. If output is Linear/Circular Motion → CRITICAL FAIL (acronym disambiguation broken)." },
+
+    { "id": "k12-sci-1",   "category": "k12-science",   "exam_goal": "class_8_boards", "teaching_context": "class_5_8",     "topic": "Photosynthesis — light reactions",      "bloom_levels": ["understand", "apply"],         "per_level": 3, "source": "topic_only", "numerical_percent": 10, "audience_level": null },
+    { "id": "k12-sci-2",   "category": "k12-science",   "exam_goal": "class_10_boards","teaching_context": "class_9_10",    "topic": "Newton's laws of motion",               "bloom_levels": ["understand", "apply", "analyze"],"per_level": 3, "source": "topic_only", "numerical_percent": 60, "audience_level": null },
+    { "id": "k12-sci-3",   "category": "k12-science",   "exam_goal": "class_9",        "teaching_context": "class_9_10",    "topic": "Cells — structure and function",        "bloom_levels": ["remember", "understand"],      "per_level": 3, "source": "topic_only", "numerical_percent": 0,  "audience_level": null },
+
+    { "id": "k12-eng-1",   "category": "k12-english",   "exam_goal": "class_8_boards", "teaching_context": "class_5_8",     "topic": "Active and passive voice",              "bloom_levels": ["understand", "apply"],         "per_level": 3, "source": "topic_only", "numerical_percent": 0,  "audience_level": null },
+    { "id": "k12-eng-2",   "category": "k12-english",   "exam_goal": "class_10_boards","teaching_context": "class_9_10",    "topic": "Literary devices — metaphor and simile","bloom_levels": ["remember", "understand", "analyze"],"per_level": 2,"source": "topic_only", "numerical_percent": 0,  "audience_level": null },
+
+    { "id": "k12-hist-1",  "category": "k12-history",   "exam_goal": "class_8_boards", "teaching_context": "class_5_8",     "topic": "The French Revolution — causes",        "bloom_levels": ["remember", "understand", "analyze"],"per_level": 2,"source": "topic_only", "numerical_percent": 0,  "audience_level": null },
+    { "id": "k12-geo-1",   "category": "k12-geography", "exam_goal": "class_8_boards", "teaching_context": "class_5_8",     "topic": "Climate zones of India",                "bloom_levels": ["remember", "understand"],      "per_level": 3, "source": "topic_only", "numerical_percent": 0,  "audience_level": null },
+
+    { "id": "jee-phys-1",  "category": "jee-physics",   "exam_goal": "jee_main",       "teaching_context": "jee_main",      "topic": "Rotational Mechanics",                  "bloom_levels": ["understand", "apply", "analyze", "evaluate"], "per_level": 2, "source": "topic_only", "numerical_percent": 70, "audience_level": null },
+    { "id": "jee-phys-2",  "category": "jee-physics",   "exam_goal": "jee_advanced",   "teaching_context": "jee_advanced",  "topic": "Electromagnetic Induction",             "bloom_levels": ["apply", "analyze", "evaluate"],"per_level": 3, "source": "topic_only", "numerical_percent": 80, "audience_level": null },
+    { "id": "jee-chem-1",  "category": "jee-chemistry", "exam_goal": "jee_main",       "teaching_context": "jee_main",      "topic": "Chemical Bonding — VSEPR",              "bloom_levels": ["understand", "apply"],         "per_level": 3, "source": "topic_only", "numerical_percent": 30, "audience_level": null },
+    { "id": "jee-math-1",  "category": "jee-math",      "exam_goal": "jee_main",       "teaching_context": "jee_main",      "topic": "Definite Integrals",                    "bloom_levels": ["apply", "analyze", "evaluate"],"per_level": 3, "source": "topic_only", "numerical_percent": 80, "audience_level": null },
+
+    { "id": "neet-bio-1",  "category": "neet-biology",  "exam_goal": "neet",           "teaching_context": "neet",          "topic": "Human Reproductive System",             "bloom_levels": ["remember", "understand", "apply"],"per_level": 3,"source": "topic_only", "numerical_percent": 5,  "audience_level": null },
+    { "id": "neet-bio-2",  "category": "neet-biology",  "exam_goal": "neet",           "teaching_context": "neet",          "topic": "Genetics — Mendel's laws",              "bloom_levels": ["understand", "apply", "analyze"],"per_level": 3,"source": "topic_only", "numerical_percent": 20, "audience_level": null },
+    { "id": "neet-chem-1", "category": "neet-chemistry","exam_goal": "neet",           "teaching_context": "neet",          "topic": "Coordination Compounds",                "bloom_levels": ["understand", "apply"],         "per_level": 3, "source": "topic_only", "numerical_percent": 30, "audience_level": null },
+    { "id": "neet-phys-1", "category": "neet-physics",  "exam_goal": "neet",           "teaching_context": "neet",          "topic": "Ray Optics — lens formula",             "bloom_levels": ["apply", "analyze"],            "per_level": 3, "source": "topic_only", "numerical_percent": 70, "audience_level": null },
+
+    { "id": "cat-quant-1", "category": "cat-quant",     "exam_goal": "cat",            "teaching_context": "cat",           "topic": "Number Systems — divisibility",         "bloom_levels": ["apply", "analyze", "evaluate"],"per_level": 3, "source": "topic_only", "numerical_percent": 90, "audience_level": null },
+    { "id": "cat-quant-2", "category": "cat-quant",     "exam_goal": "cat",            "teaching_context": "cat",           "topic": "Geometry — triangles",                  "bloom_levels": ["apply", "analyze"],            "per_level": 3, "source": "topic_only", "numerical_percent": 80, "audience_level": null },
+    { "id": "cat-verbal-1","category": "cat-verbal",    "exam_goal": "cat",            "teaching_context": "cat",           "topic": "Reading Comprehension — main idea",     "bloom_levels": ["analyze", "evaluate"],         "per_level": 3, "source": "topic_only", "numerical_percent": 0,  "audience_level": null },
+    { "id": "cat-dilr-1",  "category": "cat-dilr",      "exam_goal": "cat",            "teaching_context": "cat",           "topic": "Data Interpretation — line charts",     "bloom_levels": ["analyze", "evaluate"],         "per_level": 3, "source": "topic_only", "numerical_percent": 80, "audience_level": null },
+
+    { "id": "upsc-1",      "category": "upsc",          "exam_goal": "upsc",           "teaching_context": "upsc",          "topic": "Indian Constitution — fundamental rights","bloom_levels": ["remember","understand","apply"],"per_level": 3,"source": "topic_only", "numerical_percent": 0, "audience_level": null },
+    { "id": "upsc-2",      "category": "upsc",          "exam_goal": "upsc",           "teaching_context": "upsc",          "topic": "Modern Indian History — INA",            "bloom_levels": ["remember", "understand"],      "per_level": 3, "source": "topic_only", "numerical_percent": 0,  "audience_level": null },
+
+    { "id": "gmat-1",      "category": "gmat",          "exam_goal": "gmat",           "teaching_context": "gmat",          "topic": "Quantitative Reasoning — ratios",       "bloom_levels": ["apply", "analyze"],            "per_level": 3, "source": "topic_only", "numerical_percent": 80, "audience_level": null },
+    { "id": "gre-1",       "category": "gre",           "exam_goal": "gre",            "teaching_context": "gre",           "topic": "Verbal — text completion",              "bloom_levels": ["understand", "apply", "analyze"],"per_level": 2,"source": "topic_only", "numerical_percent": 0,  "audience_level": null },
+
+    { "id": "ielts-1",     "category": "ielts",         "exam_goal": "ielts",          "teaching_context": "ielts",         "topic": "Reading — locating information",        "bloom_levels": ["understand", "analyze"],       "per_level": 3, "source": "topic_only", "numerical_percent": 0,  "audience_level": null },
+    { "id": "ielts-2",     "category": "ielts",         "exam_goal": "ielts",          "teaching_context": "ielts",         "topic": "Grammar — present perfect",             "bloom_levels": ["understand", "apply"],         "per_level": 3, "source": "topic_only", "numerical_percent": 0,  "audience_level": null },
+
+    { "id": "sat-math-1",  "category": "sat",           "exam_goal": "sat",            "teaching_context": "sat",           "topic": "Linear Functions",                       "bloom_levels": ["apply", "analyze"],            "per_level": 3, "source": "topic_only", "numerical_percent": 90, "audience_level": null },
+    { "id": "bitsat-1",    "category": "bitsat",        "exam_goal": "bitsat",         "teaching_context": "bitsat",        "topic": "Logical Reasoning — patterns",          "bloom_levels": ["analyze"],                     "per_level": 5, "source": "topic_only", "numerical_percent": 30, "audience_level": null },
+
+    { "id": "ambig-1",     "category": "disambiguation","exam_goal": "jee_main",       "teaching_context": "jee_main",      "topic": "ROI",                                    "bloom_levels": ["understand"],                  "per_level": 3, "source": "topic_only", "numerical_percent": 0,  "audience_level": null,
+      "verify": "Should disambiguate to Return on Investment (finance/math) NOT Region of Interest (image processing). Acronym rule #7 of SYSTEM prompt." },
+    { "id": "ambig-2",     "category": "disambiguation","exam_goal": "neet",           "teaching_context": "neet",          "topic": "AC",                                     "bloom_levels": ["understand", "apply"],         "per_level": 3, "source": "topic_only", "numerical_percent": 30, "audience_level": null,
+      "verify": "Should disambiguate to Alternating Current (physics, common in NEET) NOT Air Conditioning." },
+    { "id": "ambig-3",     "category": "disambiguation","exam_goal": "cat",            "teaching_context": "cat",           "topic": "PI",                                     "bloom_levels": ["apply"],                        "per_level": 3, "source": "topic_only", "numerical_percent": 60, "audience_level": null,
+      "verify": "Should disambiguate to π (the constant) NOT Principal Investigator." },
+
+    { "id": "niche-1",     "category": "niche",         "exam_goal": null,             "teaching_context": null,            "topic": "COBOL — PERFORM verb",                  "bloom_levels": ["understand", "apply"],         "per_level": 3, "source": "topic_only", "numerical_percent": 0,  "audience_level": "expert",
+      "verify": "Must use REAL Cobol syntax. No invented opcodes / fields. SYSTEM prompt rule #5 (generic domain awareness)." },
+    { "id": "niche-2",     "category": "niche",         "exam_goal": null,             "teaching_context": null,            "topic": "ISO 8583 — data elements",              "bloom_levels": ["understand", "apply"],         "per_level": 3, "source": "topic_only", "numerical_percent": 10, "audience_level": "expert",
+      "verify": "Must use REAL ISO 8583 field numbers. No fabricated data element numbers." },
+    { "id": "niche-3",     "category": "niche",         "exam_goal": null,             "teaching_context": null,            "topic": "BGP — route reflectors",                "bloom_levels": ["analyze"],                     "per_level": 3, "source": "topic_only", "numerical_percent": 0,  "audience_level": "expert",
+      "verify": "BGP terminology must be real. No invented attributes/codes." },
+
+    { "id": "mock-paper-1","category": "mock-paper",    "exam_goal": "jee_main",       "teaching_context": "jee_main",      "topic": "JEE",                                    "bloom_levels": ["understand", "apply", "analyze","evaluate"], "per_level": 5, "source": "topic_only", "numerical_percent": 70, "audience_level": null,
+      "verify": "Bare exam name as topic should trigger exam-style framing — questions look like JEE paper, NOT meta-questions ABOUT JEE." },
+    { "id": "mock-paper-2","category": "mock-paper",    "exam_goal": "neet",           "teaching_context": "neet",          "topic": "NEET",                                   "bloom_levels": ["remember", "understand", "apply", "analyze"],"per_level": 5,"source": "topic_only", "numerical_percent": 30, "audience_level": null,
+      "verify": "Same as mock-paper-1, but for NEET." },
+
+    { "id": "off-topic-1", "category": "cross-validation","exam_goal": "jee_main",     "teaching_context": "jee_main",      "topic": "French Revolution",                     "bloom_levels": ["understand", "apply"],         "per_level": 3, "source": "topic_only", "numerical_percent": 60, "audience_level": null,
+      "verify": "Topic is off-syllabus for JEE. /api/topic-validate should fire a warning. Generation should still complete but the warning surfaces in the UI." },
+
+    { "id": "tricky-1",    "category": "tricky-bloom",  "exam_goal": "cat",            "teaching_context": "cat",           "topic": "Number Systems",                         "bloom_levels": ["remember"],                    "per_level": 3, "source": "topic_only", "numerical_percent": 0,  "audience_level": null,
+      "verify": "CAT supportedBloomLevels = [apply, analyze, evaluate]. Front-end SHOULD disable 'remember' chip. If this prompt is sent through API directly, the response should ideally still be CAT-appropriate (Apply-level masquerading as Remember is acceptable; pure rote 'what is the LCM of 12 and 8' is wrong for CAT)." },
+
+    { "id": "tiny-1",      "category": "edge-case",     "exam_goal": "jee_main",       "teaching_context": "jee_main",      "topic": "F",                                       "bloom_levels": ["apply"],                       "per_level": 3, "source": "topic_only", "numerical_percent": 60, "audience_level": null,
+      "verify": "Topic is a single letter. Should either (a) decline gracefully (b) interpret as Force (physics, common in JEE) and proceed." },
+
+    { "id": "syllabus-1",  "category": "syllabus-source","exam_goal": "class_10_boards","teaching_context": "class_9_10",   "topic": "Real Numbers",                           "bloom_levels": ["understand", "apply"],         "per_level": 3, "source": "topic_syllabus", "className": "Class 10", "syllabus": "CBSE NCERT Chapter 1", "numerical_percent": 70, "audience_level": null,
+      "verify": "Should produce CBSE-NCERT-Class-10 style questions on Real Numbers (Euclid's lemma, fundamental theorem, irrationals)." },
+
+    { "id": "audience-1",  "category": "audience-bias", "exam_goal": "jee_main",       "teaching_context": "jee_main",      "topic": "Vectors",                                "bloom_levels": ["apply"],                       "per_level": 3, "source": "topic_only", "numerical_percent": 70, "audience_level": "beginner",
+      "verify": "Beginner reading level + JEE context = contradictory. Output should still be JEE-appropriate but with simpler language. Or the front-end should warn about contradiction (Finding #51 — soft warn)." },
+    { "id": "audience-2",  "category": "audience-bias", "exam_goal": "class_10_boards","teaching_context": "class_9_10",    "topic": "Photosynthesis",                         "bloom_levels": ["understand"],                  "per_level": 3, "source": "topic_only", "numerical_percent": 0,  "audience_level": "expert",
+      "verify": "Expert reading level + Class 9-10 board context = stretch. Output should be Class 9-10 syllabus but more challenging vocabulary." },
+
+    { "id": "subtopic-1",  "category": "subtopic-focus","exam_goal": "jee_main",       "teaching_context": "jee_main",      "topic": "Calculus",                               "bloom_levels": ["apply"],                       "per_level": 4, "source": "topic_only", "numerical_percent": 80, "audience_level": null,
+      "sub_topics": ["Limits", "Continuity"],
+      "verify": "When sub_topics are specified, output should bias toward those — not random Calculus topics like Integration." },
+
+    { "id": "additional-1","category": "additional-focus","exam_goal":"jee_main",     "teaching_context": "jee_main",      "topic": "Thermodynamics",                          "bloom_levels": ["apply"],                      "per_level": 3, "source": "topic_only", "numerical_percent": 80, "audience_level": null,
+      "additional_focus": "Real-world refrigeration cycles only — avoid pure theoretical questions.",
+      "verify": "The additional_focus instruction should be honored." },
+
+    { "id": "k12-civics-1","category": "k12-civics",    "exam_goal": "class_8_boards","teaching_context": "class_5_8",     "topic": "Indian Parliament — functions",          "bloom_levels": ["remember", "understand"],     "per_level": 3, "source": "topic_only", "numerical_percent": 0,  "audience_level": null },
+
+    { "id": "long-tail-1", "category": "long-tail",     "exam_goal": null,             "teaching_context": null,            "topic": "DB2 cursor handling — FETCH semantics",   "bloom_levels": ["analyze"],                    "per_level": 3, "source": "topic_only", "numerical_percent": 0,  "audience_level": "expert",
+      "verify": "Long-tail technical topic. Test the generic-domain-awareness rule. Should use REAL DB2 syntax." },
+
+    { "id": "corporate-1", "category": "corporate",     "exam_goal": null,             "teaching_context": null,            "topic": "AWS S3 — versioning",                     "bloom_levels": ["understand", "apply"],        "per_level": 3, "source": "topic_only", "numerical_percent": 0,  "audience_level": "practitioner" },
+
+    { "id": "k12-math-4",  "category": "k12-math",      "exam_goal": "class_10_boards","teaching_context": "class_9_10",    "topic": "Probability — basic events",             "bloom_levels": ["understand", "apply"],        "per_level": 3, "source": "topic_only", "numerical_percent": 60, "audience_level": null },
+    { "id": "k12-math-5",  "category": "k12-math",      "exam_goal": "class_12_boards","teaching_context": "senior_board",  "topic": "Matrices — operations",                  "bloom_levels": ["apply"],                      "per_level": 4, "source": "topic_only", "numerical_percent": 80, "audience_level": null }
+  ]
+}

@@ -138,6 +138,11 @@ export async function POST(req: Request) {
     );
     const { data: signIn, error: signInErr } = await anon.auth.signInWithPassword({ email, password });
     if (signInErr || !signIn.session) {
+      // Finding U-2 fix (UAT session 2026-05-17): compensating rollback.
+      // The auth user + profile were created above; if signIn fails we'd
+      // leave both behind with no way for the user to recover (email-exists
+      // check blocks re-signup). Delete the auth user so they can retry.
+      try { await admin.auth.admin.deleteUser(userId); } catch { /* ignore */ }
       return NextResponse.json({ error: signInErr?.message || "Sign-in failed" }, { status: 500 });
     }
 

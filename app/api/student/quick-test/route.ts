@@ -10,6 +10,7 @@ import {
 } from "@/lib/bloom";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { requireAuthenticated } from "@/lib/apiAuth";
+import { checkRateLimit, checkDailyCap } from "@/lib/rateLimit";
 import { generateQuizCode } from "@/lib/utils";
 import { classifyQuiz } from "@/lib/classifier";
 import {
@@ -335,6 +336,34 @@ export async function POST(req: Request) {
     }
     const profileExamGoal: string | null = (prof as { exam_goal?: string | null })?.exam_goal ?? null;
     const profileLearnerProfile: string | null = (prof as { learner_profile?: string | null })?.learner_profile ?? null;
+
+    // L-2 fix (UAT live-finding): /api/student/quick-test previously had
+    // NO rate limit and NO daily cap, even though one call fans out to:
+    //   - up to 6 LLM generation calls (one per Bloom level)
+    //   - a verifier pass per question (~5 reviewer calls each)
+    //   - optional refinement on dispute
+    //   - an auto-retry on per-level shortfall
+    // A single student running `for i in {1..200}; do curl …; done` could
+    // burn the day's Groq+Gemini budget. Limits mirror /api/generate (same
+    // pipeline, same cost shape):
+    //   - bucket: 5 tokens, refill 10/hr → bursts allowed, sustained slow
+    //   - daily cap: 30 generations/user/day → abuse safety net
+    // Both deny paths return 429 with the same shape /api/generate uses,
+    // so the client toast handling already covers them.
+    const rate = checkRateLimit(user.id, "quick-test", { capacity: 5, refillPerHour: 10 });
+    if (!rate.allowed) {
+      return NextResponse.json(
+        { error: "Too many requests.", code: "rate_limited" },
+        { status: 429, headers: { "Retry-After": String(rate.retryAfterSec) } },
+      );
+    }
+    const daily = checkDailyCap(user.id, "quick-test", 30);
+    if (!daily.allowed) {
+      return NextResponse.json(
+        { error: `Daily limit reached (${daily.limit}). Try again tomorrow.`, code: "daily_cap", used: daily.used, limit: daily.limit },
+        { status: 429 },
+      );
+    }
 
     const body = await req.json();
     const source: Source = (body.source as Source) || "topic_only";
@@ -944,6 +973,42 @@ export async function POST(req: Request) {
 
     // Sticky marking-scheme persistence — write the user's pick back to
     // profile.last_marking_scheme so every future test surface
+    // pre-fills with this scheme. See lib/markingSchemeMemory.ts. Done
+    // ONLY after a successful quiz+questions insert so a failed test
+    // never pollutes the preference. Best-effort — silent on failure.
+    if (markingScheme && typeof markingScheme === "object") {
+      const { writeLastMarkingScheme } = await import("@/lib/markingSchemeMemory");
+      const { resolveScheme } = await import("@/lib/scoring");
+      await writeLastMarkingScheme(adminForCtx, user.id, resolveScheme(markingScheme));
+    }
+
+    const verifiedCount = allRows.filter((r) => r.quality.verified).length;
+    const disputedCount = allRows.length - verifiedCount;
+
+    return NextResponse.json({
+      ok: true,
+      quizId: quiz!.id,
+      quizCode: quiz!.code,
+      summary,
+      total: allRows.length,
+      verification: {
+        verified: verifiedCount,
+        disputed: disputedCount,
+      },
+      // When the topic matches a known competitive exam, surface any
+      // Bloom levels we filtered out so the UI can explain to the user
+      // why the test isn't covering everything they ticked.
+      examFilter: examForFilter
+        ? { name: examForFilter.name, omitted: omittedLevels, supported: examForFilter.bloomLevels }
+        : null,
+    });
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error(`[quick-test] unexpected error:`, e);
+    return NextResponse.json({ error: e instanceof Error ? e.message : "Test creation failed" }, { status: 500 });
+  }
+}
+rface
     // pre-fills with this scheme. See lib/markingSchemeMemory.ts. Done
     // ONLY after a successful quiz+questions insert so a failed test
     // never pollutes the preference. Best-effort — silent on failure.

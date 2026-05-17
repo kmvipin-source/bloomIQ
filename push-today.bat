@@ -85,3 +85,39 @@ echo.
 echo Push failed. Check your network or auth and re-run: git push origin main
 endlocal
 exit /b 1
+ Done ===
+echo Local main is fully in sync with origin/main on GitHub.
+echo You can delete COMMIT_MSG_TODAY.txt and push-today.bat afterwards if you like.
+endlocal
+exit /b 0
+
+:fail_pull
+echo.
+echo Pull failed. Resolve conflicts or check network/auth, then re-run.
+endlocal
+exit /b 1
+
+:fail_add
+echo.
+echo git add failed. See output above.
+endlocal
+exit /b 1
+
+:warn_commit
+echo.
+echo Commit step exited non-zero. Most common cause: "nothing to commit".
+echo If so, you're already in sync -- attempting push anyway in case there
+echo are local commits not yet on origin.
+git push origin main
+if errorlevel 1 goto fail_push
+echo.
+echo === Done ===
+echo Local main is fully in sync with origin/main on GitHub.
+endlocal
+exit /b 0
+
+:fail_push
+echo.
+echo Push failed. Check your network or auth and re-run: git push origin main
+endlocal
+exit /b 1

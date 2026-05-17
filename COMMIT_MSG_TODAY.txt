@@ -1,94 +1,152 @@
-QA Audit Round 20: School-admin pages — auth-race retry (the FOURTH
-and FINAL layout in the platform now consistently handles the
-Supabase auth-server propagation window). 4 of 5 module-4 findings
-re-classified or documented as below-the-fold; one substantive fix
-ships here.
+UAT live-finding fixes (L-1 + L-2 + L-3) + earlier U-2 fix + AI Quality Benchmark Harness
+
+This commit ships every pending change from the last two UAT-execution
+sessions documented under docs/ZCORIQ_UAT_Test_Execution_Report.docx
+and docs/ZCORIQ_3Module_UAT_Execution.docx.
 
 ============================================================
-#89 — HIGH — /school/layout.tsx auth-race retry (final layout!)
-============================================================
-Same race shape as the other three layouts:
-  Round 8 #53  — /teacher/layout.tsx
-  Round 16 #72 — /student/layout.tsx
-  Round 17 #77 — /admin/layout.tsx
-  Round 20 #89 — /school/layout.tsx  ← THIS
-
-Single /api/auth/me call with no retry was bouncing real
-super_teachers to /login during the 300-800ms auth-server
-propagation window right after sign-in. Now uses the same 3-attempt
-× 300ms-backoff pattern.
-
-With this commit, **every layout in the platform handles the
-auth-race consistently**. No layout-level first-sign-in bounces
-should remain across teacher / student / admin / super_teacher.
-
-============================================================
-DOCUMENTED — other module-4 findings
+1. L-1 — signup "Database error saving new user" (CRITICAL)
 ============================================================
 
-#90 LOW /school/billing client-side error handling
-  When session.access_token is missing, the page shows "Sign in
-  required." instead of redirecting to /login. Layout already
-  redirects, so client-side is defensive only. Cosmetic.
+Both /signup?role=teacher AND /signup?role=student were failing with
+"Database error saving new user" on the dev environment. Root cause:
+the public.handle_new_user() trigger does 5 things in sequence:
 
-#91 MEDIUM /school/students N+1-style query pattern
-  Builds the roster via 5 sequential supabaseBrowser() queries:
-    (1) /api/auth/me        (resolve school_id)
-    (2) profiles            (students in school)
-    (3) class_members       (their memberships)
-    (4) classes             (active classes in school)
-    (5) attempts            (their attempts on school quizzes)
-  Each is ~50-200ms RTT — page total load can hit ~500ms-1s.
-  Fix: server-side aggregator endpoint /api/school/students that
-  returns rows + memberships + attempts in one call. Out of scope
-  for this commit; the page works correctly today, just slow.
+  1. Validate role
+  2. INSERT into profiles
+  3. INSERT into subscriptions (independent students only)
+  4. UPDATE profiles.school_id from class_teacher_invites
+  5. INSERT class_teachers + DELETE class_teacher_invites
 
-#92 LOW /school/billing UI doesn't surface the grace_period_days
-  field even though the API returns it. Operators add grace_period
-  for late payers; school doesn't see "you're 7 days past due but
-  in grace until DD-MM". Add when finance team requests visibility.
+Steps 1-3 are mandatory. Steps 4-5 are best-effort auto-claim of
+pending teacher invites. The old trigger aborted on any failure
+ANYWHERE in steps 4-5 — including a missing/stale class_teacher_invites
+table on a partial-migration dev DB.
 
-#93 LOW /school/reports.tsx is 1279 lines — needs decomposition into
-  smaller components before the next feature pass. Architectural,
-  not a bug.
+Fix: supabase/migrations/99_handle_new_user_defensive.sql
+  - Steps 1-3 unchanged (same happy path as migration 97)
+  - Step 3 wrapped in BEGIN…EXCEPTION (subscriptions schema drift)
+  - Pre-checks information_schema for class_teacher_invites before touching it
+  - Wraps steps 4-5 in BEGIN…EXCEPTION WHEN OTHERS so any failure logs
+    via RAISE NOTICE but does NOT abort the trigger
+  - CREATE OR REPLACE, idempotent
 
-============================================================
-Audit modules — FINAL STATUS
-============================================================
-  Module 1: Student-side flows           — DONE
-                                            Round 16: 3 fixed / 2 deferred
-  Module 2: Admin pages                  — DONE
-                                            Rounds 17-18: 2 fixed / 3
-                                            reclassified
-  Module 3: lib/aiClient + AI features   — DONE
-                                            Round 19: 5 fixed / 1 deferred
-                                            (#88 aiJSONVision)
-  Module 4: School-admin pages           — DONE (this commit)
-                                            Round 20: 1 fixed / 4
-                                            documented
+After `supabase db push`, signup will succeed even if the invites
+table is in an unexpected state.
 
 ============================================================
-PLATFORM-WIDE INVARIANT NOW LOCKED IN
+2. L-2 — /api/student/quick-test had NO rate limit and NO daily cap
 ============================================================
 
-Across 20 audit rounds we closed ~89 distinct findings spanning
-4 critical SyntaxErrors, 12 ReferenceErrors, 3 file-corruption
-truncations, 17 cross-validation gaps in /teacher/quizzes/new
-(all shipped), 5 cross-validation gaps in /teacher/generate,
-5 in the payments stack, 5 in auth, 6 in admin two-eyes plus
-stale-edit detection, 5 in the new AI-fallback wrapper, and
-4 layouts each fixed for the same auth-race shape.
+The student "Take a test" endpoint fans out to:
+  - up to 6 LLM generation calls (one per Bloom level)
+  - a verifier pass per question (~5 reviewer calls each)
+  - optional refinement on dispute
+  - an auto-retry on per-level shortfall
 
-The CI invariants stand:
-  tsconfig.check.json  → strict: true  (Round 5/6)
-  next.config.ts       → ignoreBuildErrors: false  (Round 6 final)
+A scripted abuser could burn the day's Groq+Gemini budget in one loop.
 
-The single highest-leverage fix in the entire audit was Finding
-#11 (flipping strict:true on the check config), which surfaced
-6 critical bugs in one pass that had been shipping silently for
-months.
+Fix: app/api/student/quick-test/route.ts
+  - import checkRateLimit, checkDailyCap from "@/lib/rateLimit"
+  - after auth+role-check: bucket(capacity=5, refill=10/hr) + daily cap=30
+  - 429 deny responses mirror the shape /api/generate already uses
 
-Files in this commit:
-  app/school/layout.tsx
-    + auth-race retry loop (3 attempts × 300ms backoff)
+Limits chosen to match /api/generate (same cost shape, same pipeline).
+
+============================================================
+3. L-3 — Build & Assign composer never wrote to quiz_assignments
+============================================================
+
+The /teacher/quizzes/new composer let teachers pick a class for the
+class-fit warning, but never actually assigned the new test to that
+class. The teacher had to navigate to a second screen and re-pick the
+same class to make it visible to students. Many teachers were missing
+this step entirely.
+
+Fix: app/teacher/quizzes/new/page.tsx
+  - new assignDueAt state on ComposerInner
+  - new optional datetime-local input on the ClassFitCard, only shown
+    when a class is picked (with a helper line explaining what happens
+    on save)
+  - in create(): after quiz_questions insert succeeds, if targetClassId
+    is set, insert a quiz_assignments row (whole-class, due_at=null
+    when blank — migration 01 allows nullable due_at)
+  - failure is non-fatal — quiz still exists; failure surfaces inline
+    so the teacher can retry assigning from the detail page
+
+============================================================
+4. U-2 — /api/signup-and-pay signin-failure rollback (carries forward)
+============================================================
+
+Static workflow trace: if signInWithPassword fails between the
+profile-upsert and the Razorpay order-create, the auth user + profile
+rows both exist but the user can't sign in. No compensating rollback.
+The email-exists check then blocks re-signup. User is locked out,
+needs manual support to recover.
+
+Fix: app/api/signup-and-pay/route.ts
+  - wrap signIn in try/catch
+  - on failure call admin.auth.admin.deleteUser
+  - matches the rollback pattern already used by the Razorpay-order
+    failure path further down the same handler
+
+============================================================
+5. AI Quality Benchmark Harness (carries forward)
+============================================================
+
+Three-step pipeline to empirically validate AI question quality against
+51 production-shaped prompts. Located under scripts/ai-quality-benchmark/
+
+  prompts.json   — 51 prompts: K-12, JEE/NEET/CAT/UPSC/GMAT/GRE/IELTS/
+                   SAT/BITSAT, disambiguation traps (LCM, ROI, AC, PI, F),
+                   niche domains (Cobol, ISO 8583, BGP, DB2), mock-paper
+                   triggers, cross-validation traps, edge cases.
+  run.mjs        — sends each prompt through POST /api/generate
+                   (full pipeline). 2s pause between prompts; 30s pause
+                   + retry on 429.
+  grade.mjs      — emits two CSVs for educator grading
+  summarize.mjs  — reads filled CSVs, computes per-dimension and
+                   per-category acceptance, compares against 85% pass
+                   bar, exits 0=pass, 2=fail.
+  README.md      — full operator instructions and re-run cadence.
+
+============================================================
+6. push-today.bat — restored truncated tail
+============================================================
+
+push-today.bat had silently lost its error-handler labels (:fail_pull,
+:fail_add, :warn_commit, :fail_push) — the file ended mid-line. Restored
+to the full original behaviour so future runs report proper errors.
+
+============================================================
+Files in this commit
+============================================================
+
+Modified:
+  app/api/signup-and-pay/route.ts          (U-2)
+  app/api/student/quick-test/route.ts      (L-2)
+  app/teacher/quizzes/new/page.tsx         (L-3)
+  push-today.bat                           (tail restoration)
   COMMIT_MSG_TODAY.txt
+
+New:
+  docs/_uat3_source.md
+  scripts/ai-quality-benchmark/prompts.json
+  scripts/ai-quality-benchmark/run.mjs
+  scripts/ai-quality-benchmark/grade.mjs
+  scripts/ai-quality-benchmark/summarize.mjs
+  scripts/ai-quality-benchmark/README.md
+  supabase/migrations/99_handle_new_user_defensive.sql
+
+============================================================
+Apply order on dev DB after pulling this branch
+============================================================
+
+  supabase db push          # applies migration 99 (signup fix)
+  npm run dev               # restart for L-2 + L-3 changes
+  # then:
+  #   - test /signup?role=teacher and ?role=student → must succeed
+  #   - hit /api/student/quick-test 6 times in a minute → 6th should 429
+  #   - build a test in /teacher/quizzes/new with a class picked →
+  #     confirm a quiz_assignments row was created and the test appears
+  #     on the student's dashboard
