@@ -772,8 +772,12 @@ export default function GeneratePage() {
       // mirroring the totalQs formula in the pre-flight section below.
       const countFor = (l: BloomLevel): number =>
         mode === "custom" ? (perLevelCustom[l] ?? perLevel) : perLevel;
-      const targetLevels = mode === "all" ? BLOOM_LEVELS : pickedLevels;
-      const requestedTotal = targetLevels.reduce((sum, l) => sum + countFor(l), 0);
+      // Finding #35 fix (my own Round 1 regression): BLOOM_LEVELS is
+      // declared readonly so the union with pickedLevels (BloomLevel[])
+      // widens to a readonly string[] under strict TS. Slice + cast to
+      // BloomLevel[] before reducing.
+      const targetLevels: BloomLevel[] = mode === "all" ? (BLOOM_LEVELS as readonly BloomLevel[]).slice() : pickedLevels;
+      const requestedTotal = targetLevels.reduce((sum: number, l: BloomLevel) => sum + countFor(l), 0);
       if (deliveredTotal === 0) {
         throw new Error(
           "AI returned zero usable questions. Try a more specific topic, " +

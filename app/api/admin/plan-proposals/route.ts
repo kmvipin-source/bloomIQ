@@ -219,7 +219,7 @@ export function validatePayload(
 export async function GET(req: Request) {
   try {
     const auth = await requireAdmin(req);
-    if ("err" in auth) return auth.err;
+    if ("error" in auth) return auth.error;
 
     const url = new URL(req.url);
     const scope = url.searchParams.get("scope");
@@ -321,7 +321,7 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   try {
     const auth = await requireAdmin(req);
-    if ("err" in auth) return auth.err;
+    if ("error" in auth) return auth.error;
     const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
 
     const kind = body.kind === "create" ? "create" : body.kind === "edit" ? "edit" : null;

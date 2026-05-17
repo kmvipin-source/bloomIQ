@@ -412,7 +412,11 @@ export async function POST(req: Request) {
     // enforcement (token iat ≥ profiles.session_iat) now applied.
     const auth = await requireAuthenticated(req);
     if ("error" in auth) return auth.error;
-    const { user, sb } = auth;
+    // Finding #29 fix: token was destructured implicitly via the legacy
+    // `getBearer(req)` call, then F22 removed that line but didn't
+    // add token to this destructure. genFor() below uses token to forward
+    // to findMisconceptionDistractors.
+    const { user, sb, token } = auth;
     // /api/generate fires multiple LLM calls per request (one per Bloom
     // level + verifier + refinement). Tight burst limit; hard daily cap.
     const rate = checkRateLimit(user.id, "generate", { capacity: 5, refillPerHour: 10 });

@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/server";
-import { requirePlatformAdmin } from "@/lib/apiAuth";
+// Finding #28 fix: requireAuthenticated is used by the DELETE handler but
+// the import line wasn't updated when F22 landed.
+import { requirePlatformAdmin, requireAuthenticated } from "@/lib/apiAuth";
 
 export const runtime = "nodejs";
 

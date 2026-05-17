@@ -132,7 +132,9 @@ export async function POST(req: Request) {
     // enforcement (token iat >= profiles.session_iat) now applied.
     const auth = await requireAuthenticated(req);
     if ("error" in auth) return auth.error;
-    const { user, sb } = auth;
+    // Finding #32 fix: token used by findMisconceptionDistractors downstream
+    // but missing from the destructure (same shape as #29/#30).
+    const { user, sb, token } = auth;
 
     // Role gate — students only.
     const { data: prof } = await sb

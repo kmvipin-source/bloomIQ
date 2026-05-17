@@ -39,6 +39,9 @@ type User = {
   school_id: string | null;
   school_name: string | null;
   created_at: string | null;
+  // Finding #26 fix: platform_admin is read at filter time (F175) but was
+  // missing from the type. TS strict caught the property access.
+  platform_admin: boolean;
 };
 
 // F175 note (QA): "platform_admin" is a flag on profiles, not a

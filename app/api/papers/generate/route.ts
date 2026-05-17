@@ -139,7 +139,9 @@ export async function POST(req: Request) {
     // enforcement (token iat >= profiles.session_iat) now applied.
     const auth = await requireAuthenticated(req);
     if ("error" in auth) return auth.error;
-    const { user, sb } = auth;
+    // Finding #30 fix: same shape as #29 — token used downstream by
+    // findMisconceptionDistractors but was missing from the destructure.
+    const { user, sb, token } = auth;
     // Papers generate is the heaviest LLM surface — multi-Bloom + vision
     // when an image source is used. Tighter caps than /generate.
     const rate = checkRateLimit(user.id, "papers.generate", { capacity: 3, refillPerHour: 6 });

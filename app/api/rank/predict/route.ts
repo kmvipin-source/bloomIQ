@@ -267,8 +267,12 @@ export async function POST(req: Request) {
           eligibility_note = `${eligibility.reason} Used ${exam_type} cohort as requested.`;
         }
       } else {
-        // generic / academic-subject / unknown — allow with the user's pick.
-        eligibility_note = eligibility.reason;
+        // Finding #31 fix: this branch is unreachable after the isExamMock
+        // guard above (the verdict union is narrowed to two cases that the
+        // if + else-if exhaust). TS proves `eligibility` is `never` here.
+        // Keep a defensive fallback string so behaviour stays safe if the
+        // upstream type or guard ever changes.
+        eligibility_note = "Eligibility could not be classified.";
       }
 
       // Bloom breakdown for the recommendations call.

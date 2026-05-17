@@ -3,11 +3,19 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   reactCompiler: false,
   devIndicators: false,
-  // Pre-existing TS errors in non-critical paths (calibration log,
-  // school digest, recharts tooltip Formatter signatures, etc.) block
-  // production builds. Skip them so Vercel can deploy; clean them up
-  // incrementally in follow-up PRs. Next 16 dropped the eslint key here
-  // — lint runs separately via `next lint` / CI now.
+  // 2026-05-17 QA sweep partial closure: the meta-cause of every critical
+  // bug in rounds 1-5 was this flag set to true silently swallowing all TS
+  // errors at build time. We tried flipping it off — and uncovered ~25 more
+  // pre-existing errors (recharts Formatter signature drift, a botched H3
+  // script in /teacher/quizzes/new, recharts in /school/reports + /student/
+  // progress + BloomChart + EngagementTrends, plus a PlanDiff type clash).
+  // Those need their own incremental cleanup before this flag can go off
+  // permanently. Until then:
+  //   1) tsconfig.check.json is strict:true (the audit invariant). Run
+  //      `tsc --noEmit -p tsconfig.check.json` in CI to gate new merges.
+  //   2) This stays true so production deploys aren't blocked on legacy
+  //      debt during the cleanup.
+  // Track the remaining error list in COMMIT_MSG_TODAY.txt under "Round 6".
   typescript: { ignoreBuildErrors: true },
   // Sidebar labels say "Tests" and "Exam Papers" but the actual route
   // segments are /teacher/quizzes and /teacher/papers. Until the labels
