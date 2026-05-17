@@ -22,8 +22,15 @@ export default function StudentLayout({ children }: { children: React.ReactNode 
         const { data: { session } } = await sb.auth.getSession();
         if (!session) { router.replace("/login?next=/student"); return; }
 
+        // Finding #72 fix: same auth-race retry as /teacher/layout (Round 8
+        // #53). Supabase auth-server eventual-consistency returns 401 for
+        // ~300-800ms after sign-in; without the retry the layout falls
+        // through to user_metadata.role (empty for school-onboarded
+        // students) and the role-router redirects back to /login.
         let role = "";
         let platformAdmin = false;
+        let meDataApplied = false;
+        for (let attempt = 0; attempt < 3 && !meDataApplied; attempt++) {
         try {
           const r = await fetch("/api/auth/me", {
             headers: { Authorization: `Bearer ${session.access_token}` },
@@ -36,8 +43,14 @@ export default function StudentLayout({ children }: { children: React.ReactNode 
               router.replace("/login?reason=elsewhere");
               return;
             }
+            // Transient 401 — retry once after a short backoff.
+            if (attempt < 2) {
+              await new Promise((res) => setTimeout(res, 300));
+              continue;
+            }
           }
           if (r.ok) {
+            meDataApplied = true;
             const j = await r.json();
             if (cancelled) return;
             role = String(j.role || "");
@@ -75,7 +88,14 @@ export default function StudentLayout({ children }: { children: React.ReactNode 
             // the student keeps seeing the value proposition without
             // being forced into the flow.
           }
-        } catch { /* fall through */ }
+        } catch {
+          // Finding #72 fix: retry on network blip same as on 401.
+          if (attempt < 2) {
+            await new Promise((res) => setTimeout(res, 300));
+            continue;
+          }
+        }
+        }  /* close auth-retry for-loop opened above */
         if (cancelled) return;
         if (!role) {
           const { data: { user } } = await sb.auth.getUser();
@@ -104,7 +124,14 @@ export default function StudentLayout({ children }: { children: React.ReactNode 
     // while the new check runs; the spinner shows briefly until role
     // resolves again. Without this, the layout keeps mounting the old
     // student's UI under a new session until the bouncer fires.
+    // Finding #74 fix: debounce focus events. Without this, rapid tab
+    // toggles thrash the layout with N spinner-flashes + N /api/auth/me
+    // fetches. Cap to one check every 5s.
+    let lastFocusCheck = 0;
     function onFocus() {
+      const now = Date.now();
+      if (now - lastFocusCheck < 5000) return;
+      lastFocusCheck = now;
       setOk(false);
       check();
     }

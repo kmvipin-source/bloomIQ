@@ -44,6 +44,30 @@ export async function POST(req: Request) {
 
     const admin = supabaseAdmin();
 
+    // Finding #73 fix: server-side gate against expired Free-trial subs.
+    // The /student layout already redirects expired users to /student/expired,
+    // but that's a client-side check — a stale tab, a scripted call, or a
+    // racing client can still hit this endpoint. Block at the server with
+    // a 410 Gone so the user-facing message stays consistent.
+    {
+      const { data: sub } = await admin
+        .from("subscriptions")
+        .select("tier, is_trial, status, expires_at")
+        .eq("user_id", user.id)
+        .maybeSingle();
+      if (sub) {
+        const row = sub as { tier?: string; is_trial?: boolean; status?: string; expires_at?: string | null };
+        const adminBlocked = row.status === "suspended" || row.status === "cancelled";
+        const timeExpired = row.expires_at ? new Date(row.expires_at).getTime() < Date.now() : false;
+        if (row.tier === "free" && row.is_trial === true && (adminBlocked || timeExpired)) {
+          return NextResponse.json(
+            { error: "Your free trial has ended. Upgrade to keep practicing.", code: "free_expired" },
+            { status: 410 }
+          );
+        }
+      }
+    }
+
     // Refuse to start an attempt against a quiz whose only enclosing
     // class is soft-deleted (migration 78). Inactive classes are
     // preserved for audit but should not generate new attempts. We

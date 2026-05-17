@@ -1,97 +1,74 @@
-QA Audit Round 15: closing the last 5 Build & Assign deferreds.
-17/17 findings on /teacher/quizzes/new are now shipped.
+QA Audit Round 16: Student-side flows — auth race, free-expired
+server gate, focus debounce. 3 of 5 findings fixed; 2 deferred.
+
+After completing the 17/17 Build & Assign sweep in Round 15, started
+the next audit module — student-side flows. First-pass findings
+documented + the top 3 production-quality wins shipped here.
 
 ============================================================
-#58 — Class-fit topic-coverage gap (CLIENT-SIDE)
+#72 — HIGH — /student/layout auth race (same shape as /teacher)
 ============================================================
-When a class is selected AND there are picked questions, surface a
-new amber "Uncovered class topics" card listing topics that exist in
-the teacher's bank for this class but aren't in the current
-selection. Click a chip to filter the bank to that topic. Caps at
-12 chips with "+N more" overflow.
+Symptom: first sign-in as a student → land on /student → layout calls
+/api/auth/me → transient 401 from Supabase auth-server propagation
+delay (~300-800ms) → falls through to user_metadata.role → empty for
+school-onboarded students → role-router redirects to /login. Same
+exact pattern that Round 8 #53 fixed for /teacher/layout, just on
+the student side this time.
 
-Pure client-side heuristic — no API change. Reads from the already-
-loaded `bank` array filtered by class_id, diffed against the topic
-set of `selectedQuestions`. Zero new network calls.
-
-============================================================
-#60 — Per-card step indicator inside the composer
-============================================================
-Hero workflow dots already set context; this commit adds matching
-numbered colored badges (sky-1, purple-3 — emerald-2 and amber-4
-will follow once the corresponding cards land) inside the major
-cards:
-
-  • Topics card        → "1" sky badge next to the Layers icon
-  • Test-details card  → "3" purple badge + "Configure your test"
-                          microheader above Test name
+Fix: 3-attempt retry loop with 300ms backoff before falling through
+to user_metadata. session_superseded responses still short-circuit
+the retry and sign out (real "another device signed in" case).
 
 ============================================================
-#63 — "Show selected only" toggle on the bank
+#73 — MEDIUM — /api/student/attempt-start lacks server-side
+              free-expired gate
 ============================================================
-New checkbox at the head of the bank filter row. When on (and
-selectedIds.length > 0), the bank list view is filtered to only
-the currently-selected questions. Layered on top of the existing
-`filtered` useMemo via a `displayedBank` derivation — keeps the
-filter pipeline clean.
+Symptom: the /student layout client-side redirect catches expired
+Free-trial users, but a stale tab / scripted call / racing client can
+still POST /api/student/attempt-start. The check_attempt_quota
+trigger handles the daily cap, but the time-based / admin-suspended
+expiry was unenforced on the server.
 
-Disabled when selection is empty (with a friendly tooltip).
-
-============================================================
-#65 — Recent-topic chip dedup
-============================================================
-The Recent: chip row was rendering topics that ALSO appeared in
-the topicCounts dropdown right below, doubling the same chip in
-two visually-similar rows. Now the Recent row dedups against
-topicCounts via a Set lookup.
+Fix: server-side check before insert. When the caller's subscription
+is tier=free + is_trial=true + (status in {suspended,cancelled} OR
+expires_at < now), return 410 Gone with code "free_expired".
 
 ============================================================
-#69 — Save composition as template (localStorage)
+#74 — MEDIUM — /student/layout focus listener thrashes on rapid
+              tab toggles
 ============================================================
-New "Templates" button in the page header opens a dropdown listing
-saved filter templates. A template captures the FOUR filter values
-(topicFilter / bloomFilter / categoryFilter / search) — not the
-question IDs — so re-applying re-runs the same rule against the
-LIVE bank each time.
+Symptom: every focus event runs setOk(false) → spinner flash → full
+re-fetch of /api/auth/me. Browser notifications + OS focus shuffling
+can fire N focus events per second; layout chains N redundant
+fetches with N visible spinner flashes between them.
 
-  • Save current → prompts for a name, stores up to 20 templates
-                   in localStorage key `zcoriq.composer.templates.v1`.
-  • Apply        → restores all four filters.
-  • Delete       → removes a single template.
-
-LocalStorage-backed for this round. A future PR can promote
-templates to the DB when teachers want them to follow them across
-devices.
+Fix: 5-second debounce on the focus check. The first focus after a
+5s quiet window fires normally; subsequent focuses within 5s no-op.
 
 ============================================================
-Build & Assign — final status: 17/17 shipped
+DEFERRED — small, lower-priority
 ============================================================
-
-  #55 ✅  Quiz name vs subject family-mismatch warning
-  #56 ✅  Time-limit × question-count cross-validation
-  #57 ✅  Marking penalty + deep-Bloom over-penalty warning
-  #58 ✅  Class-fit topic-coverage gap (THIS COMMIT)
-  #59 ✅  bloomFilter × teaching-context warning
-  #60 ✅  Per-card step indicators (THIS COMMIT)
-  #61 ✅  Active filter pills with one-click clear
-  #62 ✅  Auto-saved at HH:MM indicator
-  #63 ✅  Show selected only toggle (THIS COMMIT)
-  #64 ✅  HTML5 native drag-drop reorder
-  #65 ✅  Recent-topic chip dedup (THIS COMMIT)
-  #66 ✅  Quiz-code uniqueness loop 4→8 + clear error
-  #67 ✅  Mixed-topics confirm with per-topic counts
-  #68 ✅  Live preview modal (TestPreviewModal)
-  #69 ✅  Save composition as template (THIS COMMIT)
-  #70 ✅  Quick mode focus toggle
-  #71 ✅  AI-suggested composition + /api/teacher/quiz-suggest
+  #75 LOW   /student/practice/page.tsx re-fetches profile fields the
+            layout already loaded. Fix: pass through React context.
+  #76 LOW   Score recompute silently filters out unrecognized
+            bloom_levels with no warning when this drops >5% rows.
 
 ============================================================
 Files in this commit
 ============================================================
-
 Modified:
-  app/teacher/quizzes/new/page.tsx
-    - 5 new patches (one per finding) all verified-after-apply
-      via grep so silent no-ops can't slip through again.
-
+  app/student/layout.tsx
+    + auth-race retry loop (#72)
+    + focus debounce (#74)
+  app/api/student/attempt-start/route.ts
+    + server-side free-trial expiry gate (#73)
   COMMIT_MSG_TODAY.txt
+
+============================================================
+Audit modules — status
+============================================================
+  Module 1: Student-side flows           — IN PROGRESS (this commit)
+                                            5 found / 3 fixed / 2 deferred
+  Module 2: Admin pages                  — QUEUED
+  Module 3: lib/aiClient + AI features   — QUEUED
+  Module 4: School-admin pages           — QUEUED
