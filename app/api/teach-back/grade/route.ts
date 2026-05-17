@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { groqJSON } from "@/lib/groq";
+import { aiJSON } from "@/lib/aiClient";
 import { BLOOM_LEVELS, type BloomLevel } from "@/lib/bloom";
 import { aiGate } from "@/lib/aiGate";
 import { consumeDailyQuota } from "@/lib/freeQuota";
@@ -143,7 +143,7 @@ export async function POST(req: Request) {
     const contextAwareSystem = prependLearningContext(SYSTEM, ctx);
 
     const userPrompt = `Topic: ${contextAwareTopic}\n\nStudent's explanation:\n"""\n${explanation}\n"""\n\nGrade it strictly per the rubric and return JSON only.`;
-    const raw = await groqJSON(contextAwareSystem, userPrompt);
+    const raw = await aiJSON(contextAwareSystem, userPrompt);
     const grade = normalizeGrade(raw);
     const overall_score = compositeOverall(grade.bloom_scores);
 

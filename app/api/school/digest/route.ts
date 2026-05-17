@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { groqJSON } from "@/lib/groq";
+import { aiJSON } from "@/lib/aiClient";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { requireAuthenticated } from "@/lib/apiAuth";
 import { buildSchoolContext } from "@/lib/schoolContext";
@@ -142,7 +142,7 @@ export async function POST(req: Request) {
 
     const ctx = await buildSchoolContext(prof.school_id as string);
     const userPrompt = JSON.stringify(ctx, null, 2);
-    const raw = await groqJSON(SYSTEM, userPrompt);
+    const raw = await aiJSON(SYSTEM, userPrompt);
     const digest = normaliseDigest(raw);
 
     return NextResponse.json({

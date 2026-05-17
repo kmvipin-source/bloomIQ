@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
-import { groqJSON } from "@/lib/groq";
+import { aiJSON } from "@/lib/aiClient";
 import { BLOOM_LEVELS, type BloomLevel } from "@/lib/bloom";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { requireAuthenticated } from "@/lib/apiAuth";
@@ -185,7 +185,7 @@ ${BLOOM_LEVELS.map((l) => `- ${l}: ${mix[l]}`).join("\n")}
 
 Generate the JSON now.`;
 
-    const raw = await groqJSON(systemPrompt, userPrompt);
+    const raw = await aiJSON(systemPrompt, userPrompt);
     const arr = (raw as { questions?: unknown }).questions;
     if (!Array.isArray(arr)) {
       return NextResponse.json({ error: "AI did not return questions; please retry." }, { status: 502 });

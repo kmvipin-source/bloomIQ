@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { groqText } from "@/lib/groq";
+import { aiText } from "@/lib/aiClient";
 import { supabaseServer } from "@/lib/supabase/server";
 import { requireAuthenticated } from "@/lib/apiAuth";
 import { buildStudentContext } from "@/lib/studentContext";
@@ -109,7 +109,7 @@ export async function POST(req: Request) {
       ? `${transcript(history)}\n\nYou: ${message}\n\nCoach:`
       : `You: ${message}\n\nCoach:`;
 
-    const reply = await groqText(system, userPrompt);
+    const reply = await aiText(system, userPrompt);
 
     return NextResponse.json({
       reply,

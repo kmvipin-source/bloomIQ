@@ -25,7 +25,7 @@
 //      so the front-end can redirect into the existing quiz-taking UI.
 // =============================================================================
 import { NextResponse } from "next/server";
-import { groqJSON } from "@/lib/groq";
+import { aiJSON } from "@/lib/aiClient";
 import { buildSkillFewShotBlock } from "@/lib/skillFewShot";
 import {
   BLOOM_LEVELS,
@@ -272,10 +272,10 @@ export async function POST(req: Request) {
     const contextAwareSystem = prependLearningContext(SYSTEM, ctx) + exclusion.promptBlock;
     let raw: Record<string, unknown>;
     try {
-      raw = await groqJSON((contextAwareSystem) + buildSkillFewShotBlock(topic), buildPrompt(contextAwareTopic, targetedLevel, QUESTION_COUNT, seedBlock));
+      raw = await aiJSON((contextAwareSystem) + buildSkillFewShotBlock(topic), buildPrompt(contextAwareTopic, targetedLevel, QUESTION_COUNT, seedBlock));
     } catch (e) {
       // eslint-disable-next-line no-console
-      console.error(`[adaptive-practice] groqJSON failed:`, e instanceof Error ? e.message : e);
+      console.error(`[adaptive-practice] aiJSON failed:`, e instanceof Error ? e.message : e);
       return NextResponse.json(
         { error: "Couldn't reach the question generator. Try again in a moment." },
         { status: 502 }

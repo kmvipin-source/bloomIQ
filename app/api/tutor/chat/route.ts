@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { groqText } from "@/lib/groq";
+import { aiText } from "@/lib/aiClient";
 import { aiGate } from "@/lib/aiGate";
 import { consumeDailyQuota } from "@/lib/freeQuota";
 import { supabaseAdmin } from "@/lib/supabase/server";
@@ -96,7 +96,7 @@ export async function POST(req: Request) {
     const learnerCtx = await loadLearningContext(admin, gate.userId);
     const contextAwareSystem = prependLearningContext(SYSTEM, learnerCtx);
 
-    // Build a rolling-context prompt. We use groqText (plain text completion)
+    // Build a rolling-context prompt. We use aiText (plain text completion)
     // since this is conversational; structured-JSON adds friction here.
     const contextBlock = ctxStem
       ? `Anchor question the student is stuck on:
@@ -120,7 +120,7 @@ ${history.map((t) => `${t.role === "user" ? "STUDENT" : "TEACHER"}: ${t.content}
 
 TEACHER:`;
 
-    const reply = await groqText(contextAwareSystem, userPrompt);
+    const reply = await aiText(contextAwareSystem, userPrompt);
     if (!reply) {
       return NextResponse.json({ error: "AI did not return a reply; please retry." }, { status: 502 });
     }

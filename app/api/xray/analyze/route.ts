@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { buildSkillFewShotBlock } from "@/lib/skillFewShot";
-import { groqJSON, groqJSONVision } from "@/lib/groq";
+import { groqJSONVision } from "@/lib/groq";
+import { aiJSON } from "@/lib/aiClient";
 import { BLOOM_LEVELS, isBloomLevel, type BloomLevel } from "@/lib/bloom";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { requireAuthenticated } from "@/lib/apiAuth";
@@ -146,7 +147,7 @@ export async function POST(req: Request) {
       const adminForCtx = supabaseAdmin();
       const learnerCtx = await loadLearningContext(adminForCtx, user.id);
       const contextAwareSystem = prependLearningContext(SYSTEM, learnerCtx);
-      raw = await groqJSON(contextAwareSystem, `Paper text:\n"""\n${paper_text}\n"""\n\nReturn the JSON now.`);
+      raw = await aiJSON(contextAwareSystem, `Paper text:\n"""\n${paper_text}\n"""\n\nReturn the JSON now.`);
     } else if (kind === "image") {
       const image_data_url = String(body.image_data_url || "");
       // MIME allowlist — `data:image/svg+xml` smuggles inline JS via

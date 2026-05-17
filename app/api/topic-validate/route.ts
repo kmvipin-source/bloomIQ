@@ -29,7 +29,7 @@
 // =============================================================================
 
 import { NextResponse } from "next/server";
-import { groqJSON } from "@/lib/groq";
+import { aiJSON } from "@/lib/aiClient";
 import { supabaseServer } from "@/lib/supabase/server";
 import { requireAuthenticated } from "@/lib/apiAuth";
 import { checkRateLimit } from "@/lib/rateLimit";
@@ -155,7 +155,7 @@ Return JSON of the exact shape:
   "suggestedExam": "<one of the listed exam names>" | null
 }`;
 
-    const raw = await groqJSON(SYSTEM, userPrompt);
+    const raw = await aiJSON(SYSTEM, userPrompt);
     const r = (raw || {}) as Record<string, unknown>;
     const valid = typeof r.valid === "boolean" ? r.valid : true; // fail-open
     const reason = typeof r.reason === "string" ? r.reason.trim() : "";

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { groqText } from "@/lib/groq";
+import { aiText } from "@/lib/aiClient";
 import { supabaseServer } from "@/lib/supabase/server";
 import { requireAuthenticated } from "@/lib/apiAuth";
 import { checkCoachQuota, logCoachCall } from "@/lib/coachQuota";
@@ -125,7 +125,7 @@ export async function POST(req: Request) {
       ? `${transcript(history)}\n\nTeacher: ${message}\n\nCoach:`
       : `Teacher: ${message}\n\nCoach:`;
 
-    const reply = await groqText(system, userPrompt);
+    const reply = await aiText(system, userPrompt);
 
     // Log AFTER the LLM responds so transient failures don't burn quota.
     await logCoachCall(user.id, "teacher");

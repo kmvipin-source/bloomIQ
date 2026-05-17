@@ -1,4 +1,8 @@
 import { NextResponse } from "next/server";
+// Visualizer is intentionally Gemini-PRIMARY for spatial reasoning quality
+// (see lib/gemini.ts comment block). Groq is the fallback for capacity
+// reasons. So this route deliberately does NOT route through @/lib/aiClient,
+// which is Groq-primary. Leave as direct imports.
 import { groqJSON } from "@/lib/groq";
 import { geminiJSON, geminiText, isGeminiConfigured } from "@/lib/gemini";
 import { fixFrameLayout, type LayoutElement } from "@/lib/visualizerLayout";

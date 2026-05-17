@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { groqJSON } from "@/lib/groq";
+import { aiJSON } from "@/lib/aiClient";
 import { supabaseServer } from "@/lib/supabase/server";
 import { requireAuthenticated } from "@/lib/apiAuth";
 import { buildTeacherContext } from "@/lib/teacherContext";
@@ -129,7 +129,7 @@ export async function POST(req: Request) {
 
     const ctx = await buildTeacherContext(user.id);
     const userPrompt = JSON.stringify(ctx, null, 2);
-    const raw = await groqJSON(SYSTEM, userPrompt);
+    const raw = await aiJSON(SYSTEM, userPrompt);
     const digest = normaliseDigest(raw);
 
     // Log against the quota only after the LLM call succeeded so a

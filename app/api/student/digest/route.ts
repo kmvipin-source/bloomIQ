@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { groqJSON } from "@/lib/groq";
+import { aiJSON } from "@/lib/aiClient";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { requireAuthenticated } from "@/lib/apiAuth";
 import { buildStudentContext } from "@/lib/studentContext";
@@ -143,7 +143,7 @@ export async function POST(req: Request) {
     const learnerCtx = await loadLearningContext(admin, user.id);
     const contextAwareSystem = prependLearningContext(SYSTEM, learnerCtx);
     const userPrompt = JSON.stringify(ctx, null, 2);
-    const raw = await groqJSON(contextAwareSystem, userPrompt);
+    const raw = await aiJSON(contextAwareSystem, userPrompt);
     const digest = normaliseDigest(raw);
 
     return NextResponse.json({

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { groqJSON } from "@/lib/groq";
+import { aiJSON } from "@/lib/aiClient";
 import { buildSkillFewShotBlock } from "@/lib/skillFewShot";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { requireAuthenticated } from "@/lib/apiAuth";
@@ -107,7 +107,7 @@ ${answer}
 """
 
 Write the JSON verdict.`;
-    const raw = await groqJSON(contextAwareSystem + buildSkillFewShotBlock(String(session.topic || "")), userPrompt);
+    const raw = await aiJSON(contextAwareSystem + buildSkillFewShotBlock(String(session.topic || "")), userPrompt);
     const verdict = String((raw as { verdict?: unknown }).verdict || "").trim();
     if (!verdict) {
       return NextResponse.json({ error: "AI did not return a verdict; please try again." }, { status: 502 });

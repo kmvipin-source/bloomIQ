@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { groqJSON, groqJSONVision } from "@/lib/groq";
+import { groqJSONVision } from "@/lib/groq";
+import { aiJSON } from "@/lib/aiClient";
 import {
   BLOOM_LEVELS,
   BLOOM_META,
@@ -517,14 +518,14 @@ export async function POST(req: Request) {
           json = await groqJSONVision(contextAwareSystem, imagePrompt(contextAwareTopic, lvl, perLevel, numericalPercent, seedBlock), imageDataUrl);
           break;
         case "topic_syllabus":
-          json = await groqJSON(contextAwareSystem, syllabusPrompt(contextAwareTopic, className, syllabus, lvl, perLevel, numericalPercent, seedBlock));
+          json = await aiJSON(contextAwareSystem, syllabusPrompt(contextAwareTopic, className, syllabus, lvl, perLevel, numericalPercent, seedBlock));
           break;
         case "topic_only":
-          json = await groqJSON(contextAwareSystem, topicOnlyPrompt(contextAwareTopic, lvl, perLevel, numericalPercent, seedBlock));
+          json = await aiJSON(contextAwareSystem, topicOnlyPrompt(contextAwareTopic, lvl, perLevel, numericalPercent, seedBlock));
           break;
         case "notes":
         default:
-          json = await groqJSON(contextAwareSystem, notesPrompt(content, contextAwareTopic, lvl, perLevel, numericalPercent, seedBlock));
+          json = await aiJSON(contextAwareSystem, notesPrompt(content, contextAwareTopic, lvl, perLevel, numericalPercent, seedBlock));
       }
       const arr: GenQ[] = Array.isArray((json as { questions?: GenQ[] })?.questions)
         ? (json as { questions: GenQ[] }).questions
@@ -578,7 +579,7 @@ export async function POST(req: Request) {
 
       // 2026-05-14 evening — AUTO-RETRY ON SHORTFALL.
       // When the per-level batch came in short (LLM returned fewer, or the
-      // filter dropped too many), fire ONE more groqJSON call asking for
+      // filter dropped too many), fire ONE more aiJSON call asking for
       // EXACTLY the gap. We feed the already-kept stems so the model
       // produces DIFFERENT questions, and we filter the retry through the
       // same quality pipeline (leak/dup/history) before merging. This is
@@ -603,7 +604,7 @@ export async function POST(req: Request) {
         try {
           // eslint-disable-next-line no-console
           console.log(`[quick-test] level=${lvl}: AUTO-RETRY for ${need} more question(s)`);
-          const retryRaw = await groqJSON(contextAwareSystem, retryUserPrompt);
+          const retryRaw = await aiJSON(contextAwareSystem, retryUserPrompt);
           const retryArr: GenQ[] = Array.isArray((retryRaw as { questions?: GenQ[] })?.questions)
             ? (retryRaw as { questions: GenQ[] }).questions
             : [];
@@ -663,7 +664,7 @@ export async function POST(req: Request) {
           continue;
         }
         try {
-          const refined = await groqJSON(
+          const refined = await aiJSON(
             SYSTEM,
             refinementSuffix({ stem: row.stem, options: row.options, correct_index: row.correct_index })
           );
