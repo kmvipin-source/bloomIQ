@@ -8,6 +8,8 @@ import type { Question } from "@/lib/types";
 import { generateQuizCode } from "@/lib/utils";
 import BloomBadge from "@/components/BloomBadge";
 import MarkingSchemePicker from "@/components/MarkingSchemePicker";
+import TestPreviewModal from "@/components/TestPreviewModal";
+import AISuggestComposeModal from "@/components/AISuggestComposeModal";
 import type { MarkingScheme } from "@/lib/scoring";
 import { suggestPresetForGoal, type ScoringPresetKey } from "@/lib/scoringPresets";
 import {
