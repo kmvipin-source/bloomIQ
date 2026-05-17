@@ -36,7 +36,14 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
       // /api/auth/me uses the service-role client, so RLS lag on the
       // edge can't accidentally redirect a real platform admin to /.
+      //
+      // Finding #77 fix: same auth-race retry pattern as /student and
+      // /teacher layouts. Supabase auth-server eventual-consistency
+      // returns 401 for ~300-800ms after sign-in; without the retry,
+      // a real platform admin gets bounced to / on their first sign-in.
       let platformAdmin = false;
+      let meDataApplied = false;
+      for (let attempt = 0; attempt < 3 && !meDataApplied; attempt++) {
       try {
         const r = await fetch("/api/auth/me", {
           headers: { Authorization: `Bearer ${session.access_token}` },
@@ -49,12 +56,23 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             router.replace("/login?reason=elsewhere");
             return;
           }
+          if (attempt < 2) {
+            await new Promise((res) => setTimeout(res, 300));
+            continue;
+          }
         }
         if (r.ok) {
+          meDataApplied = true;
           const j = await r.json();
           platformAdmin = !!j.platform_admin;
         }
-      } catch { /* fall through to redirect */ }
+      } catch {
+        if (attempt < 2) {
+          await new Promise((res) => setTimeout(res, 300));
+          continue;
+        }
+      }
+      }
       if (!platformAdmin) { router.replace("/"); return; }
       setOk(true);
     })();
