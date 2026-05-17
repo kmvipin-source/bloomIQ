@@ -23,7 +23,7 @@
 // =============================================================================
 
 import { NextResponse } from "next/server";
-import { groqJSON } from "@/lib/groq";
+import { aiJSON } from "@/lib/aiClient";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { requireAuthenticated } from "@/lib/apiAuth";
 import { checkRateLimit } from "@/lib/rateLimit";
@@ -151,7 +151,7 @@ export async function POST(req: Request) {
     // ── Cache miss → call the LLM ─────────────────────────────────
     let subtopics: string[] = [];
     try {
-      const raw = await groqJSON(SYSTEM_PROMPT, userPrompt(topic));
+      const raw = await aiJSON(SYSTEM_PROMPT, userPrompt(topic));
       subtopics = sanitiseSubtopics(raw);
     } catch {
       // Don't bubble — the chip strip is a quality-of-life feature, never

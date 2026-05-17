@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { groqJSON } from "@/lib/groq";
+import { aiJSON } from "@/lib/aiClient";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { requireAuthenticated } from "@/lib/apiAuth";
 import { checkRateLimit } from "@/lib/rateLimit";
@@ -128,7 +128,7 @@ Return JSON of the form:
 
     let raw: Record<string, unknown>;
     try {
-      raw = await groqJSON(contextAwareSystem, userPrompt);
+      raw = await aiJSON(contextAwareSystem, userPrompt);
     } catch (e) {
       return NextResponse.json({ error: e instanceof Error ? e.message : "Generation failed" }, { status: 502 });
     }

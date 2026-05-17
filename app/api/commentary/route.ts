@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { groqText } from "@/lib/groq";
+import { aiText } from "@/lib/aiClient";
 import { BLOOM_META, type BloomLevel } from "@/lib/bloom";
 import { supabaseServer } from "@/lib/supabase/server";
 import { requireAuthenticated } from "@/lib/apiAuth";
@@ -54,7 +54,7 @@ ${lines}
 Write the report-card comment now.`;
     }
 
-    const text = await groqText(kind === "class_summary" ? SYSTEM_CLASS : SYSTEM_REPORT, prompt);
+    const text = await aiText(kind === "class_summary" ? SYSTEM_CLASS : SYSTEM_REPORT, prompt);
     return NextResponse.json({ text });
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : "Failed" }, { status: 500 });

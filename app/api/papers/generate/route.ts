@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { groqJSON, groqJSONVision } from "@/lib/groq";
+import { groqJSONVision } from "@/lib/groq";
+import { aiJSON } from "@/lib/aiClient";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { requireAuthenticated } from "@/lib/apiAuth";
 import { checkRateLimit, checkDailyCap } from "@/lib/rateLimit";
@@ -251,7 +252,7 @@ export async function POST(req: Request) {
     if (source === "image" || source === "past_paper") {
       json = await groqJSONVision(sysForGen, prompt, imageDataUrl);
     } else {
-      json = await groqJSON(sysForGen, prompt);
+      json = await aiJSON(sysForGen, prompt);
     }
     const generated: GenSection[] = Array.isArray((json as { sections?: GenSection[] })?.sections)
       ? (json as { sections: GenSection[] }).sections

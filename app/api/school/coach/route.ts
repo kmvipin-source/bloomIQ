@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { groqText } from "@/lib/groq";
+import { aiText } from "@/lib/aiClient";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { requireAuthenticated } from "@/lib/apiAuth";
 import { buildSchoolContext } from "@/lib/schoolContext";
@@ -128,7 +128,7 @@ export async function POST(req: Request) {
       ? `${transcript(history)}\n\nPrincipal: ${message}\n\nCoach:`
       : `Principal: ${message}\n\nCoach:`;
 
-    const reply = await groqText(system, userPrompt);
+    const reply = await aiText(system, userPrompt);
 
     // Log AFTER a successful LLM round-trip so transient failures
     // don't burn the user's quota.

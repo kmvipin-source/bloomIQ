@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { groqJSON } from "@/lib/groq";
+import { aiJSON } from "@/lib/aiClient";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { requireAuthenticated } from "@/lib/apiAuth";
 import {
@@ -81,7 +81,7 @@ export async function POST(req: Request) {
       "Return JSON: { \"cards\": [{ \"front\": string, \"back\": string }, ...] }"
     );
 
-    const json = (await groqJSON(contextAwareSys, prompt)) as { cards?: Array<{ front: string; back: string }> };
+    const json = (await aiJSON(contextAwareSys, prompt)) as { cards?: Array<{ front: string; back: string }> };
     // Per-field length caps + angle-bracket strip. Without caps the LLM
     // could pad cards with multi-KB blocks; without bracket strip the
     // client (which currently renders as text) is one render-as-markdown

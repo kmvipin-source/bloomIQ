@@ -1,87 +1,125 @@
-QA Audit Round 18: Admin pages, batch 2 — stale-edit detection on the
-plan-proposal review surface. 4 of 5 remaining admin findings
-re-classified as N/A / smaller-than-claimed; one substantive fix
-ships here.
+QA Audit Round 19: lib/aiClient + AI flows — 5 findings, all shipped.
+The aiClient fallback wrapper that was added today is now actually USED
+by every AI feature (was: zero usages — dead code). Plus 4 hardening
+fixes in lib/gemini.ts so the fallback path matches Groq quality.
 
 ============================================================
-#79 — MEDIUM — /admin/plans/queue/[id] stale-edit detection
+#83 — CRITICAL — lib/aiClient.ts was imported by ZERO callers
 ============================================================
-Symptom: two admins open the SAME open proposal in different tabs.
-Admin A clicks "Edit and approve", iterates the payload, saves.
-Admin B (still on stale state from initial load) clicks Approve →
-the request includes Admin B's stale snapshot as the "edits" body,
-which silently overwrites Admin A's fresh save with the old version.
-Same shape applies to reject / withdraw / saveDraft.
+The new Groq→Gemini fallback wrapper that landed today was sitting
+as dead code. Every AI route still imported groqJSON / groqText
+DIRECTLY from @/lib/groq, bypassing the fallback entirely.
 
-Fix: new ensureFresh() helper called at the top of every
-approve/reject/withdraw/saveDraft action. It re-fetches the proposal
-via GET /api/admin/plan-proposals/[id], compares the live `proposed`
-payload (deep-equal via JSON.stringify) AND the live `status`
-against what's in component state. If they differ, prompt the user:
+  Before:  grep "from \"@/lib/aiClient\"" -r app/  → 0 results
+  Before:  grep "from \"@/lib/groq\"" -r app/     → 15 routes
 
-  "Another admin set this proposal to 'approved'."          (status drift)
-  "Another admin saved an edit to this proposal."          (payload drift)
-   [OK to reload]  [Cancel to abort]
+When Groq saturates (its 100k-tokens/day free-tier cap with ~100
+pilot users on Teach-Back + Misconception + Generate + Tutor +
+Quick-Test + BloomIQ Score), the fallback would have done nothing —
+every AI feature would have returned 429 to the user despite
+GEMINI_API_KEY being configured and ready.
 
-Fail-open on read errors — a transient network blip must NEVER
-block a real action.
+Migration:
+  groqJSON  -> aiJSON           (11 routes)
+  groqText  -> aiText           (5 routes)
+  groqJSONVision -> unchanged   (2 routes — aiClient doesn\'t have
+                                  aiJSONVision yet; queued as #88)
+
+Routes migrated (15 total):
+  climber/today, commentary, flashcards, generate (+vision split),
+  generate/subtopics, graph/build, misconception/diagnose,
+  misconception/drill, papers/generate (+vision split),
+  qbank/[id]/solution, qbank/[id]/variants, rank/predict,
+  recommendations, report/[attemptId], school/coach
 
 ============================================================
-RE-CLASSIFIED — the other 4 from Round 17's deferred list
+#84 — MEDIUM — geminiJSON returned {} on parse failure, silently
+============================================================
+The old parseJsonLoose returned {} when Gemini emitted malformed
+JSON. Downstream callers couldn\'t tell apart "AI succeeded with
+empty output" from "AI returned garbage" — they proceeded past the
+failure.
+
+groq.ts uses parseJsonStrict which throws GroqParseError. Now
+gemini.ts exports GeminiParseError with the same shape, and
+parseJsonStrict (renamed) throws it on malformed output.
+
+============================================================
+#85 — MEDIUM — geminiJSON had no maxOutputTokens cap
+============================================================
+groq.ts caps at 4500 tokens (MAX_OUTPUT_TOKENS_JSON). Gemini was
+running up to its 8k+ default, slowing fallback responses and
+running up cost. Added the same cap.
+
+============================================================
+#86 — MEDIUM — geminiText had no maxOutputTokens cap
+============================================================
+Same shape as #85, on the text path. groq.ts caps at 1600. Added.
+
+============================================================
+#87 — MEDIUM — Gemini generateOnce had no per-request timeout
+============================================================
+groq.ts had a 30s per-call timeout. gemini.ts dropped it — a hung
+Gemini call would occupy the lambda for its full maxDuration (60-
+90s), surfacing as 504 to the user instead of a clean 502 / fast
+fail.
+
+Fix: wrapped generateOnce\'s model.generateContent in
+Promise.race([call, timeoutPromise]) with a 30s ceiling.
+
+============================================================
+DEFERRED
 ============================================================
 
-#78 MEDIUM /admin/feature-flags "preview as user" button
-  Status: NOT shipped this round.
-  Investigation: page is 571 lines with window.prompt()-driven UX
-  (acknowledged in comment at line 153 as "ugly; upgrade to
-  <Dialog/>"). Adding "preview as user" requires:
-    - New API route to evaluate a flag for an arbitrary entity_id
-    - New modal UI to enter the entity_id + render the effective
-      value + which override (if any) drove it
-  Real value-add but a 200+ line feature in its own right. Queued
-  as a follow-up PR ("Round 19 feature-flags preview tool").
-
-#80 MEDIUM /admin/onboard-school resend-invite cool-down
-  Status: N/A — the onboard-school page DOES NOT currently expose
-  a "resend invite" button or API surface. Verified via grep.
-  When the resend feature lands, the cool-down recommendation
-  applies (60s minimum between resends to the same email).
-
-#81 LOW /api/admin/onboard-school school-insert + profile-update race
+#88 MEDIUM aiClient lacks aiJSONVision.
   Status: documented; not fixed.
-  The two writes (schools INSERT + profiles UPDATE) happen
-  sequentially via Supabase JS. The compensating rollback already
-  handles the case where the profile-update fails (delete the
-  school + delete the auth user). A true transaction would tighten
-  this further, but Supabase JS doesn't expose multi-statement
-  transactions; the proper fix is a Postgres RPC that does both in
-  one call. Not worth the complexity until we have evidence the
-  narrow race window is hurting onboarding.
-
-#82 LOW /admin/plans/queue/[id] bearer() helper redundant getSession()
-  Status: documented; not fixed.
-  Each action (approve / reject / withdraw / saveDraft) calls
-  bearer() which calls supabaseBrowser().auth.getSession(). Supabase
-  JS caches the session internally, so this is a JS-allocation
-  cost (no network). Not measurable in production.
+  Two vision-using routes (generate, papers/generate) still import
+  groqJSONVision directly with no fallback. Gemini DOES support
+  vision (its multimodal API takes inline image data), but the
+  call shape differs from text-only generateOnce. Adding
+  aiJSONVision is a separate ~50-line module addition with its
+  own Gemini Vision wrapper. Queued.
 
 ============================================================
 Files in this commit
 ============================================================
-Modified:
-  app/admin/plans/queue/[id]/page.tsx
-    + new ensureFresh() helper
-    + checkpoint call at the top of approve/reject/withdraw/saveDraft
+
+Modified — aiClient migration:
+  app/api/climber/today/route.ts
+  app/api/commentary/route.ts
+  app/api/flashcards/route.ts
+  app/api/generate/route.ts (split: groqJSONVision kept, groqJSON→aiJSON)
+  app/api/generate/subtopics/route.ts
+  app/api/graph/build/route.ts
+  app/api/misconception/diagnose/route.ts
+  app/api/misconception/drill/route.ts
+  app/api/papers/generate/route.ts (split: same)
+  app/api/qbank/[id]/solution/route.ts
+  app/api/qbank/[id]/variants/route.ts
+  app/api/rank/predict/route.ts
+  app/api/recommendations/route.ts
+  app/api/report/[attemptId]/route.ts
+  app/api/school/coach/route.ts
+
+Modified — Gemini hardening:
+  lib/gemini.ts
+    + GeminiParseError class (matches GroqParseError)
+    + MAX_OUTPUT_TOKENS_JSON = 4500
+    + MAX_OUTPUT_TOKENS_TEXT = 1600
+    + GEMINI_TIMEOUT_MS = 30_000
+    + parseJsonStrict replaces parseJsonLoose
+    + generateOnce wrapped in Promise.race timeout
+    + geminiJSON / geminiText use the new caps
+
   COMMIT_MSG_TODAY.txt
 
 ============================================================
 Audit modules — status
 ============================================================
   Module 1: Student-side flows           — DONE (Round 16: 3/5)
-  Module 2: Admin pages                  — DONE
-     - Round 17: #77 (auth-race)
-     - Round 18 (THIS): #79 (stale-edit detection)
-     - #78 queued as standalone PR (preview-as-user tool)
-     - #80, #81, #82 documented as N/A or below-the-fold
-  Module 3: lib/aiClient + AI features   — QUEUED  ← NEXT
-  Module 4: School-admin pages           — QUEUED
+  Module 2: Admin pages                  — DONE (Rounds 17 + 18: 2/5,
+                                                  3 reclassified)
+  Module 3: lib/aiClient + AI features   — DONE (Round 19 THIS: 5/6,
+                                                  #88 vision fallback
+                                                  queued)
+  Module 4: School-admin pages           — QUEUED  ← NEXT

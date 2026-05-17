@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { groqJSON } from "@/lib/groq";
+import { aiJSON } from "@/lib/aiClient";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { requireAuthenticated } from "@/lib/apiAuth";
 import { checkRateLimit } from "@/lib/rateLimit";
@@ -108,7 +108,7 @@ Topic: ${contextAwareTopic}
 Bloom level: ${misc.bloom_level || "apply"}
 
 Generate the 3-question micro-drill JSON now.`;
-    const raw = await groqJSON(contextAwareSystem, userPrompt);
+    const raw = await aiJSON(contextAwareSystem, userPrompt);
     const arr = (raw as { questions?: unknown }).questions;
     if (!Array.isArray(arr)) {
       return NextResponse.json({ error: "AI did not return drill questions; please retry." }, { status: 502 });

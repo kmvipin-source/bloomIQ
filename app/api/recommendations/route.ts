@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { groqText } from "@/lib/groq";
+import { aiText } from "@/lib/aiClient";
 import { BLOOM_META, type BloomLevel } from "@/lib/bloom";
 import { supabaseServer } from "@/lib/supabase/server";
 import { requireAuthenticated } from "@/lib/apiAuth";
@@ -33,7 +33,7 @@ export async function POST(req: Request) {
       .map((l) => `- ${BLOOM_META[l.level].label}: ${l.c}/${l.t} correct (${BLOOM_META[l.level].description})`)
       .join("\n");
 
-    const text = await groqText(
+    const text = await aiText(
       SYSTEM,
       `Student took "${quizName}" and scored ${score}/${total}.
 Per-level performance:

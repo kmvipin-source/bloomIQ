@@ -24,7 +24,21 @@ export function isGeminiConfigured(): boolean {
   return !!client;
 }
 
-function parseJsonLoose(text: string): Record<string, unknown> {
+// Finding #84 fix: distinct parse-error type, mirroring GroqParseError.
+// The old parseJsonLoose returned {} silently on malformed output, so
+// downstream callers couldn\'t tell apart "AI succeeded with empty output"
+// from "AI returned garbage". Now we throw — callers either handle it or
+// surface a real 502.
+export class GeminiParseError extends Error {
+  raw: string;
+  constructor(raw: string) {
+    super("Gemini returned non-JSON output.");
+    this.name = "GeminiParseError";
+    this.raw = raw;
+  }
+}
+
+function parseJsonStrict(text: string): Record<string, unknown> {
   try {
     return JSON.parse(text);
   } catch {
@@ -32,9 +46,20 @@ function parseJsonLoose(text: string): Record<string, unknown> {
     if (m) {
       try { return JSON.parse(m[0]); } catch { /* fall through */ }
     }
-    return {};
+    throw new GeminiParseError(text.slice(0, 200));
   }
 }
+
+// Token caps (Finding #85 + #86). Mirror the values from lib/groq.ts so
+// Gemini doesn\'t blow past Groq\'s response budget and slow down or rack
+// up cost when the fallback fires.
+const MAX_OUTPUT_TOKENS_JSON = 4500;
+const MAX_OUTPUT_TOKENS_TEXT = 1600;
+
+// Finding #87: per-request timeout. Without this, a hung Gemini call
+// occupies the Vercel lambda for its full maxDuration. Cap at 30s
+// (same as the Groq client).
+const GEMINI_TIMEOUT_MS = 30_000;
 
 async function generateOnce(
   modelName: string,
@@ -48,15 +73,25 @@ async function generateOnce(
     systemInstruction: systemPrompt,
     generationConfig,
   });
-  const res = await model.generateContent(userPrompt);
+  // Finding #87: wrap in Promise.race so a hung Gemini connection can\'t
+  // burn the lambda\'s full maxDuration.
+  const timeoutP = new Promise<never>((_, rej) =>
+    setTimeout(() => rej(new Error(`Gemini timed out after ${GEMINI_TIMEOUT_MS / 1000}s`)), GEMINI_TIMEOUT_MS),
+  );
+  const res = await Promise.race([model.generateContent(userPrompt), timeoutP]);
   return res.response.text() || "";
 }
 
 export async function geminiJSON(systemPrompt: string, userPrompt: string) {
-  const cfg = { responseMimeType: "application/json", temperature: 0.4 };
+  // Finding #85: added maxOutputTokens cap to keep response size + latency
+  // comparable to Groq\'s 4500-token cap. Without it, Gemini could run up
+  // to its 8k+ default ceiling, slowing fallbacks and bumping cost.
+  const cfg = { responseMimeType: "application/json", temperature: 0.4, maxOutputTokens: MAX_OUTPUT_TOKENS_JSON };
   try {
     const text = await generateOnce(GEMINI_MODEL, systemPrompt, userPrompt, cfg);
-    return parseJsonLoose(text || "{}");
+    // Finding #84: parseJsonStrict throws GeminiParseError on malformed
+    // output instead of silently returning {}.
+    return parseJsonStrict(text || "{}");
   } catch (e) {
     // 2.5 might be region-gated for some accounts; retry on 2.0-flash so
     // the feature still works for them.
@@ -65,7 +100,7 @@ export async function geminiJSON(systemPrompt: string, userPrompt: string) {
       console.warn("[gemini] primary model failed, falling back to", GEMINI_MODEL_FALLBACK, e);
     }
     const text = await generateOnce(GEMINI_MODEL_FALLBACK, systemPrompt, userPrompt, cfg);
-    return parseJsonLoose(text || "{}");
+    return parseJsonStrict(text || "{}");
   }
 }
 
@@ -76,7 +111,8 @@ export async function geminiJSON(systemPrompt: string, userPrompt: string) {
  * JSON for the same prompt — and the plan also serves as a debug log.
  */
 export async function geminiText(systemPrompt: string, userPrompt: string) {
-  const cfg = { temperature: 0.5 };
+  // Finding #86: maxOutputTokens cap mirroring lib/groq.ts.
+  const cfg = { temperature: 0.5, maxOutputTokens: MAX_OUTPUT_TOKENS_TEXT };
   try {
     return await generateOnce(GEMINI_MODEL, systemPrompt, userPrompt, cfg);
   } catch {

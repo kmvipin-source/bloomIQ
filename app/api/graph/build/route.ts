@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { groqJSON } from "@/lib/groq";
+import { aiJSON } from "@/lib/aiClient";
 import { BLOOM_LEVELS, type BloomLevel } from "@/lib/bloom";
 import { supabaseServer } from "@/lib/supabase/server";
 import { requireAuthenticated } from "@/lib/apiAuth";
@@ -159,7 +159,7 @@ export async function POST(req: Request) {
     if (nodes.length >= 2) {
       try {
         const userPrompt = `Topics studied:\n${nodes.map((n) => `- ${n.topic}`).join("\n")}\n\nReturn the edges JSON.`;
-        const raw = await groqJSON(SYSTEM, userPrompt);
+        const raw = await aiJSON(SYSTEM, userPrompt);
         const arr = (raw as { edges?: unknown }).edges;
         if (Array.isArray(arr)) {
           const idMap = new Map(nodes.map((n) => [n.topic.toLowerCase(), n.id]));

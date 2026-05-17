@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { groqJSON } from "@/lib/groq";
+import { aiJSON } from "@/lib/aiClient";
 import { BLOOM_LEVELS, type BloomLevel } from "@/lib/bloom";
 import { supabaseServer } from "@/lib/supabase/server";
 import { requireAuthenticated } from "@/lib/apiAuth";
@@ -331,7 +331,7 @@ Bloom breakdown:
 ${bloomBreakdown.map((b) => `- ${b.bloom_level}: ${b.correct}/${b.total}`).join("\n")}
 
 Return the 3-recommendation JSON.`;
-        const raw = await groqJSON(SYSTEM, userPrompt);
+        const raw = await aiJSON(SYSTEM, userPrompt);
         const arr = (raw as { recommendations?: unknown }).recommendations;
         if (Array.isArray(arr)) {
           // Cap per-item length so the LLM can't pad each bullet with

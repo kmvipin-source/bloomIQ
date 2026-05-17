@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { groqJSON } from "@/lib/groq";
+import { aiJSON } from "@/lib/aiClient";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { requireAuthenticated } from "@/lib/apiAuth";
 import { checkRateLimit } from "@/lib/rateLimit";
@@ -119,7 +119,7 @@ export async function POST(req: Request) {
     const contextAwareSystem = prependLearningContext(SYSTEM, ctx);
 
     const userPrompt = `Diagnose each wrong answer. Items:\n${JSON.stringify(items, null, 2)}`;
-    const raw = await groqJSON(contextAwareSystem, userPrompt);
+    const raw = await aiJSON(contextAwareSystem, userPrompt);
     const rawDiagnoses = (raw as { diagnoses?: unknown }).diagnoses;
     if (!Array.isArray(rawDiagnoses)) {
       return NextResponse.json({ ok: true, diagnosed: 0, misconceptions: [] });

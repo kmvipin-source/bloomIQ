@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { groqText } from "@/lib/groq";
+import { aiText } from "@/lib/aiClient";
 import { supabaseServer } from "@/lib/supabase/server";
 import { requireAuthenticated } from "@/lib/apiAuth";
 import { checkRateLimit } from "@/lib/rateLimit";
@@ -110,7 +110,7 @@ Write a step-by-step worked solution that walks the student through the reasonin
 
     let solution = "";
     try {
-      solution = await groqText(SYSTEM, userPrompt);
+      solution = await aiText(SYSTEM, userPrompt);
     } catch (e) {
       return NextResponse.json({ error: e instanceof Error ? e.message : "Generation failed" }, { status: 502 });
     }

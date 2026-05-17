@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { groqJSON, groqJSONVision } from "@/lib/groq";
+import { groqJSONVision } from "@/lib/groq";
+import { aiJSON } from "@/lib/aiClient";
 import { BLOOM_LEVELS, BLOOM_META, type BloomLevel, isBloomLevel, blankBloomCounts } from "@/lib/bloom";
 import { supabaseAdmin } from "@/lib/supabase/server";
 import { requireAuthenticated } from "@/lib/apiAuth";
@@ -637,14 +638,14 @@ export async function POST(req: Request) {
             json = await groqJSONVision(contextAwareSystem, imagePrompt(contextAwareTopic, lvl, countForLevel(lvl), numericalPercent, seedBlock), imageDataUrl);
             break;
           case "topic_syllabus":
-            json = await groqJSON(contextAwareSystem, syllabusPrompt(contextAwareTopic, className, syllabus, lvl, countForLevel(lvl), numericalPercent, seedBlock));
+            json = await aiJSON(contextAwareSystem, syllabusPrompt(contextAwareTopic, className, syllabus, lvl, countForLevel(lvl), numericalPercent, seedBlock));
             break;
           case "topic_only":
-            json = await groqJSON(contextAwareSystem, topicOnlyPrompt(contextAwareTopic, lvl, countForLevel(lvl), numericalPercent, seedBlock));
+            json = await aiJSON(contextAwareSystem, topicOnlyPrompt(contextAwareTopic, lvl, countForLevel(lvl), numericalPercent, seedBlock));
             break;
           case "notes":
           default:
-            json = await groqJSON(contextAwareSystem, notesPrompt(content, contextAwareTopic, lvl, countForLevel(lvl), numericalPercent, seedBlock));
+            json = await aiJSON(contextAwareSystem, notesPrompt(content, contextAwareTopic, lvl, countForLevel(lvl), numericalPercent, seedBlock));
         }
       } catch (e) {
         // eslint-disable-next-line no-console
@@ -715,7 +716,7 @@ export async function POST(req: Request) {
         try {
           // eslint-disable-next-line no-console
           console.log(`[generate] level=${lvl}: AUTO-RETRY for ${need} more question(s)`);
-          const retryRaw = await groqJSON(contextAwareSystem, retryUserPrompt);
+          const retryRaw = await aiJSON(contextAwareSystem, retryUserPrompt);
           const retryArr: GenQ[] = Array.isArray((retryRaw as { questions?: GenQ[] })?.questions)
             ? (retryRaw as { questions: GenQ[] }).questions
             : [];
@@ -774,7 +775,7 @@ export async function POST(req: Request) {
         }
         // Disputed — try one refinement.
         try {
-          const refined = await groqJSON(
+          const refined = await aiJSON(
             SYSTEM,
             refinementSuffix({ stem: row.stem, options: row.options, correct_index: row.correct_index })
           );

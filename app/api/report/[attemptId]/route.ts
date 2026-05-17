@@ -4,7 +4,7 @@ import autoTable from "jspdf-autotable";
 import { supabaseServer } from "@/lib/supabase/server";
 import { requireAuthenticated } from "@/lib/apiAuth";
 import { BLOOM_LEVELS, BLOOM_META, blankBloomCounts, type BloomLevel } from "@/lib/bloom";
-import { groqText } from "@/lib/groq";
+import { aiText } from "@/lib/aiClient";
 import { resolveScheme, percentageOf, rawScoreLabel } from "@/lib/scoring";
 import { SCORING_PRESETS } from "@/lib/scoringPresets";
 
@@ -116,7 +116,7 @@ export async function GET(req: Request, ctx: Ctx) {
     try {
       const lines = BLOOM_LEVELS.filter((l) => totals[l] > 0)
         .map((l) => `- ${BLOOM_META[l].label}: ${correct[l]}/${totals[l]}`).join("\n");
-      commentary = await groqText(
+      commentary = await aiText(
         `You are a school report-card writer. Write a single-paragraph teacher comment (3-4 sentences) about a student's Bloom-level performance. Highlight a strength and an area to develop. Encouraging but honest.`,
         `Student: ${attempt.profile?.full_name || "Student"}
 Score: ${attempt.score}/${attempt.total}
