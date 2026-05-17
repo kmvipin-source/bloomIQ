@@ -302,7 +302,7 @@ export default function ProgressPage() {
                 <PolarAngleAxis dataKey="level" tick={{ fontSize: 12 }} />
                 <PolarRadiusAxis angle={90} domain={[0, 100]} tick={{ fontSize: 10 }} />
                 <Radar name="You" dataKey="pct" stroke="#10b981" fill="#10b981" fillOpacity={0.35} />
-                <Tooltip formatter={(v: number) => `${v}%`} />
+                <Tooltip formatter={(((v: number) => `${v}%`) as unknown as never) /* Finding #43 fix (A): recharts formatter drift */} />
               </RadarChart>
             </ResponsiveContainer>
           </div>
@@ -381,12 +381,12 @@ export default function ProgressPage() {
                   <BarChart data={f.series} margin={{ top: 18, right: 6, left: 6, bottom: 4 }}>
                     <YAxis hide domain={[0, 100]} />
                     <XAxis dataKey="date" tick={{ fontSize: 9, fill: "#64748b" }} interval={0} axisLine={false} tickLine={false} />
-                    <Tooltip cursor={{ fill: "rgba(16,185,129,0.08)" }} formatter={(v: number) => [`${v}%`, "Score"]} contentStyle={{ fontSize: 12 }} />
+                    <Tooltip cursor={{ fill: "rgba(16,185,129,0.08)" }} formatter={(((v: number) => [`${v}%`, "Score"]) as unknown as never) /* Finding #43 fix (A): recharts formatter drift */} contentStyle={{ fontSize: 12 }} />
                     <Bar dataKey="pct" radius={[4, 4, 0, 0]}>
                       {f.series.map((p, i) => (
                         <Cell key={i} fill={p.pct >= 70 ? "#10b981" : p.pct >= 50 ? "#f59e0b" : "#ef4444"} />
                       ))}
-                      <LabelList dataKey="pct" position="top" offset={6} style={{ fontSize: 10, fill: "#0f172a", fontWeight: 700 }} formatter={(v: number) => `${v}%`} />
+                      <LabelList dataKey="pct" position="top" offset={6} style={{ fontSize: 10, fill: "#0f172a", fontWeight: 700 }} formatter={(((v: number) => `${v}%`) as unknown as never) /* Finding #43 fix (A): recharts formatter drift */} />
                     </Bar>
                   </BarChart>
                 </ResponsiveContainer>
@@ -414,12 +414,12 @@ export default function ProgressPage() {
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
                 <XAxis dataKey="date" tick={{ fontSize: 11, fill: "#64748b" }} axisLine={{ stroke: "#cbd5e1" }} tickLine={false} />
                 <YAxis domain={[0, 100]} tick={{ fontSize: 11, fill: "#64748b" }} axisLine={{ stroke: "#cbd5e1" }} tickLine={false} unit="%" />
-                <Tooltip cursor={{ fill: "rgba(16,185,129,0.08)" }} formatter={(v: number) => [`${v}%`, "Score"]} />
+                <Tooltip cursor={{ fill: "rgba(16,185,129,0.08)" }} formatter={(((v: number) => [`${v}%`, "Score"]) as unknown as never) /* Finding #43 fix (A): recharts formatter drift */} />
                 <Bar dataKey="pct" radius={[6, 6, 0, 0]} maxBarSize={42}>
                   {timeline.map((p, i) => (
                     <Cell key={i} fill={p.pct >= 70 ? "#059669" : p.pct >= 50 ? "#d97706" : "#dc2626"} />
                   ))}
-                  <LabelList dataKey="pct" position="top" offset={8} style={{ fontSize: 11, fill: "#0f172a", fontWeight: 700 }} formatter={(v: number) => `${v}%`} />
+                  <LabelList dataKey="pct" position="top" offset={8} style={{ fontSize: 11, fill: "#0f172a", fontWeight: 700 }} formatter={(((v: number) => `${v}%`) as unknown as never) /* Finding #43 fix (A): recharts formatter drift */} />
                 </Bar>
               </BarChart>
             </ResponsiveContainer>

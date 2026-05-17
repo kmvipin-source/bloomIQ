@@ -928,7 +928,7 @@ function SchoolReportsInner() {
                     <Pie data={bloomMix} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={50} outerRadius={90} paddingAngle={2}>
                       {bloomMix.map((d) => <Cell key={d.name} fill={BLOOM_COLORS[d.name as BloomLevel]} />)}
                     </Pie>
-                    <Tooltip formatter={(v: number, name: string, p: { payload?: { pct?: number } }) => [`${v} (${p.payload?.pct}%)`, name]} />
+                    <Tooltip formatter={(((v: number, name: string, p: { payload?: { pct?: number } }) => [`${v} (${p.payload?.pct}%)`, name]) as unknown as never) /* Finding #44 fix (A): recharts Formatter drift */} />
                   </PieChart>
                 </ResponsiveContainer>
               </div>

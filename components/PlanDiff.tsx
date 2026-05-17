@@ -289,7 +289,10 @@ export default function PlanDiff({ left, right, leftLabel, rightLabel, contextNo
                 return (
                   <ScalarRow
                     key={String(d.field.key)}
-                    diff={d}
+                    // Finding #40 fix (C): coerce blockedByImmutable to a
+                    // strict boolean — `d` has it as boolean|undefined but
+                    // ScalarRow's prop type requires boolean.
+                    diff={{ ...d, blockedByImmutable: d.blockedByImmutable ?? false }}
                     isFirst={idx === 0}
                   />
                 );

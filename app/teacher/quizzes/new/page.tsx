@@ -16,7 +16,10 @@ import {
 } from "@/lib/teachingContext";
 import {
   validateGenerationFitForGrade,
-  categoryLabel,
+  // Finding #36 fix (B.1): categoryLabel was imported here AND also re-aliased
+  // from categoryLabelShared at line ~70, causing TS2440 (import conflicts
+  // with local declaration). Dropped the direct import; the alias stays so
+  // the rest of the file keeps working unchanged.
 } from "@/lib/questionCategory";
 import {
   categoryLabel as categoryLabelShared,
@@ -144,6 +147,13 @@ function ComposerInner() {
            "negative marking can discourage attempting questions and distort feedback. " +
            "Keep it only if you're explicitly training exam strategy.";
   }
+  // Finding #38 fix (B.3): relocated above contextFit useMemo to fix TDZ.
+  // These states were originally declared below line 270; the contextFit
+  // useMemo at line ~149 reads them, which triggered TS2448/TS2454 under
+  // strict TS once the CI gap closed in Round 5.
+  const [classes, setClasses] = useState<ClassOption[]>([]);
+  const [targetClassId, setTargetClassId] = useState<string>("");
+
   // Class-vs-context fit. Re-runs on class or picker change. Reuses the
   // existing validateGenerationFitForGrade helper from lib/questionCategory.
   const contextFit = useMemo(() => {
@@ -151,6 +161,7 @@ function ComposerInner() {
     if (!cls?.grade || !teachingContext) return null;
     return validateGenerationFitForGrade(cls.grade, teachingContext);
   }, [classes, targetClassId, teachingContext]);
+
 
   const negMarkingWarn = useMemo(
     () => negativeMarkingWarning(markingScheme, teacherExamGoal),
@@ -268,8 +279,6 @@ function ComposerInner() {
   // holds the latest fit response for that class + the current selection.
   // None of these affect the existing compose flow if the teacher ignores
   // the dropdown.
-  const [classes, setClasses] = useState<ClassOption[]>([]);
-  const [targetClassId, setTargetClassId] = useState<string>("");
   // Load saved last_teaching_context. Fire-and-forget — failure leaves saved=null.
   useEffect(() => {
     let cancelled = false;
@@ -427,9 +436,11 @@ function ComposerInner() {
   // don't re-state info we already know.
   useEffect(() => {
     if (!targetClassId) return;
-    const cls = (typeof teacherClasses !== "undefined"
-      ? teacherClasses.find((c: { id: string; subject?: string | null }) => c.id === targetClassId)
-      : null) as { id: string; subject?: string | null } | null;
+    // Finding #37 fix (B.2): renamed from teacherClasses (undefined in
+    // this scope) to classes (the actual state variable from line ~271).
+    const cls = (classes.find((c) => c.id === targetClassId) || null) as
+      | { id: string; subject?: string | null }
+      | null;
     if (cls?.subject && !subject) {
       setSubject(cls.subject);
     }

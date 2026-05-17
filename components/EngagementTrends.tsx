@@ -115,8 +115,8 @@ function MetricCard({
             <XAxis dataKey="day" tick={false} axisLine={false} hide />
             <YAxis hide />
             <Tooltip
-              labelFormatter={(label: string) => label}
-              formatter={(v: number) => [v, title]}
+              labelFormatter={(((label: string) => label) as unknown as never) /* Finding #42 fix (A): recharts LabelFormatter drift */}
+              formatter={(((v: number) => [v, title]) as unknown as never) /* Finding #42 fix (A): recharts Formatter drift */}
             />
             <Line
               type="monotone"

@@ -198,7 +198,7 @@ export function FlagGate({
   invert = false,
 }: {
   flag: PlatformFlagName;
-  children: ReactNode;
+  // Finding #39 fix (B+): duplicate `children: ReactNode;` field (typo).
   children: ReactNode;
   fallback?: ReactNode;
   loadingFallback?: ReactNode;
